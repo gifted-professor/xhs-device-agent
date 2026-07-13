@@ -35,7 +35,7 @@ Copy-Item config/matrix.example.psd1 config/local.psd1
 - 有效的 `AdbPath`；
 - 每台手机的真实 ADB 序列号到公开别名/编号的映射；
 - 任务要使用的设备分组，例如 `content`；
-- 如需自动输入中文，配置 `TextInput.UnicodeIme`，同时要求 `Enabled`、`HumanApproved` 为真，并把已逐机标定的别名加入 `ApprovedAliases`。
+- 如需自动输入中文，优先配置 `TextInput.NativeIme`，同时要求 `Enabled`、`HumanApproved` 为真，并把已逐机标定的别名加入 `ApprovedAliases`；设备端 Unicode 桥只作为另行批准的后备通道。
 
 真实编号或分组未完成时，只允许预检和干跑，不运行正式主题分配。PowerShell 包装器和 Node 正式入口都会独立清点 ADB 在线设备，要求全部在线设备有唯一别名和显式分组；直接调用 Node 也不能绕过这道门禁。不要把序列号、账号、截图或 UI XML 写入受版本控制的文件。
 
@@ -112,6 +112,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandi
 
 交接脚本只搜索精确候选、验证笔记 ID 或标题并暂停。找不到、匹配多条或详情身份不一致时转人工，不会打开模糊匹配，也不会执行互动。
 
+涉及中文输入时，Hermes 先按设备执行原生输入法盘点和一次中文模式校准，再进行文本动作；每次输入都必须做编辑框精确回显校验，结束后恢复原默认输入法。详见 `docs/INPUT_METHOD_WORKFLOW.md`。
+
 ## 目录
 
 - `scripts/xhs-page-engine.mjs`：页面评分、UI 指纹和语义选择器
@@ -131,6 +133,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandi
 - `docs/SAFETY.md`：操作、数据和模型边界
 - `docs/XIAOWEI_MATRIX.md`：效卫矩阵接入和降级策略
 - `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 操作规程
+- `scripts/Collect-PhoneAssets.ps1`：逐台读取硬件、系统、小红书公开主页和 UI 层级
+- `scripts/Run-Pipeline.ps1`：一键采集、生成标准 CSV、可选同步飞书
+- `scripts/Sync-LarkBase.ps1`：创建必要字段并按设备编号/ADB 序列号更新记录
+- `scripts/cloud-vision.mjs`：OpenAI-compatible 云端视觉分类器
+- `scripts/greenarrow-api.mjs`：可选的本地 WebSocket API 示例；需要软件侧开放 API
+- `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 执行规则
+- `docs/ARCHITECTURE.md`：系统结构和页面状态机
+- `docs/INPUT_METHOD_WORKFLOW.md`：原生中文输入法与 Hermes 调度流程
+- `config/input-methods.example.psd1`：按设备别名配置输入法候选和校准状态
+- `docs/SAFETY.md`：数据与操作边界
 
 ## 隐私
 

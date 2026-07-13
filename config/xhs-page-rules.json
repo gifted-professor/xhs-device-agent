@@ -132,7 +132,8 @@
               "weight": 0.25,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
-                { "attribute": "scrollable", "equals": true }
+                { "attribute": "scrollable", "equals": true },
+                { "attribute": "text", "match": "exact", "values": ["历史记录"] }
               ]
             }
           ],
@@ -155,7 +156,8 @@
               "weight": 0.25,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+                { "attribute": "text", "match": "exact", "values": ["搜索"] }
               ]
             },
             {
@@ -171,7 +173,8 @@
               "weight": 0.4,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["search_result", "result_list", "note_list"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["搜索结果|笔记列表"] }
+                { "attribute": "contentDesc", "match": "regex", "values": ["搜索结果|笔记列表"] },
+                { "attribute": "scrollable", "equals": true }
               ]
             }
           ],

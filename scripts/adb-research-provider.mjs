@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pinyin } from "pinyin-pro";
 
 import {
   classifyPage,
@@ -21,6 +22,13 @@ const KNOWN_STATES = new Set([
   "IMAGE_NOTE", "VIDEO_NOTE", "COMMENT_PANEL", "NETWORK_ERROR", "UPDATE_MODAL", "LOGIN_OR_CHALLENGE", "UNKNOWN",
 ]);
 const FORBIDDEN_INTERACTION = /(?:^|[_\s-])(like|favorite|favourite|collect|follow|comment|message|publish|post|delete|send)(?:$|[_\s-])|点赞|收藏|关注|评论|私信|发布|删除|发送/iu;
+const SAFE_IME_SERVICE = /^[A-Za-z0-9._]+\/[A-Za-z0-9._$]+$/u;
+const BRIDGE_IME_SERVICE = /(?:com\.android\.xwkeyboard|com\.xueren|com\.truedian\.dragon)/iu;
+const NATIVE_IME_SUBTYPE_EVIDENCE = [
+  [/com\.sohu\.inputmethod\.sogou/iu, /mImeName=[^\r\n]*搜狗[^\r\n]*mSubtypeName=中文（中国）/u],
+  [/com\.baidu\.input/iu, /mImeName=[^\r\n]*百度[^\r\n]*mSubtypeName=中文（中国）/u],
+  [/com\.iflytek\.inputmethod/iu, /mImeName=[^\r\n]*讯飞[^\r\n]*mSubtypeName=中文（中国）/u],
+];
 const PAGE_TARGET_ALIASES = new Map([
   ["search_entry", "search_entry"], ["search field", "search_entry"], ["search box", "search_entry"], ["搜索框", "search_entry"],
   ["home_tab", "home_tab"], ["home tab", "home_tab"], ["首页", "home_tab"],
@@ -136,6 +144,20 @@ function mediaType(nodes) {
   return "unknown";
 }
 
+function descriptorNoteMetadata(value) {
+  const descriptor = compact(value);
+  const kind = /^(?:\u7b14\u8bb0|\u89c6\u9891)\s+/u.exec(descriptor);
+  if (!kind) return null;
+  const body = descriptor.slice(kind[0].length);
+  const fromIndex = body.lastIndexOf(" \u6765\u81ea");
+  if (fromIndex <= 0) return null;
+  const title = compact(body.slice(0, fromIndex));
+  let author = compact(body.slice(fromIndex + 3));
+  author = author.replace(/\s+\d[\d,.]*\s*\u8d5e(?:\s|$).*$/u, "").trim();
+  if (!title || !author) return null;
+  return { title, author, mediaType: kind[0].startsWith("\u89c6") ? "video" : "image" };
+}
+
 function firstText(nodes, idPattern, excluded = new Set()) {
   const preferred = nodes.find((node) => idPattern.test(node.resourceId) && compact(node.text) && !excluded.has(compact(node.text)));
   if (preferred) return compact(preferred.text);
@@ -162,6 +184,9 @@ function noteCardEntries(document) {
       roots.push(current);
     }
   }
+  for (const node of document.nodes) {
+    if (descriptorNoteMetadata(node.contentDesc)) roots.push(node);
+  }
   const chrome = new Set(["综合", "最新", "用户", "商品", "搜索", "关注", "发现", "推荐", "首页"]);
   const output = [];
   const seenRoots = new Set();
@@ -169,10 +194,11 @@ function noteCardEntries(document) {
     if (seenRoots.has(root.nodeIndex)) continue;
     seenRoots.add(root.nodeIndex);
     const nodes = [root, ...descendants(document, root)];
-    const title = firstText(nodes, /note[_-]?title|title_text/iu, chrome);
+    const descriptor = descriptorNoteMetadata(root.contentDesc);
+    const title = descriptor?.title || firstText(nodes, /note[_-]?title|title_text/iu, chrome);
     if (!title) continue;
-    const author = firstText(nodes, /author|nickname|user[_-]?name/iu, new Set([title])) || "";
-    const type = mediaType(nodes);
+    const author = descriptor?.author || firstText(nodes, /author|nickname|user[_-]?name/iu, new Set([title])) || "";
+    const type = descriptor?.mediaType ?? mediaType(nodes);
     const noteId = publicNoteId(nodes);
     const metrics = {};
     for (const node of nodes) {
@@ -364,6 +390,7 @@ export function createAdbResearchProvider(options = {}) {
   const pageRecovery = typeof options.pageRecovery === "function" ? options.pageRecovery : null;
   const localOcr = typeof options.localOcr === "function" ? options.localOcr : null;
   const unicodeInput = options.unicodeInput ?? {};
+  const nativeIme = options.nativeIme ?? {};
   const xiaoweiTextInput = typeof options.xiaoweiTextInput === "function" ? options.xiaoweiTextInput : null;
   const xiaoweiTextApprovedAliases = new Set(options.xiaoweiTextApprovedAliases ?? []);
   const onResourceUsage = typeof options.onResourceUsage === "function" ? options.onResourceUsage : null;
@@ -381,6 +408,7 @@ export function createAdbResearchProvider(options = {}) {
   if (new Set(records.map((record) => record.alias)).size !== records.length) throw new TypeError("device aliases must be unique");
   const recordByAlias = new Map(records.map((record) => [record.alias, record]));
   const contextCache = new Map();
+  const calibratedNativeIme = new Map();
   const commentPanelsByTask = new Map();
   for (const [taskId, count] of Object.entries(options.initialCommentPanelsByTask ?? {})) {
     const normalizedTaskId = compact(taskId);
@@ -737,6 +765,295 @@ export function createAdbResearchProvider(options = {}) {
     return current.document.nodes.find((node) => /(?:^|\.)EditText$/u.test(node.className) && node.focused);
   }
 
+  function normalizedSearchEcho(nodeText) {
+    const text = String(nodeText ?? "").trim();
+    // Some current XHS builds expose the localized search hint together with
+    // the entered value in EditText.text (for example, "搜索, sneakers").
+    // Strip only that known hint prefix; never accept an arbitrary suffix.
+    const hintPrefix = /^(?:搜索|search)[\s,，:：]+/iu;
+    return hintPrefix.test(text) ? text.replace(hintPrefix, "") : text;
+  }
+
+  function searchEchoMatches(nodeText, requestedValue) {
+    return normalizedSearchEcho(nodeText) === String(requestedValue ?? "").trim();
+  }
+
+  function searchResultEchoMatches(current, requestedValue) {
+    if (current.classification.state !== "SEARCH_RESULTS") return false;
+    const value = compact(requestedValue);
+    if (!value) return false;
+    const hasQuery = current.document.nodes.some((node) =>
+      node.clickable && String(node.className).endsWith(".TextView") && compact(node.text) === value,
+    );
+    const hasSearchAction = current.document.nodes.some((node) => node.clickable && compact(node.text) === "搜索");
+    const tabs = new Set(["全部", "综合", "最新", "用户", "商品"]);
+    const tabCount = new Set(current.document.nodes.filter((node) => tabs.has(compact(node.text))).map((node) => compact(node.text))).size;
+    return hasQuery && hasSearchAction && tabCount >= 2;
+  }
+
+  async function clearSearchField(session, current, value) {
+    const existingText = String(focusedEditText(current)?.text ?? "");
+    const deleteCount = Math.min(128, Math.max(16, existingText.length + String(value ?? "").length + 4));
+    await runAdb(
+      session.record,
+      ["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"],
+      "select_all_search",
+    );
+    await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_DEL"], "delete_selected_search");
+    await runAdb(
+      session.record,
+      ["shell", "input", "keyevent", "KEYCODE_MOVE_END", ...Array(deleteCount).fill("KEYCODE_DEL")],
+      "clear_search",
+    );
+  }
+
+  function searchFieldIsEmpty(nodeText) {
+    const value = compact(nodeText);
+    return value === "" || value === "搜索" || value.toLowerCase() === "search";
+  }
+
+  async function clearAndVerifySearchField(session, current, value) {
+    await clearSearchField(session, current, value);
+    const cleared = await stableSnapshot(session);
+    const field = focusedEditText(cleared);
+    if (!field || !searchFieldIsEmpty(field.text)) {
+      throw nativeImeStop("input:native_ime_clear_failed", "Existing search text could not be cleared before native input");
+    }
+    return cleared;
+  }
+
+  async function inputAsciiBySegments(session, value) {
+    const segments = String(value).split(" ");
+    for (let index = 0; index < segments.length; index += 1) {
+      if (index > 0) await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_SPACE"], "input_ascii_space");
+      if (segments[index]) {
+        await runAdb(session.record, ["shell", "input", "text", shellQuote(segments[index])], "input_ascii_segment");
+      }
+    }
+  }
+
+  function nativeImeApproved(alias) {
+    return Boolean(
+      nativeIme.enabled === true &&
+      nativeIme.humanApproved === true &&
+      Array.isArray(nativeIme.approvedAliases) && nativeIme.approvedAliases.includes(alias),
+    );
+  }
+
+  function nativeImeProfile(alias) {
+    return nativeIme.perDevice && typeof nativeIme.perDevice === "object" ? nativeIme.perDevice[alias] : null;
+  }
+
+  function nativeImePreferences(alias) {
+    const perDevice = nativeImeProfile(alias);
+    const preferred = [
+      perDevice?.preferredService,
+      ...(Array.isArray(perDevice?.preferredServices) ? perDevice.preferredServices : []),
+      ...(Array.isArray(nativeIme.preferredServices) ? nativeIme.preferredServices : []),
+    ].filter((service) => typeof service === "string" && SAFE_IME_SERVICE.test(service) && !BRIDGE_IME_SERVICE.test(service));
+    return [...new Set(preferred)];
+  }
+
+  function verifiedFirstCandidateApproved(alias) {
+    return nativeImeProfile(alias)?.allowVerifiedFirstCandidate === true;
+  }
+
+  function calibratedChineseModeToggle(alias, service) {
+    const toggle = nativeImeProfile(alias)?.chineseModeToggle;
+    if (!toggle || toggle.humanApproved !== true || toggle.imeService !== service) return null;
+    return toggle;
+  }
+
+  function nativeImeHasChineseSubtype(service, dumpsys) {
+    const known = NATIVE_IME_SUBTYPE_EVIDENCE.find(([servicePattern]) => servicePattern.test(service));
+    return Boolean(known && known[1].test(dumpsys));
+  }
+
+  function nativeImeStop(signature, reason) {
+    return new ProviderStop("human_required", signature, reason, {
+      humanReview: [{ reason }],
+      affectsDeviceHealth: false,
+    });
+  }
+
+  async function restoreNativeIme(session, previousDefault) {
+    if (!previousDefault || !SAFE_IME_SERVICE.test(previousDefault)) {
+      throw nativeImeStop("input:native_ime_restore_invalid", "Previous default input method could not be safely restored");
+    }
+    await runAdb(session.record, ["shell", "ime", "set", previousDefault], "native_ime_restore");
+    const restored = await runAdb(session.record, ["shell", "settings", "get", "secure", "default_input_method"], "native_ime_restore_verify");
+    if (text(restored.stdout).trim() !== previousDefault) {
+      throw nativeImeStop("input:native_ime_restore_failed", "Previous default input method was not restored");
+    }
+  }
+
+  async function activateNativeIme(session) {
+    const [defaultResult, enabledResult, dumpResult] = await Promise.all([
+      runAdb(session.record, ["shell", "settings", "get", "secure", "default_input_method"], "native_ime_default"),
+      runAdb(session.record, ["shell", "ime", "list", "-s"], "native_ime_inventory"),
+      runAdb(session.record, ["shell", "dumpsys", "input_method"], "native_ime_subtypes"),
+    ]);
+    const previousDefault = text(defaultResult.stdout).trim();
+    const enabled = new Set(text(enabledResult.stdout).split(/\r?\n/u).map((value) => value.trim()).filter(Boolean));
+    const dumpsys = text(dumpResult.stdout);
+    const service = nativeImePreferences(session.record.alias).find((candidate) =>
+      enabled.has(candidate) && nativeImeHasChineseSubtype(candidate, dumpsys),
+    );
+    if (!service) {
+      throw nativeImeStop("input:native_ime_unavailable", "No approved native input method with a Chinese subtype is available on this device");
+    }
+    if (service === previousDefault) return { previousDefault, service };
+    try {
+      await runAdb(session.record, ["shell", "ime", "set", service], "native_ime_select");
+      const selected = await runAdb(session.record, ["shell", "settings", "get", "secure", "default_input_method"], "native_ime_select_verify");
+      if (text(selected.stdout).trim() !== service) {
+        throw nativeImeStop("input:native_ime_select_failed", "Approved native input method could not be selected");
+      }
+      return { previousDefault, service };
+    } catch (error) {
+      if (SAFE_IME_SERVICE.test(previousDefault)) {
+        try { await restoreNativeIme(session, previousDefault); } catch { /* Preserve the original selection failure. */ }
+      }
+      throw error;
+    }
+  }
+
+  function exactImeNode(current, expected, imePackage) {
+    const candidates = current.document.nodes.filter((node) =>
+      node.enabled !== false &&
+      node.packageName === imePackage &&
+      !/(?:^|\.)EditText$/u.test(node.className) &&
+      (compact(node.text) === expected || compact(node.contentDesc) === expected) &&
+      parseBounds(node.attributes?.bounds),
+    );
+    return candidates.find((node) => node.clickable) ?? candidates[0] ?? null;
+  }
+
+  function chineseModeToggle(current, imePackage) {
+    const exact = new Set(["中/英", "中英", "中文", "切换到中文"]);
+    return current.document.nodes.find((node) =>
+      node.enabled !== false &&
+      node.packageName === imePackage &&
+      !/(?:^|\.)EditText$/u.test(node.className) &&
+      (exact.has(compact(node.text)) || exact.has(compact(node.contentDesc))) &&
+      parseBounds(node.attributes?.bounds),
+    ) ?? null;
+  }
+
+  function lastIntegerMatch(value, pattern) {
+    const matches = [...String(value ?? "").matchAll(pattern)];
+    return matches.length ? Number(matches.at(-1)[1]) : null;
+  }
+
+  async function tapCalibratedChineseModeToggle(session, current, service) {
+    const toggle = calibratedChineseModeToggle(session.record.alias, service);
+    if (!toggle || !focusedEditText(current) || !new Set(["SEARCH_ENTRY", "SEARCH_SUGGESTIONS"]).has(current.classification.state)) {
+      return false;
+    }
+    const [sizeResult, densityResult, defaultResult, inputMethodResult] = await Promise.all([
+      runAdb(session.record, ["shell", "wm", "size"], "native_ime_toggle_size"),
+      runAdb(session.record, ["shell", "wm", "density"], "native_ime_toggle_density"),
+      runAdb(session.record, ["shell", "settings", "get", "secure", "default_input_method"], "native_ime_toggle_default"),
+      runAdb(session.record, ["shell", "dumpsys", "input_method"], "native_ime_toggle_visibility"),
+    ]);
+    const sizeMatches = [...text(sizeResult.stdout).matchAll(/(?:Physical|Override) size:\s*(\d+)x(\d+)/giu)];
+    const size = sizeMatches.at(-1);
+    const density = lastIntegerMatch(text(densityResult.stdout), /(?:Physical|Override) density:\s*(\d+)/giu);
+    const visible = /(?:mInputShown|mIsInputViewShown)=true\b/u.test(text(inputMethodResult.stdout));
+    if (!size || Number(size[1]) !== toggle.displayWidth || Number(size[2]) !== toggle.displayHeight ||
+        density !== toggle.densityDpi || text(defaultResult.stdout).trim() !== service || !visible) {
+      throw nativeImeStop("input:native_ime_toggle_profile_mismatch", "Per-device Chinese-mode calibration no longer matches the active keyboard or display");
+    }
+    await runAdb(session.record, ["shell", "input", "tap", String(toggle.x), String(toggle.y)], "native_ime_chinese_mode_coordinate");
+    return true;
+  }
+
+  async function enterNativePhrase(session, current, expected, romanized, allowModeToggle, service) {
+    const safeRomanized = compact(romanized).replace(/\s+/gu, "");
+    const imePackage = String(service).split("/")[0];
+    if (!safeRomanized || !/^[a-z]+$/u.test(safeRomanized)) {
+      throw nativeImeStop("input:native_ime_invalid_pinyin", "Native input transliteration is unavailable for this phrase");
+    }
+    const tryCandidate = async () => {
+      const keyCodes = [...safeRomanized].map((letter) => `KEYCODE_${letter.toUpperCase()}`);
+      await runAdb(session.record, ["shell", "input", "keyevent", ...keyCodes], "native_ime_pinyin");
+      let snapshotAfterPinyin = await stableSnapshot(session);
+      if (snapshotAfterPinyin.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, expected))) {
+        return snapshotAfterPinyin;
+      }
+      const candidate = exactImeNode(snapshotAfterPinyin, expected, imePackage);
+      if (!candidate) return { current: snapshotAfterPinyin, missing: true };
+      await tapCurrentNode(session, snapshotAfterPinyin, candidate, `ime_candidate_${hash(expected).slice(0, 10)}`, "native_ime_candidate");
+      snapshotAfterPinyin = await stableSnapshot(session);
+      return snapshotAfterPinyin;
+    };
+
+    const tryVerifiedFirstCandidate = async (candidateResult) => {
+      if (!candidateResult?.missing || !verifiedFirstCandidateApproved(session.record.alias)) return candidateResult;
+      await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_SPACE"], "native_ime_first_candidate");
+      const committed = await stableSnapshot(session);
+      if (committed.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, expected))) {
+        return committed;
+      }
+      if (focusedEditText(committed)) await clearSearchField(session, committed, safeRomanized);
+      return { current: await stableSnapshot(session), missing: true };
+    };
+
+    let result = await tryVerifiedFirstCandidate(await tryCandidate());
+    if (result?.missing && allowModeToggle) {
+      await clearSearchField(session, result.current, safeRomanized);
+      const cleared = await stableSnapshot(session);
+      const toggle = chineseModeToggle(cleared, imePackage);
+      if (toggle) {
+        await tapCurrentNode(session, cleared, toggle, "ime_chinese_mode", "native_ime_chinese_mode");
+      } else if (!(await tapCalibratedChineseModeToggle(session, cleared, service))) {
+        throw nativeImeStop("input:native_ime_chinese_mode", "Native input method is not in Chinese mode and no semantic language toggle is available");
+      }
+      const toggled = await stableSnapshot(session);
+      await clearSearchField(session, toggled, safeRomanized);
+      result = await tryVerifiedFirstCandidate(await tryCandidate());
+    }
+    if (result?.missing || !result.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, expected))) {
+      throw nativeImeStop("input:native_ime_candidate_missing", "Native input method did not expose the exact requested Chinese candidate");
+    }
+    if (result.classification.state === "SEARCH_RESULTS") {
+      throw nativeImeStop("input:native_ime_unexpected_submission", "Native input calibration unexpectedly left the editable search page");
+    }
+    return result;
+  }
+
+  function phrasePinyin(value) {
+    if (!/^[\p{Script=Han}\s]+$/u.test(value)) return "";
+    return pinyin(value, { toneType: "none", type: "array" }).join("").replace(/\s+/gu, "").toLowerCase();
+  }
+
+  async function enterWithNativeIme(session, current, value) {
+    const activation = await activateNativeIme(session);
+    try {
+      // Switching IMEs can restore the editor's previous composing value on
+      // some Xiaomi builds. Clear again after selection and verify the live
+      // field before any calibration or requested text is entered.
+      current = await clearAndVerifySearchField(session, current, value);
+      if (calibratedNativeIme.get(session.record.alias) !== activation.service) {
+        const probe = compact(nativeIme.calibrationProbe || "测试");
+        const probePinyin = compact(nativeIme.calibrationPinyin || "ceshi");
+        current = await enterNativePhrase(session, current, probe, probePinyin, true, activation.service);
+        calibratedNativeIme.set(session.record.alias, activation.service);
+        current = await clearAndVerifySearchField(session, current, probe);
+      }
+      current = await enterNativePhrase(session, current, value, phrasePinyin(value), false, activation.service);
+    } catch (error) {
+      try {
+        const cleanup = await stableSnapshot(session);
+        if (focusedEditText(cleanup)) await clearSearchField(session, cleanup, value);
+      } catch { /* Preserve the original input failure; restoration still runs below. */ }
+      throw error;
+    } finally {
+      await restoreNativeIme(session, activation.previousDefault);
+    }
+    return stableSnapshot(session);
+  }
+
   async function navigateToSearch(session, current) {
     const searchStates = new Set(["SEARCH_ENTRY", "SEARCH_SUGGESTIONS", "SEARCH_RESULTS"]);
     if (searchStates.has(current.classification.state)) {
@@ -772,8 +1089,9 @@ export function createAdbResearchProvider(options = {}) {
     const value = String(keyword ?? "");
     if (!value) throw new ProviderStop("failed", "input:empty_keyword", "Search keyword is empty");
     const ascii = /^[\x20-\x7e]+$/.test(value);
+    const nativeApproved = !ascii && nativeImeApproved(session.record.alias);
     const xiaoweiApproved = Boolean(xiaoweiTextInput && xiaoweiTextApprovedAliases.has(session.record.alias));
-    if (!ascii && !xiaoweiApproved && !unicodeApproved(session.record.alias)) {
+    if (!ascii && !nativeApproved && !xiaoweiApproved && !unicodeApproved(session.record.alias)) {
       throw new ProviderStop("human_required", "input:unicode_requires_human", "Unicode input is not configured and approved", {
         humanReview: [{ reason: "Paste the Unicode topic manually in Xiaowei, then resume" }],
         affectsDeviceHealth: false,
@@ -783,8 +1101,11 @@ export function createAdbResearchProvider(options = {}) {
       await tapSemantic(session, current, "search_entry");
       current = await stableSnapshot(session);
     }
-    await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_CLEAR"], "clear_search");
-    if (ascii) {
+    let next;
+    await clearSearchField(session, current, value);
+    if (nativeApproved) {
+      next = await enterWithNativeIme(session, current, value);
+    } else if (ascii) {
       const encoded = value.replace(/ /g, "%s");
       await runAdb(session.record, ["shell", "input", "text", shellQuote(encoded)], "input_ascii");
     } else if (xiaoweiApproved) {
@@ -793,8 +1114,19 @@ export function createAdbResearchProvider(options = {}) {
       const payload = Buffer.from(value, "utf8").toString("base64");
       await runAdb(session.record, ["shell", "am", "broadcast", "-a", unicodeInput.action, "--es", unicodeInput.extraKey ?? "msg", payload], "input_unicode_b64");
     }
-    const next = await stableSnapshot(session);
-    const verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && node.text === value);
+    if (!next) next = await stableSnapshot(session);
+    let verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
+    if (!verified && ascii && value.includes(" ")) {
+      const observed = next.document.nodes.find((node) => /(?:^|\.)EditText$/u.test(node.className) && node.focused);
+      if (normalizedSearchEcho(observed?.text) === value.replace(/ /g, "")) {
+        // A few Android builds drop `%s` in `input text`; retry once with
+        // explicit SPACE key events inside the already-focused search field.
+        await clearSearchField(session, next, value);
+        await inputAsciiBySegments(session, value);
+        next = await stableSnapshot(session);
+        verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
+      }
+    }
     if (!verified) {
       throw new ProviderStop("human_required", "input:verification_failed", "Search text did not exactly match the requested keyword", {
         humanReview: [{ reason: "Search input did not exactly match; manual correction required" }],
@@ -821,6 +1153,7 @@ export function createAdbResearchProvider(options = {}) {
 
   async function routeSource(session, current, source, keyword) {
     if (source === "search" || source === "suggestions") {
+      if (source === "search" && searchResultEchoMatches(current, keyword)) return current;
       current = await navigateToSearch(session, current);
       current = await enterKeyword(session, current, keyword);
       return source === "search" ? submitSearch(session, current) : current;

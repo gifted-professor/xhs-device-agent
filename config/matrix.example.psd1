@@ -27,10 +27,34 @@
         PackageName = "com.xingin.xhs"
     }
 
-    # Chinese search input is blocked unless this exact device-side IME path has
-    # been manually installed, calibrated and approved per alias. Plain
-    # `adb shell input text` is used only for ASCII input.
+    # Chinese search input prefers a native IME that has been approved and
+    # calibrated per alias. Plain `adb shell input text` is used only to feed
+    # ASCII pinyin into that native IME; the exact Chinese candidate and final
+    # EditText echo must both be verified before search submission.
     TextInput = @{
+        NativeIme = @{
+            Enabled = $false
+            HumanApproved = $false
+            PreferredServices = @(
+                "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+                "com.baidu.input_mi/.ImeService"
+                "com.iflytek.inputmethod.miui/.FlyIME"
+            )
+            ApprovedAliases = @()
+            CalibrationProbe = "测试"
+            CalibrationPinyin = "ceshi"
+            PerDevice = @{
+                "device-01" = @{
+                    PreferredService = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME"
+                    # Use SPACE only to commit the native IME's first candidate;
+                    # the final EditText must still exactly equal the target.
+                    AllowVerifiedFirstCandidate = $false
+                }
+            }
+        }
+
+        # Optional approved device-side Unicode bridge. This remains a fallback
+        # when the native candidate path cannot produce an exact phrase.
         UnicodeIme = @{
             Enabled = $false
             HumanApproved = $false

@@ -141,6 +141,20 @@ test("all known states clear the score and margin gates; unmatched UI falls back
   }
 });
 
+test("current obfuscated search results use visible search action and scrollable list evidence", () => {
+  const currentUi = hierarchy(
+    node({ text: "adidas", class: "android.widget.TextView", clickable: "true" }),
+    node({ text: "搜索", class: "android.widget.TextView", clickable: "true" }),
+    node({ text: "综合", class: "android.widget.TextView" }),
+    node({ text: "用户", class: "android.widget.TextView" }),
+    node({ "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true" }),
+  );
+  const result = classifyPage(currentUi, rules);
+  assert.equal(result.state, "SEARCH_RESULTS");
+  assert.equal(result.accepted, true);
+  assert.deepEqual(result.matchedEvidence, ["search-field", "result-tabs", "result-list"]);
+});
+
 test("ambiguous high-scoring states are rejected when the margin is below 0.15", () => {
   const ambiguousRules = {
     thresholds: { minimumScore: 0.85, minimumMargin: 0.15 },

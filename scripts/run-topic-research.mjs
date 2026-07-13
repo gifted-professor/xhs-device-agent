@@ -12,6 +12,8 @@ import { runResearchSession } from "./research-session.mjs";
 const execFileAsync = promisify(execFile);
 const SAFE_ALIAS = /^[A-Za-z0-9._-]{1,64}$/;
 const SAFE_SERIAL = /^\S{1,512}$/u;
+const SAFE_IME_SERVICE = /^[A-Za-z0-9._]+\/[A-Za-z0-9._$]+$/u;
+const BRIDGE_IME_SERVICE = /(?:com\.android\.xwkeyboard|com\.xueren|com\.truedian\.dragon)/iu;
 
 function entryError(code, message) {
   const error = new Error(message);
@@ -87,6 +89,61 @@ export async function validateLiveProviderConfig(taskInput, providerConfig, opti
   }
   if (taskGroupMembers === 0) {
     throw entryError("EMPTY_TASK_DEVICE_GROUP", "The task device group has no mapped devices");
+  }
+
+  const nativeIme = providerConfig.nativeIme;
+  if (nativeIme !== undefined) {
+    if (!nativeIme || typeof nativeIme !== "object" || Array.isArray(nativeIme)) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Native input method config must be an object");
+    }
+    const approvedAliases = Array.isArray(nativeIme.approvedAliases) ? nativeIme.approvedAliases : [];
+    const preferredServices = Array.isArray(nativeIme.preferredServices) ? nativeIme.preferredServices : [];
+    const validService = (service) => typeof service === "string" && SAFE_IME_SERVICE.test(service) && !BRIDGE_IME_SERVICE.test(service);
+    if (approvedAliases.some((alias) => !aliases.has(alias)) || new Set(approvedAliases).size !== approvedAliases.length) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Native input method aliases must be unique mapped aliases");
+    }
+    if (preferredServices.some((service) => !validService(service)) || new Set(preferredServices).size !== preferredServices.length) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Native input method services must be unique approved native services");
+    }
+    if (nativeIme.enabled === true && (nativeIme.humanApproved !== true || approvedAliases.length === 0 || preferredServices.length === 0)) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Enabled native input requires human approval, aliases, and preferred services");
+    }
+    if (typeof (nativeIme.calibrationProbe ?? "测试") !== "string" ||
+        !/^[\p{Script=Han}\s]{1,16}$/u.test(nativeIme.calibrationProbe ?? "测试") ||
+        typeof (nativeIme.calibrationPinyin ?? "ceshi") !== "string" ||
+        !/^[a-z]{1,64}$/u.test(nativeIme.calibrationPinyin ?? "ceshi")) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Native input calibration values are invalid");
+    }
+    const perDevice = nativeIme.perDevice ?? {};
+    if (!perDevice || typeof perDevice !== "object" || Array.isArray(perDevice)) {
+      throw entryError("INVALID_NATIVE_IME_CONFIG", "Native per-device input profiles must be an object");
+    }
+    for (const [alias, profile] of Object.entries(perDevice)) {
+      if (!aliases.has(alias) || !profile || typeof profile !== "object" || Array.isArray(profile)) {
+        throw entryError("INVALID_NATIVE_IME_CONFIG", "Native per-device input profile is invalid");
+      }
+      const services = [profile.preferredService, ...(Array.isArray(profile.preferredServices) ? profile.preferredServices : [])].filter(Boolean);
+      if (services.some((service) => !validService(service))) {
+        throw entryError("INVALID_NATIVE_IME_CONFIG", "Native per-device input service is invalid");
+      }
+      if (profile.allowVerifiedFirstCandidate !== undefined && typeof profile.allowVerifiedFirstCandidate !== "boolean") {
+        throw entryError("INVALID_NATIVE_IME_CONFIG", "Native first-candidate verification flag must be boolean");
+      }
+      const toggle = profile.chineseModeToggle;
+      if (toggle !== undefined && toggle !== null) {
+        const integers = [toggle.x, toggle.y, toggle.displayWidth, toggle.displayHeight, toggle.densityDpi];
+        if (!toggle || typeof toggle !== "object" || Array.isArray(toggle) ||
+            toggle.humanApproved !== true || !validService(toggle.imeService) ||
+            !services.includes(toggle.imeService) || integers.some((value) => !Number.isInteger(value)) ||
+            toggle.displayWidth < 320 || toggle.displayWidth > 4320 ||
+            toggle.displayHeight < 480 || toggle.displayHeight > 7680 ||
+            toggle.densityDpi < 100 || toggle.densityDpi > 1000 ||
+            toggle.x < 0 || toggle.x >= toggle.displayWidth ||
+            toggle.y < Math.floor(toggle.displayHeight * 0.65) || toggle.y >= toggle.displayHeight) {
+          throw entryError("INVALID_NATIVE_IME_CONFIG", "Native per-device Chinese-mode toggle calibration is invalid");
+        }
+      }
+    }
   }
 
   const inventory = options.listOnlineDevices ?? listOnlineAdbDevices;

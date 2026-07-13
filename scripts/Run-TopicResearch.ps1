@@ -85,6 +85,39 @@ $approvedAliases = @()
 if ($unicodeEnabled -and $unicodeIme.ApprovedAliases) {
     $approvedAliases = @($unicodeIme.ApprovedAliases | Where-Object { $seenAliases.ContainsKey([string]$_) } | Select-Object -Unique)
 }
+$nativeIme = if ($config.TextInput -and $config.TextInput.NativeIme) { $config.TextInput.NativeIme } elseif ($config.InputMethod) { $config.InputMethod } else { $null }
+$nativeEnabled = [bool]($nativeIme -and $nativeIme.Enabled -and $nativeIme.HumanApproved)
+$nativeApprovedAliases = @()
+if ($nativeEnabled -and $nativeIme.ApprovedAliases) {
+    $nativeApprovedAliases = @($nativeIme.ApprovedAliases | Where-Object { $seenAliases.ContainsKey([string]$_) } | Select-Object -Unique)
+}
+$nativePreferredServices = @()
+if ($nativeIme -and $nativeIme.PreferredServices) {
+    $nativePreferredServices = @($nativeIme.PreferredServices | ForEach-Object { [string]$_ } | Select-Object -Unique)
+}
+$nativePerDevice = [ordered]@{}
+if ($nativeIme -and $nativeIme.PerDevice) {
+    foreach ($aliasKey in $nativeIme.PerDevice.Keys) {
+        $alias = [string]$aliasKey
+        if (!$seenAliases.ContainsKey($alias)) { continue }
+        $profile = $nativeIme.PerDevice[$aliasKey]
+        $toggle = if ($profile.ChineseModeToggle) { $profile.ChineseModeToggle } else { $null }
+        $nativePerDevice[$alias] = [ordered]@{
+            preferredService = if ($profile.PreferredService) { [string]$profile.PreferredService } else { "" }
+            preferredServices = if ($profile.PreferredServices) { @($profile.PreferredServices | ForEach-Object { [string]$_ } | Select-Object -Unique) } else { @() }
+            allowVerifiedFirstCandidate = [bool]($profile.AllowVerifiedFirstCandidate)
+            chineseModeToggle = if ($toggle) { [ordered]@{
+                humanApproved = [bool]($toggle.HumanApproved)
+                imeService = if ($toggle.ImeService) { [string]$toggle.ImeService } else { "" }
+                x = [int]$toggle.X
+                y = [int]$toggle.Y
+                displayWidth = [int]$toggle.DisplayWidth
+                displayHeight = [int]$toggle.DisplayHeight
+                densityDpi = [int]$toggle.DensityDpi
+            } } else { $null }
+        }
+    }
+}
 $providerConfig = [ordered]@{
     adbPath = [string]$config.AdbPath
     packageName = if ($config.Xhs -and $config.Xhs.PackageName) { [string]$config.Xhs.PackageName } else { "com.xingin.xhs" }
@@ -94,6 +127,15 @@ $providerConfig = [ordered]@{
         action = if ($unicodeIme -and $unicodeIme.Action) { [string]$unicodeIme.Action } else { "ADB_INPUT_B64" }
         extraKey = if ($unicodeIme -and $unicodeIme.ExtraKey) { [string]$unicodeIme.ExtraKey } else { "msg" }
         approvedAliases = $approvedAliases
+    }
+    nativeIme = [ordered]@{
+        enabled = $nativeEnabled
+        humanApproved = [bool]($nativeIme -and $nativeIme.HumanApproved)
+        preferredServices = $nativePreferredServices
+        approvedAliases = $nativeApprovedAliases
+        calibrationProbe = if ($nativeIme -and $nativeIme.CalibrationProbe) { [string]$nativeIme.CalibrationProbe } else { "测试" }
+        calibrationPinyin = if ($nativeIme -and $nativeIme.CalibrationPinyin) { [string]$nativeIme.CalibrationPinyin } else { "ceshi" }
+        perDevice = $nativePerDevice
     }
 }
 

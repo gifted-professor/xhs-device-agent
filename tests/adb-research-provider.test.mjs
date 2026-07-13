@@ -44,14 +44,26 @@ const home = hierarchy(
     noteCard("1111111111111111", "首页推荐", "作者甲")),
 );
 
+const descriptorHome = hierarchy(
+  node({ text: "首页", "content-desc": "首页", clickable: "true" }),
+  node({ text: "发现" }),
+  node({
+    "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated",
+    class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true",
+  }, node({
+    class: "android.widget.FrameLayout", clickable: "false",
+    "content-desc": "笔记 适合通勤的轻便鞋子 来自小白 16赞",
+  }, node({ class: "android.widget.FrameLayout", clickable: "true" }, node({ text: "子节点作者文本" })))),
+);
+
 const searchEntry = hierarchy(
   node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: "搜索", focused: "true", clickable: "true", bounds: "[80,50][800,180]" }),
   node({ "resource-id": "com.xingin.xhs:id/search_submit", text: "搜索", clickable: "true", bounds: "[850,50][1060,180]" }),
 );
 
-function suggestions(keyword, values = ["summer commute capsule", "summer office outfit"]) {
+function suggestions(keyword, values = ["summer commute capsule", "summer office outfit"], editText = keyword) {
   return hierarchy(
-    node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: keyword, focused: "true", clickable: "true", bounds: "[80,50][800,180]" }),
+    node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: editText, focused: "true", clickable: "true", bounds: "[80,50][800,180]" }),
     node({ text: "搜索发现" }),
     node({ "resource-id": "com.xingin.xhs:id/search_suggestion_list", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true", bounds: "[0,200][1080,2200]" },
       values.map((value, index) => node({ "resource-id": `com.xingin.xhs:id/search_suggestion_${index}`, text: value, clickable: "true", bounds: `[20,${250 + index * 120}][1060,${350 + index * 120}]` })).join("")),
@@ -63,6 +75,25 @@ function results(keyword, cards) {
     node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: keyword, bounds: "[80,50][800,180]" }),
     node({ text: "综合" }),
     node({ "resource-id": "com.xingin.xhs:id/search_result_list", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true", bounds: "[0,300][1080,2200]" }, cards.join("")),
+  );
+}
+
+function nativeComposition(romanized, candidate) {
+  return hierarchy(
+    node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: romanized, focused: "true", clickable: "true", bounds: "[80,50][800,180]" }),
+    node({ text: "搜索发现" }),
+    node({ "resource-id": "com.xingin.xhs:id/search_suggestion_list", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true", bounds: "[0,200][1080,1900]" }),
+    node({ package: "com.sohu.inputmethod.sogou.xiaomi", text: candidate, class: "android.widget.TextView", clickable: "true", bounds: "[20,1900][300,2050]" }),
+  );
+}
+
+function textResults(keyword, cards) {
+  return hierarchy(
+    node({ text: keyword, class: "android.widget.TextView", clickable: "true" }),
+    node({ text: "搜索", class: "android.widget.TextView", clickable: "true" }),
+    node({ text: "综合" }),
+    node({ text: "最新" }),
+    node({ "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true" }, cards.join("")),
   );
 }
 
@@ -443,6 +474,244 @@ test("Chinese suggestions use only an approved base64 IME broadcast and return s
   assert.equal(mock.calls.some((call) => call.operation === "input_ascii"), false);
 });
 
+test("approved native IME is inventoried, calibrated, used by exact candidate, and restored", async () => {
+  const topic = "鞋子";
+  const first = results(topic, [noteCard("1212121212121212", "鞋子选购指南", "Alice")]);
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    nativeComposition("ceshi", "测试"), nativeComposition("ceshi", "测试"),
+    suggestions("测试"), suggestions("测试"),
+    searchEntry, searchEntry,
+    nativeComposition("xiezi", topic), nativeComposition("xiezi", topic),
+    suggestions(topic), suggestions(topic),
+    suggestions(topic), suggestions(topic),
+    first, first,
+  ]);
+  const bridge = "com.android.xwkeyboard/.XwIME";
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  const runner = async (spec) => {
+    const outputs = {
+      native_ime_default: `${bridge}\n`,
+      native_ime_inventory: `${native}\n${bridge}\n`,
+      native_ime_subtypes: "rank=1 item=ImeSubtypeListItem{mImeName=搜狗输入法小米版 mSubtypeName=中文（中国）}",
+      native_ime_select_verify: `${native}\n`,
+      native_ime_restore_verify: `${bridge}\n`,
+    };
+    if (Object.hasOwn(outputs, spec.operation)) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: outputs[spec.operation] };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    nativeIme: {
+      enabled: true,
+      humanApproved: true,
+      approvedAliases: ["content-01"],
+      preferredServices: [native],
+      calibrationProbe: "测试",
+      calibrationPinyin: "ceshi",
+      perDevice: { "content-01": { preferredService: native } },
+    },
+  });
+  const result = await provider.executeWorkUnit({
+    task: task({ topic }), unit: { source: "search", keyword: topic }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "鞋子选购指南");
+  assert.equal(mock.calls.filter((call) => call.operation === "native_ime_candidate").length, 2);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_select"), true);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_restore"), true);
+  assert.deepEqual(mock.calls.filter((call) => call.operation === "native_ime_pinyin").map((call) => call.args.slice(-5)), [
+    ["KEYCODE_C", "KEYCODE_E", "KEYCODE_S", "KEYCODE_H", "KEYCODE_I"],
+    ["KEYCODE_X", "KEYCODE_I", "KEYCODE_E", "KEYCODE_Z", "KEYCODE_I"],
+  ]);
+  assert.equal(mock.calls.some((call) => call.operation === "input_unicode_b64"), false);
+});
+
+test("native IME never treats matching Xiaohongshu text as a keyboard candidate", async () => {
+  const topic = "鞋子";
+  const xhsOnlyCandidate = hierarchy(
+    node({ "resource-id": "com.xingin.xhs:id/search_input", class: "android.widget.EditText", text: "ceshi", focused: "true", clickable: "true", bounds: "[80,50][800,180]" }),
+    node({ text: "搜索发现" }),
+    node({ package: "com.xingin.xhs", text: "测试", clickable: "true", bounds: "[20,300][300,420]" }),
+    node({ "resource-id": "com.xingin.xhs:id/search_suggestion_list", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true" }),
+  );
+  const mock = mockAdb([home, home, searchEntry, searchEntry, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate]);
+  const bridge = "com.android.xwkeyboard/.XwIME";
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  const runner = async (spec) => {
+    const outputs = {
+      native_ime_default: `${bridge}\n`,
+      native_ime_inventory: `${native}\n${bridge}\n`,
+      native_ime_subtypes: "rank=1 item=ImeSubtypeListItem{mImeName=搜狗输入法小米版 mSubtypeName=中文（中国）}",
+      native_ime_select_verify: `${native}\n`,
+      native_ime_restore_verify: `${bridge}\n`,
+    };
+    if (Object.hasOwn(outputs, spec.operation)) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: outputs[spec.operation] };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    nativeIme: { enabled: true, humanApproved: true, approvedAliases: ["content-01"], preferredServices: [native] },
+  });
+  const result = await provider.executeWorkUnit({ task: task({ topic }), unit: { source: "search", keyword: topic }, deviceAlias: "content-01" });
+  assert.equal(result.status, "human_required");
+  assert.equal(result.failureSignature, "input:native_ime_chinese_mode");
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_candidate"), false);
+  assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_restore"), true);
+});
+
+test("native IME stops before typing when an old search value survives select-all deletion", async () => {
+  const topic = "鞋子";
+  const stale = suggestions("sneaker", [], "sneaker");
+  const mock = mockAdb([home, home, searchEntry, searchEntry, stale, stale]);
+  const bridge = "com.android.xwkeyboard/.XwIME";
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  const runner = async (spec) => {
+    const outputs = {
+      native_ime_default: `${bridge}\n`,
+      native_ime_inventory: `${native}\n${bridge}\n`,
+      native_ime_subtypes: "rank=1 item=ImeSubtypeListItem{mImeName=搜狗输入法小米版 mSubtypeName=中文（中国）}",
+      native_ime_select_verify: `${native}\n`,
+      native_ime_restore_verify: `${bridge}\n`,
+    };
+    if (Object.hasOwn(outputs, spec.operation)) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: outputs[spec.operation] };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    nativeIme: { enabled: true, humanApproved: true, approvedAliases: ["content-01"], preferredServices: [native] },
+  });
+  const result = await provider.executeWorkUnit({ task: task({ topic }), unit: { source: "search", keyword: topic }, deviceAlias: "content-01" });
+  assert.equal(result.status, "human_required");
+  assert.equal(result.failureSignature, "input:native_ime_clear_failed");
+  assert.equal(mock.calls.some((call) => call.operation === "select_all_search"), true);
+  assert.equal(mock.calls.some((call) => call.operation === "delete_selected_search"), true);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_pinyin"), false);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_restore"), true);
+});
+
+test("an approved per-device language-key coordinate is gated by display, IME, keyboard visibility, and exact echo", async () => {
+  const topic = "闉嬪瓙";
+  const probe = "娴嬭瘯";
+  const hiddenProbe = suggestions("ceshi", [], "ceshi");
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    hiddenProbe, hiddenProbe,
+    searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    nativeComposition("ceshi", probe), nativeComposition("ceshi", probe),
+    suggestions(probe), suggestions(probe),
+    searchEntry, searchEntry,
+    nativeComposition("xiezi", topic), nativeComposition("xiezi", topic),
+    suggestions(topic, ["闉嬪瓙鎺ㄨ崘"]), suggestions(topic, ["闉嬪瓙鎺ㄨ崘"]),
+  ]);
+  const bridge = "com.android.xwkeyboard/.XwIME";
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  const runner = async (spec) => {
+    const outputs = {
+      native_ime_default: `${bridge}\n`,
+      native_ime_inventory: `${native}\n${bridge}\n`,
+      native_ime_subtypes: "rank=1 item=ImeSubtypeListItem{mImeName=搜狗输入法小米版 mSubtypeName=中文（中国）}",
+      native_ime_select_verify: `${native}\n`,
+      native_ime_toggle_size: "Physical size: 1080x2400\n",
+      native_ime_toggle_density: "Physical density: 440\n",
+      native_ime_toggle_default: `${native}\n`,
+      native_ime_toggle_visibility: `mCurMethodId=${native}\nmInputShown=true\n`,
+      native_ime_restore_verify: `${bridge}\n`,
+    };
+    if (Object.hasOwn(outputs, spec.operation)) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: outputs[spec.operation] };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    nativeIme: {
+      enabled: true,
+      humanApproved: true,
+      approvedAliases: ["content-01"],
+      preferredServices: [native],
+      calibrationProbe: probe,
+      calibrationPinyin: "ceshi",
+      perDevice: {
+        "content-01": {
+          preferredService: native,
+          chineseModeToggle: {
+            humanApproved: true,
+            imeService: native,
+            x: 820,
+            y: 2180,
+            displayWidth: 1080,
+            displayHeight: 2400,
+            densityDpi: 440,
+          },
+        },
+      },
+    },
+  });
+  const values = await provider.collectTopicSuggestions({ task: task({ topic }), deviceAlias: "content-01" });
+  assert.deepEqual(values, ["闉嬪瓙鎺ㄨ崘"]);
+  const coordinateTap = mock.calls.find((call) => call.operation === "native_ime_chinese_mode_coordinate");
+  assert.deepEqual(coordinateTap.args.slice(-2), ["820", "2180"]);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_restore"), true);
+});
+
+test("approved hidden native candidate may use SPACE only when exact echo verifies it", async () => {
+  const topic = "鞋子";
+  const hiddenProbe = suggestions("ceshi", [], "ceshi");
+  const hiddenTopic = suggestions("xiezi", [], "xiezi");
+  const first = results(topic, [noteCard("3434343434343434", "鞋子指南", "Alice")]);
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    hiddenProbe, hiddenProbe, suggestions("测试"), suggestions("测试"),
+    searchEntry, searchEntry,
+    hiddenTopic, hiddenTopic, suggestions(topic), suggestions(topic),
+    suggestions(topic), suggestions(topic), first, first,
+  ]);
+  const bridge = "com.android.xwkeyboard/.XwIME";
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  const runner = async (spec) => {
+    const outputs = {
+      native_ime_default: `${bridge}\n`,
+      native_ime_inventory: `${native}\n${bridge}\n`,
+      native_ime_subtypes: "rank=1 item=ImeSubtypeListItem{mImeName=搜狗输入法小米版 mSubtypeName=中文（中国）}",
+      native_ime_select_verify: `${native}\n`,
+      native_ime_restore_verify: `${bridge}\n`,
+    };
+    if (Object.hasOwn(outputs, spec.operation)) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: outputs[spec.operation] };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    nativeIme: {
+      enabled: true, humanApproved: true, approvedAliases: ["content-01"], preferredServices: [native],
+      perDevice: { "content-01": { preferredService: native, allowVerifiedFirstCandidate: true } },
+    },
+  });
+  const result = await provider.executeWorkUnit({ task: task({ topic }), unit: { source: "search", keyword: topic }, deviceAlias: "content-01" });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "鞋子指南");
+  assert.equal(mock.calls.filter((call) => call.operation === "native_ime_first_candidate").length, 2);
+  assert.equal(mock.calls.some((call) => call.operation === "native_ime_restore"), true);
+});
+
 test("an explicitly approved per-device Xiaowei text adapter takes priority over the Unicode IME", async () => {
   const topic = "夏季通勤穿搭";
   const delivered = [];
@@ -477,6 +746,70 @@ test("an exact EditText mismatch stops instead of submitting a potentially garbl
   assert.equal(result.status, "human_required");
   assert.equal(result.failureSignature, "input:verification_failed");
   assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
+});
+
+test("recommended feed cards with obfuscated IDs are extracted from public descriptors", async () => {
+  const mock = mockAdb([descriptorHome, descriptorHome]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 5, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 0, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "recommended", keyword: "sneakers" }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "适合通勤的轻便鞋子");
+  assert.equal(result.candidates[0].author, "小白");
+  assert.equal(result.candidates[0].mediaType, "image");
+});
+
+test("an exact visible search-results echo can be read without re-entering the keyword", async () => {
+  const page = textResults("sneakers", [noteCard("7777777777777777", "Visible result", "Alice")]);
+  const mock = mockAdb([page, page]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 5, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 0, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "search", keyword: "sneakers" }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "Visible result");
+  assert.equal(mock.calls.some((call) => call.operation === "input_ascii" || call.operation === "tap_search_entry"), false);
+});
+
+test("search echo accepts the current localized hint prefix", async () => {
+  const keyword = "sneakers";
+  const first = results(keyword, [noteCard("5555555555555555", "Sneaker guide", "Alice")]);
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    suggestions(keyword, ["sneakers shoes"], "搜索, sneakers"),
+    suggestions(keyword, ["sneakers shoes"], "搜索, sneakers"),
+    first, first,
+  ]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task(), unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "Sneaker guide");
+  assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), true);
+});
+
+test("space-separated ASCII input retries with explicit spaces when %s is dropped", async () => {
+  const keyword = "running shoes";
+  const first = results(keyword, [noteCard("6666666666666666", "Running shoe guide", "Alice")]);
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    suggestions(keyword, ["running shoes"], "runningshoes"),
+    suggestions(keyword, ["running shoes"], "runningshoes"),
+    suggestions(keyword, ["running shoes"], "running shoes"),
+    suggestions(keyword, ["running shoes"], "running shoes"),
+    first, first,
+  ]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task(), unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "Running shoe guide");
+  assert.equal(mock.calls.some((call) => call.operation === "input_ascii_space"), true);
 });
 
 test("login and challenge UI hard-stops before recovery, tapping, scrolling, or cloud-visible artifacts", async () => {

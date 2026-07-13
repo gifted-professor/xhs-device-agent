@@ -4,11 +4,19 @@
 
 1. **任务层**：Hermes 只投递符合 `research-task.schema.json` 的 JSON。任务必须是 `research_read_only` 和 `human_final`。
 2. **研究编排层**：`research-core.mjs` 校验任务，按稳定哈希分配工作单元，限制三台并行、单机串行，并处理幂等、预算、去重、设备隔离和全局熔断。
-3. **设备执行层**：`adb-research-provider.mjs` 启动 App、读取 UI 层级、解析页面、输入搜索词、滚动列表并提取公开候选。设备序列号只存在于本地配置，运行记录使用别名。
-4. **页面规则层**：`xhs-page-engine.mjs` 使用公共版本规则和可选设备覆盖规则评分页面，并按语义选择器解析目标。
-5. **AI 事件层**：`ai-role-runner.mjs` 仅在主题规划、页面恢复、结果分析或人工请求草稿时调用模型；缓存和预算独立记录。
-6. **人机协作层**：效卫提供投屏、分组和单机人工接管。任何对外互动都不进入自动执行器。
-7. **结果层**：本地 JSON/JSONL 是真相源；飞书只作为候选和人工审核状态的可选镜像。
+3. **输入法档案层**：逐机盘点原生中文输入法，校准语言模式，保存别名级状态，并对每次非 ASCII 输入做精确回显。
+4. **设备执行层**：`adb-research-provider.mjs` 启动 App、读取 UI 层级、解析页面、输入搜索词、滚动列表并提取公开候选。设备序列号只存在于本地配置，运行记录使用别名。
+5. **页面规则层**：`xhs-page-engine.mjs` 使用公共版本规则和可选设备覆盖规则评分页面，并按语义选择器解析目标。
+6. **AI 事件层**：`ai-role-runner.mjs` 仅在主题规划、页面恢复、结果分析或人工请求草稿时调用模型；缓存和预算独立记录。
+7. **人机协作层**：效卫提供投屏、分组和单机人工接管。任何对外互动都不进入自动执行器。
+8. **结果层**：本地 JSON/JSONL 是真相源；飞书只作为候选和人工审核状态的可选镜像。
+
+## Text input strategy
+
+- Prefer a per-device native IME profile with a verified `中文（中国）` subtype. The profile and calibration status are described in `docs/INPUT_METHOD_WORKFLOW.md` and `config/input-methods.example.psd1`.
+- Do not assume a universal language-switch API. The IME may require a one-time UI calibration of its `中/英` mode.
+- Before each non-ASCII input, verify the focused edit field and selected IME; after input, read the field and require an exact echo.
+- If calibration or echo fails twice on one device, capture evidence and stop that device. Do not silently fall back to an unverified computer/bridge keyboard.
 
 ## 只读研究状态机
 
@@ -84,11 +92,12 @@ flowchart TD
 
 输入顺序为：
 
-1. 已通过逐动作验收的效卫逐机文本 API；
-2. 经人工批准、按设备别名标定的 Unicode 设备端输入法；
-3. 效卫桌面由人工粘贴。
+1. 经人工批准、按设备别名标定且具有中文子类型的原生输入法；
+2. 已通过逐动作验收的效卫逐机文本 API；
+3. 经人工批准、按设备别名标定的 Unicode 设备端输入法；
+4. 效卫桌面由人工粘贴。
 
-普通 ASCII 搜索词可以使用 ADB 文本输入。普通 `adb shell input text` 不用于中文。任何输入完成后必须重新读取搜索框并逐字确认回显；不一致时返回 `human_required`，不能提交乱码搜索。
+普通 ASCII 搜索词可以使用 ADB 文本输入。原生输入法路径只把 ASCII 拼音送入当前输入法，再从新鲜 UI 层级精确选择完整中文候选；普通 `adb shell input text` 不直接承载中文。任何输入完成后必须重新读取搜索框并逐字确认回显，随后恢复任务开始前的默认输入法；不一致时返回 `human_required`，不能提交乱码搜索。
 
 ## AI 介入点
 

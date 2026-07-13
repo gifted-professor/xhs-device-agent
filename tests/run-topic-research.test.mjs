@@ -44,6 +44,80 @@ test("live gate accepts unique mappings with explicit groups and a non-empty tas
   ));
 });
 
+test("live gate accepts only approved native Chinese IME profiles", async () => {
+  const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
+  await assert.doesNotReject(validateLiveProviderConfig(
+    await task(),
+    {
+      ...providerConfig(mappedDevices),
+      nativeIme: {
+        enabled: true,
+        humanApproved: true,
+        approvedAliases: ["content-01"],
+        preferredServices: [native],
+        calibrationProbe: "测试",
+        calibrationPinyin: "ceshi",
+        perDevice: {
+          "content-01": {
+            preferredService: native,
+            chineseModeToggle: {
+              humanApproved: true,
+              imeService: native,
+              x: 820,
+              y: 2180,
+              displayWidth: 1080,
+              displayHeight: 2400,
+              densityDpi: 440,
+            },
+          },
+        },
+      },
+    },
+    { listOnlineDevices: async () => ["test-serial-a", "test-serial-b"] },
+  ));
+
+  await assert.rejects(
+    validateLiveProviderConfig(
+      await task(),
+      {
+        ...providerConfig(mappedDevices),
+        nativeIme: {
+          enabled: true,
+          humanApproved: true,
+          approvedAliases: ["content-01"],
+          preferredServices: ["com.android.xwkeyboard/.XwIME"],
+        },
+      },
+      { listOnlineDevices: async () => ["test-serial-a", "test-serial-b"] },
+    ),
+    (error) => error.code === "INVALID_NATIVE_IME_CONFIG",
+  );
+
+  for (const chineseModeToggle of [
+    { humanApproved: false, imeService: native, x: 820, y: 2180, displayWidth: 1080, displayHeight: 2400, densityDpi: 440 },
+    { humanApproved: true, imeService: native, x: 820, y: 400, displayWidth: 1080, displayHeight: 2400, densityDpi: 440 },
+    { humanApproved: true, imeService: "com.baidu.input_mi/.ImeService", x: 820, y: 2180, displayWidth: 1080, displayHeight: 2400, densityDpi: 440 },
+  ]) {
+    await assert.rejects(
+      validateLiveProviderConfig(
+        await task(),
+        {
+          ...providerConfig(mappedDevices),
+          nativeIme: {
+            enabled: true,
+            humanApproved: true,
+            approvedAliases: ["content-01"],
+            preferredServices: [native],
+            perDevice: { "content-01": { preferredService: native, chineseModeToggle } },
+          },
+        },
+        { listOnlineDevices: async () => ["test-serial-a", "test-serial-b"] },
+      ),
+      (error) => error.code === "INVALID_NATIVE_IME_CONFIG",
+    );
+  }
+});
+
 test("live gate rejects implicit groups, duplicate aliases, duplicate identifiers, and an empty task group", async () => {
   const cases = [
     [
