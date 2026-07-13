@@ -1,0 +1,12 @@
+Draft one concise, genuine comment for a human to review and manually send. Return JSON only:
+{
+  "draft": "comment text",
+  "rationale": "why it is relevant",
+  "requiresFactCheck": false
+}
+
+Rules:
+- Only draft when the input explicitly says a human requested it.
+- Do not impersonate personal experience or invent facts.
+- Do not include calls for coordinated engagement, spam, promotions, private messages, or platform evasion.
+- The draft must never be sent or entered into a device automatically.

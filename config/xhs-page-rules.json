@@ -1,0 +1,590 @@
+{
+  "schemaVersion": 1,
+  "description": "Deterministic, read-only Xiaohongshu UI state rules. Device overrides must use aliases and an exact calibrated app version.",
+  "thresholds": {
+    "minimumScore": 0.85,
+    "minimumMargin": 0.15
+  },
+  "profiles": [
+    {
+      "id": "xhs-common",
+      "match": {
+        "xhsVersion": "*",
+        "androidSdk": "*"
+      },
+      "states": [
+        {
+          "state": "HOME_FEED",
+          "evidence": [
+            {
+              "id": "home-navigation",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["tab_home", "home_tab", "bottom_home"] },
+                { "attribute": "text", "match": "exact", "values": ["首页"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["首页"] }
+              ]
+            },
+            {
+              "id": "feed-channel",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["关注", "发现", "推荐"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["关注", "发现", "推荐"] }
+              ]
+            },
+            {
+              "id": "feed-container",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["home_feed", "feed_list", "note_list"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "search-overlay",
+              "weight": 0.7,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "综合", "最新"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result", "search_suggestion"] }
+              ]
+            },
+            {
+              "id": "modal-overlay",
+              "weight": 0.7,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_panel", "update_dialog"] },
+                { "attribute": "text", "match": "exact", "values": ["发现新版本", "版本更新"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "SEARCH_ENTRY",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.45,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "search-action",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+              ]
+            },
+            {
+              "id": "input-focused",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "focused", "equals": true },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "suggestion-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+              ]
+            },
+            {
+              "id": "result-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "SEARCH_SUGGESTIONS",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "suggestion-heading",
+              "weight": 0.45,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "大家都在搜"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜"] }
+              ]
+            },
+            {
+              "id": "suggestion-container",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "result-tabs",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "SEARCH_RESULTS",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "result-tabs",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户", "商品"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_filter", "result_tab"] }
+              ]
+            },
+            {
+              "id": "result-list",
+              "weight": 0.4,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result", "result_list", "note_list"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["搜索结果|笔记列表"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "suggestion-heading",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "TRENDING",
+          "evidence": [
+            {
+              "id": "trending-heading",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["热搜榜", "小红书热搜", "热点榜", "实时热点"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["hot_search_title", "trending_title"] }
+              ]
+            },
+            {
+              "id": "rank-or-heat",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["hot_rank", "heat_value", "trending_rank"] },
+                { "attribute": "text", "match": "regex", "values": ["^\\d+[.、]?$", "热度$", "^热$"] }
+              ]
+            },
+            {
+              "id": "trending-list",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["hot_search_list", "trending_list"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "RECOMMENDED",
+          "evidence": [
+            {
+              "id": "recommendation-heading",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["猜你想看", "猜你喜欢", "为你推荐", "相关推荐"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["recommend_title", "guess_you_like"] }
+              ]
+            },
+            {
+              "id": "recommendation-reason",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "text", "match": "regex", "values": ["因为你.*浏览", "你可能感兴趣", "相关推荐"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["recommend_reason"] }
+              ]
+            },
+            {
+              "id": "recommendation-list",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["recommend_list", "related_note", "note_list"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "home-navigation",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["tab_home", "bottom_home"] },
+                { "attribute": "text", "match": "exact", "values": ["首页"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "IMAGE_NOTE",
+          "evidence": [
+            {
+              "id": "image-note-marker",
+              "weight": 0.45,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["image_pager", "note_image", "photo_view"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图", "图文"] }
+              ]
+            },
+            {
+              "id": "note-metadata",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["作者|笔记正文"] }
+              ]
+            },
+            {
+              "id": "note-comment-entry",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
+                { "attribute": "text", "match": "exact", "values": ["评论"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "video-player",
+              "weight": 0.8,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["video_player", "player_view"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["播放", "暂停"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "VIDEO_NOTE",
+          "evidence": [
+            {
+              "id": "video-note-marker",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["video_player", "player_view", "video_progress"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["播放", "暂停", "视频"] }
+              ]
+            },
+            {
+              "id": "note-metadata",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["作者|笔记正文"] }
+              ]
+            },
+            {
+              "id": "note-comment-entry",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
+                { "attribute": "text", "match": "exact", "values": ["评论"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "image-pager",
+              "weight": 0.8,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["image_pager", "photo_view"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "COMMENT_PANEL",
+          "evidence": [
+            {
+              "id": "comment-heading",
+              "weight": 0.4,
+              "any": [
+                { "attribute": "text", "match": "regex", "values": ["^(?:全部)?评论$", "^共.*条评论$"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_title", "comment_count_title"] }
+              ]
+            },
+            {
+              "id": "comment-input",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["说点什么...", "说点什么", "友善评论"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["说点什么", "添加评论"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_input"] }
+              ]
+            },
+            {
+              "id": "comment-modal",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["comment_panel", "comment_sheet", "comment_dialog"] },
+                { "attribute": "className", "match": "exact", "values": ["android.app.Dialog"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "NETWORK_ERROR",
+          "evidence": [
+            {
+              "id": "network-error-message",
+              "weight": 0.65,
+              "any": [
+                { "attribute": "text", "match": "regex", "values": ["网络开小差", "网络异常", "加载失败", "无网络连接", "连接失败"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["network_error", "load_error"] }
+              ]
+            },
+            {
+              "id": "retry-action",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["重试", "重新加载", "刷新"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["重试", "重新加载"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["retry", "reload"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "UPDATE_MODAL",
+          "evidence": [
+            {
+              "id": "update-heading",
+              "weight": 0.4,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["发现新版本", "版本更新", "升级提示"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["update_title", "upgrade_title"] }
+              ]
+            },
+            {
+              "id": "update-action",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["立即更新", "立即升级", "更新"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["update_now", "upgrade_now"] }
+              ]
+            },
+            {
+              "id": "update-dismiss",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["以后再说", "暂不更新", "取消"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["update_later", "upgrade_cancel"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "LOGIN_OR_CHALLENGE",
+          "evidence": [
+            {
+              "id": "auth-heading",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["登录", "安全验证", "身份验证", "账号验证", "请完成验证"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["login_title", "security_verify", "captcha_title"] }
+              ]
+            },
+            {
+              "id": "auth-input-or-challenge",
+              "weight": 0.35,
+              "any": [
+                { "attribute": "text", "match": "regex", "values": ["手机号", "验证码", "拖动.*滑块", "图形验证", "重新验证"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["phone_input", "verification_code", "captcha", "slider"] },
+                { "attribute": "password", "equals": true }
+              ]
+            },
+            {
+              "id": "auth-secondary",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "text", "match": "regex", "values": ["其他登录方式", "同意.*协议", "账号存在风险", "操作过于频繁", "请完成验证"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["login_agreement", "other_login", "risk_tip"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "UNKNOWN",
+          "fallback": true,
+          "evidence": []
+        }
+      ],
+      "semanticTargets": {
+        "home_tab": [
+          { "strategy": "resource-id", "match": "includes", "values": ["tab_home", "home_tab", "bottom_home"] },
+          { "strategy": "text", "values": ["首页"] },
+          { "strategy": "content-desc", "values": ["首页"] },
+          {
+            "id": "home-label-clickable-ancestor",
+            "strategy": "relation",
+            "direction": "ancestor",
+            "maxDepth": 3,
+            "anchor": { "attribute": "text", "match": "exact", "values": ["首页"] },
+            "node": { "attribute": "clickable", "equals": true }
+          }
+        ],
+        "search_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          { "strategy": "text", "values": ["搜索"] },
+          { "strategy": "content-desc", "values": ["搜索"] },
+          {
+            "id": "search-label-clickable-ancestor",
+            "strategy": "relation",
+            "direction": "ancestor",
+            "maxDepth": 3,
+            "anchor": { "attribute": "text", "match": "exact", "values": ["搜索"] },
+            "node": { "attribute": "clickable", "equals": true }
+          }
+        ],
+        "search_submit": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          { "strategy": "text", "values": ["搜索"] },
+          { "strategy": "content-desc", "values": ["搜索"] }
+        ],
+        "trending_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["hot_search", "trending"] },
+          { "strategy": "text", "values": ["热搜榜", "小红书热搜"] },
+          { "strategy": "content-desc", "values": ["热搜榜", "小红书热搜"] }
+        ],
+        "recommendation_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["recommend", "guess_you_like"] },
+          { "strategy": "text", "values": ["猜你想看", "猜你喜欢", "为你推荐"] },
+          { "strategy": "content-desc", "values": ["猜你想看", "猜你喜欢", "为你推荐"] }
+        ],
+        "comments_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["comment_entry", "comment_count"] },
+          { "strategy": "text", "values": ["评论"] },
+          { "strategy": "content-desc", "values": ["评论", "查看评论"] },
+          {
+            "id": "comment-label-clickable-ancestor",
+            "strategy": "relation",
+            "direction": "ancestor",
+            "maxDepth": 3,
+            "anchor": { "attribute": "text", "match": "exact", "values": ["评论"] },
+            "node": { "attribute": "clickable", "equals": true }
+          }
+        ],
+        "retry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["retry", "reload"] },
+          { "strategy": "text", "values": ["重试", "重新加载", "刷新"] },
+          { "strategy": "content-desc", "values": ["重试", "重新加载"] }
+        ],
+        "dismiss_update": [
+          { "strategy": "resource-id", "match": "includes", "values": ["update_later", "upgrade_cancel"] },
+          { "strategy": "text", "values": ["以后再说", "暂不更新", "取消"] },
+          { "strategy": "content-desc", "values": ["关闭"] }
+        ],
+        "note_card": [
+          { "strategy": "resource-id", "match": "includes", "values": ["note_card", "feed_item"] },
+          {
+            "id": "title-clickable-card-ancestor",
+            "strategy": "relation",
+            "direction": "ancestor",
+            "maxDepth": 4,
+            "anchor": { "attribute": "resourceId", "match": "includes", "values": ["note_title"] },
+            "node": { "attribute": "clickable", "equals": true }
+          }
+        ]
+      }
+    }
+  ],
+  "deviceOverrides": [],
+  "safety": {
+    "humanRequiredStates": ["LOGIN_OR_CHALLENGE"],
+    "blockCloudStates": ["LOGIN_OR_CHALLENGE"],
+    "patterns": [
+      {
+        "id": "login-screen",
+        "any": [
+          { "attribute": "text", "match": "exact", "values": ["登录", "手机号登录", "其他登录方式"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["login_title", "phone_input"] },
+          { "attribute": "password", "equals": true }
+        ]
+      },
+      {
+        "id": "identity-or-risk-challenge",
+        "challenge": true,
+        "any": [
+          { "attribute": "text", "match": "regex", "values": ["安全验证", "身份验证", "请完成验证", "验证码", "拖动.*滑块", "账号存在风险", "操作过于频繁"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["captcha", "security_verify", "risk_tip", "slider"] }
+        ]
+      },
+      {
+        "id": "private-message-screen",
+        "any": [
+          { "attribute": "text", "match": "exact", "values": ["私信", "发送私信", "聊天详情"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["private_message", "chat_input"] }
+        ]
+      },
+      {
+        "id": "contacts-screen",
+        "any": [
+          { "attribute": "text", "match": "exact", "values": ["通讯录", "联系人"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["contacts_list", "address_book"] }
+        ]
+      },
+      {
+        "id": "payment-screen",
+        "any": [
+          { "attribute": "text", "match": "exact", "values": ["支付", "付款", "收银台", "银行卡"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["payment", "cashier", "bank_card"] }
+        ]
+      },
+      {
+        "id": "permission-prompt",
+        "challenge": true,
+        "any": [
+          { "attribute": "text", "match": "regex", "values": ["权限申请", "系统权限", "应用权限", "允许访问", "始终允许", "仅在使用时允许", "不允许", "授权访问", "相机权限", "麦克风权限", "通知权限", "位置权限"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["permission", "grant_dialog", "allow_button"] }
+        ]
+      },
+      {
+        "id": "orders-account-or-private-screen",
+        "any": [
+          { "attribute": "text", "match": "exact", "values": ["我的订单", "订单详情", "交易详情", "收货地址", "账号与安全", "隐私设置", "实名认证"] },
+          { "attribute": "resourceId", "match": "includes", "values": ["order_detail", "shipping_address", "account_security", "privacy_settings", "real_name"] }
+        ]
+      }
+    ]
+  }
+}

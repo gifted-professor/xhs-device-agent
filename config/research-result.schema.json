@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/research-result.schema.json",
+  "title": "XHS read-only research result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "taskId", "taskHash", "effectiveTaskHash", "status",
+    "counts", "paths", "artifacts"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
+    "taskHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "effectiveTaskHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "status": { "enum": ["completed", "partial", "human_required", "failed", "duplicate"] },
+    "counts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["queries", "notes", "duplicates", "modelCalls"],
+      "properties": {
+        "queries": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "integer", "minimum": 0 },
+        "duplicates": { "type": "integer", "minimum": 0 },
+        "modelCalls": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "workUnits": { "type": "integer", "minimum": 0 },
+        "completedUnits": { "type": "integer", "minimum": 0 },
+        "failedUnits": { "type": "integer", "minimum": 0 },
+        "skippedUnits": { "type": "integer", "minimum": 0 },
+        "budgetCappedUnits": { "type": "integer", "minimum": 0 },
+        "candidates": { "type": "integer", "minimum": 0 },
+        "humanReview": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "devices": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }
+    },
+    "globalFuse": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["signature", "reason"],
+      "properties": {
+        "signature": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "reason": { "enum": ["SAME_FAILURE_ON_TWO_DEVICES", "PROVIDER_STOP"] }
+      }
+    },
+    "aiCallsUsed": { "type": "integer", "minimum": 0, "maximum": 4 },
+    "reason": { "type": "string", "minLength": 1 },
+    "originalStatus": { "enum": ["completed", "partial", "human_required", "failed"] },
+    "duplicate": { "type": "boolean" },
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["taskDirectory", "candidatesJsonl", "humanReviewJsonl", "summaryJson", "eventsDirectory"],
+      "properties": {
+        "taskDirectory": { "type": "string", "minLength": 1 },
+        "candidatesJsonl": { "type": "string", "minLength": 1 },
+        "humanReviewJsonl": { "type": "string", "minLength": 1 },
+        "summaryJson": { "type": "string", "minLength": 1 },
+        "checkpointJson": { "type": "string", "minLength": 1 },
+        "aiStatusJson": { "type": "string", "minLength": 1 },
+        "analysisJson": { "type": "string", "minLength": 1 },
+        "maintenanceRequestJson": { "type": "string", "minLength": 1 },
+        "eventsDirectory": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "candidates", "reviewQueue", "summary",
+        "candidatesJsonl", "humanReviewJsonl", "summaryJson"
+      ],
+      "properties": {
+        "candidates": { "type": "string", "minLength": 1 },
+        "reviewQueue": { "type": "string", "minLength": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "candidatesJsonl": { "type": "string", "minLength": 1 },
+        "humanReviewJsonl": { "type": "string", "minLength": 1 },
+        "summaryJson": { "type": "string", "minLength": 1 },
+        "analysis": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

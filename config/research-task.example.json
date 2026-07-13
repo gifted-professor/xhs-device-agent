@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "taskId": "xhs-20260713-001",
+  "mode": "research_read_only",
+  "topic": "夏季通勤穿搭",
+  "seedKeywords": [
+    "夏季通勤穿搭"
+  ],
+  "sources": [
+    "search",
+    "suggestions",
+    "trending",
+    "recommended"
+  ],
+  "deviceGroup": "content",
+  "commentMode": "metadata",
+  "interactionPolicy": "human_final",
+  "budgets": {
+    "wallClockSeconds": 1200,
+    "maxQueries": 6,
+    "maxNotes": 15,
+    "maxNotesPerQuery": 5,
+    "maxResultScrollsPerQuery": 4,
+    "maxNoteScrolls": 3,
+    "maxCommentPanels": 5,
+    "maxCommentsPerNote": 5,
+    "maxNoNewScrolls": 2
+  },
+  "aiPolicy": {
+    "topicPlanner": true,
+    "pageFallback": true,
+    "resultAnalysis": true,
+    "maxAutomaticCalls": 4
+  }
+}

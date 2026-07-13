@@ -1,11 +1,12 @@
 ﻿param(
-    [string]$ConfigPath = "$PSScriptRoot\..\config\local.psd1",
+    [string]$ConfigPath,
     [switch]$SkipLark
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if (!$ConfigPath) { $ConfigPath = Join-Path $projectRoot "config\local.psd1" }
 $dataDir = Join-Path $projectRoot "data"
 $rawDir = Join-Path $dataDir "device_inventory"
 $assetCsv = Join-Path $dataDir "phone-assets.csv"

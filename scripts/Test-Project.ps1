@@ -7,10 +7,25 @@ foreach ($file in $powerShellFiles) {
     Write-Host "PowerShell syntax OK: $($file.Name)"
 }
 
+$configFiles = Get-ChildItem -LiteralPath (Join-Path $projectRoot "config") -Filter "*.psd1"
+foreach ($file in $configFiles) {
+    Import-PowerShellDataFile -LiteralPath $file.FullName | Out-Null
+    Write-Host "PowerShell data file OK: $($file.Name)"
+}
+
+$jsonFiles = Get-ChildItem -LiteralPath (Join-Path $projectRoot "config") -Filter "*.json"
+foreach ($file in $jsonFiles) {
+    Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json | Out-Null
+    Write-Host "JSON config OK: $($file.Name)"
+}
+
 Push-Location $projectRoot
 try {
-    npm run check
+    $npm = (Get-Command npm.cmd -ErrorAction Stop).Source
+    & $npm run check
     if ($LASTEXITCODE -ne 0) { throw "Node syntax check failed" }
+    & $npm test
+    if ($LASTEXITCODE -ne 0) { throw "Automated tests failed" }
 } finally {
     Pop-Location
 }

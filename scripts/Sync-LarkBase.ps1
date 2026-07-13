@@ -1,12 +1,13 @@
 ﻿param(
     [string]$BaseToken = $env:LARK_BASE_TOKEN,
     [string]$TableId = $env:LARK_TABLE_ID,
-    [string]$InventoryCsv = "$PSScriptRoot\..\data\phone-assets.csv"
+    [string]$InventoryCsv
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+if (!$InventoryCsv) { $InventoryCsv = Join-Path $projectRoot "data\phone-assets.csv" }
 Set-Location $projectRoot
 $payloadDir = Join-Path $projectRoot "data\lark_payloads"
 $payloadFile = Join-Path $payloadDir "current.json"

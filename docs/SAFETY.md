@@ -1,14 +1,82 @@
-# Safety and data boundaries
+# 安全与数据边界
 
-## Repository data
+## 动作风险分类
 
-Keep only source code, templates and documentation in Git. Real device inventories, screenshots, UI dumps, account identifiers, OAuth data and API keys remain in ignored local files.
+### `read_only_navigation`
 
-## Cloud vision
+允许自动执行打开 App、返回、回到桌面、搜索、读取 UI、截图、滚动已识别列表、查看公开笔记和只读评论。每台手机必须独立解析当前层级，并验证动作后的状态。
 
-Cloud recognition sends the selected screenshot to the configured provider. Before sending, avoid screenshots containing login codes, phone numbers, private messages, contacts, payments or unpublished private content. Use the minimum crop needed for page classification.
+### `device_local_change`
 
-## Platform actions
+安装 APK、文件传输、打开系统设置、熄屏/亮屏、修改分辨率或 DPI 等会改变设备本地状态。必须取得本次会话的明确人工确认，记录理由，并在适用时提供回滚方式。
 
-This project is designed for device testing, navigation, diagnostics and asset inventory. Publishing, comments, follows, messages, account changes, deletions and financial actions require a person to review and confirm each action. Do not use the project to evade platform controls or fabricate engagement.
+通用 `TapText` 也按本地变更处理，并且只能指定一台设备，不能对分组或多台目标执行。即使得到确认，它仍会硬拦截点赞、收藏、关注、评论、回复、发送、私信、分享、发布、删除、登录、验证和支付等标签；“确定”“完成”等上下文不明确的通用确认文字也不得作为矩阵动作。
 
+### `external_interaction`
+
+点赞、收藏、关注、评论发送、回复、私信、分享、发布、删除和支付永久禁止由自动执行器执行。任务 JSON、通用文字点击、设备分组或确认开关都不能绕过此限制。
+
+## 人工最终操作
+
+研究结果只生成候选和审核队列。人工决定互动时：
+
+1. 选中单条候选；
+2. 在效卫中只显示一台手机；
+3. 明确确认群控同步已关闭；
+4. 脚本只导航到对应笔记并暂停；
+5. 人工决定并完成操作。
+
+评论草稿只在人工主动请求后生成，必须由人修改并亲自发送。草稿不会自动写入输入框。
+
+## 禁止的目标
+
+- 不实现随机停留、随机互动、批量“养号”或模拟真人。
+- 不规避 CAPTCHA、登录验证、风控提示、平台频率限制或身份核验。
+- 不修改设备指纹、定位、网络身份或系统权限来规避识别。
+- 不把效卫宣传中的“抗封”“养号”或自动互动视为已验收能力。
+- 不在云手机缺少稳定 ID、截图、UI 层级、包名启动和输入能力时接入自动执行。
+
+任务中的时长、查询数、滚动数和候选数仅是明确的研究预算，不是伪装行为的随机参数。
+
+## 页面与失败保护
+
+- 页面分数低于 `0.85`，或领先第二候选不足 `0.15`，不得继续自动导航。
+- 本地页面识别连续失败后才允许页面恢复 Agent 介入。
+- AI 页面恢复置信度低于 `0.90`，返回坐标，或无法在新 UI 层级中重找语义节点时，必须转人工。
+- 同一可能有副作用的点击不得重放。
+- 主题研究不得调用通用全屏 `Swipe`；只能滚动当前 UI 层级中已识别的列表或图文内容容器，视频主画面禁止滚动。
+- 单台设备连续两次转场失败后隔离，并保留当前截图和 UI 层级路径。
+- 两台设备出现同一失败签名时全局熔断。
+- 登录、验证码、风险、支付、私信、联系人或权限挑战立即停止。
+
+## 中文输入保护
+
+普通 `adb shell input text` 不作为中文输入方案。只有经人工批准并按设备标定的 Unicode 输入法可以自动尝试；否则转为效卫桌面人工粘贴。输入后必须读取搜索框并确认与关键词完全一致，失败时返回 `human_required`，不得提交乱码。
+
+## 模型与隐私
+
+页面恢复会向配置的模型服务发送截图。只有 Windows 本地 OCR 对同一个本地截图文件连续两次成功完成隐私检查，并且该文件的 SHA-256 与待上传文件完全一致时才可进入模型；OCR 不可用、无可读文本或哈希不一致都会安全阻塞。独立截图上传入口已禁用，单独传入 `safeToUpload=true` 没有授权作用。以下画面禁止上传：
+
+- 登录、验证码和身份验证；
+- 私信、消息列表、联系人和通讯录；
+- 支付、银行卡、订单、权限申请、账号安全和隐私设置信息；
+- 未发布的私密内容；
+- 任何不能可靠脱敏的个人信息。
+
+模型输出使用严格 JSON 校验。页面恢复不能返回点击坐标，也不能推荐自动互动或规避平台控制。视觉缓存只使用截图内容哈希，不把图片本身提交到 Git。
+
+## 仓库数据
+
+Git 中只保存源代码、脱敏规则、模板和文档。以下内容必须保留在被忽略的本地文件：
+
+- `.env` 与 API Key；
+- `config/local.psd1`；
+- `data/`、截图和 UI XML；
+- 真实 ADB 序列号、账号清单和设备映射；
+- OAuth Token、飞书凭据和实际记录。
+
+事件日志和飞书镜像只使用设备别名。收集评论时默认保存统计信息；如任务明确要求片段，只保存少量脱敏文本。
+
+## 效卫 API
+
+效卫 API 是禁用优先的实验通道。只有本地探测成功并对每个动作完成正式验收后才能逐项启用；API 返回成功也必须通过 ADB/UI 做后验验证。会员或版本限制导致 API 不可用时，不尝试绕过，直接保持 ADB 执行和效卫人工投屏。
