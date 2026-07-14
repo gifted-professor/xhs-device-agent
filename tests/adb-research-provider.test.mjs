@@ -154,24 +154,45 @@ const unknownWithSearch = hierarchy(
   node({ text: "未标定页面" }),
 );
 
-function mockAdb(dumps = []) {
+function clearFocusedEditorText(xml) {
+  return String(xml).replace(
+    /(<node\b(?=[^>]*class="android\.widget\.EditText")(?=[^>]*focused="true")[^>]*?\btext=")[^"]*(")/u,
+    "$1搜索$2",
+  );
+}
+
+function mockAdb(dumps = [], options = {}) {
   const calls = [];
   const queue = [...dumps];
+  const autoClear = options.autoClear !== false;
+  const consumeClearDumps = options.consumeClearDumps === true;
+  let clearing = false;
+  let lastDump = "";
   const runner = async (spec) => {
     calls.push({ ...spec, args: [...spec.args] });
+    if (autoClear && spec.operation === "clear_search") clearing = true;
+    if (["input_ascii", "input_ascii_segment", "input_unicode_b64", "native_ime_pinyin"].includes(spec.operation)) clearing = false;
     if (spec.operation === "get_state") return { exitCode: 0, stdout: "device\n" };
     if (spec.operation === "android_sdk") return { exitCode: 0, stdout: "34\n" };
     if (spec.operation === "package_info") return { exitCode: 0, stdout: "versionName=9.5.45\n" };
     if (spec.operation === "screen_size") return { exitCode: 0, stdout: "Physical size: 1080x2400\n" };
     if (spec.operation === "screen_density") return { exitCode: 0, stdout: "Physical density: 420\n" };
     if (spec.operation === "ui_dump") {
+      if (clearing && lastDump && !consumeClearDumps) return { exitCode: 0, stdout: clearFocusedEditorText(lastDump) };
       const value = queue.length > 1 ? queue.shift() : queue[0];
+      if (value) lastDump = value;
       return value ? { exitCode: 0, stdout: value } : { exitCode: 1, stdout: "" };
     }
     if (/screenshot$/.test(spec.operation)) return { exitCode: 0, stdout: Buffer.from("89504e470d0a1a0a00", "hex") };
     return { exitCode: 0, stdout: "" };
   };
-  return { calls, runner, remaining: queue };
+  return {
+    calls,
+    runner,
+    remaining: queue,
+    markCleared() { clearing = true; },
+    markInput() { clearing = false; },
+  };
 }
 
 function task(overrides = {}) {
@@ -284,6 +305,30 @@ test("bounded image-detail sampling scrolls only a semantic content container an
   assert.equal(mock.calls.filter((call) => call.operation === "return_to_list").length, 1);
 });
 
+test("a full-page comments view may safely return directly to its originating recommendation list", async () => {
+  const rawId = "1111111111111111";
+  const noteId = rawId.padEnd(24, "a");
+  const detail = imageDetail("首页推荐", noteId);
+  const mock = mockAdb([home, home, detail, detail, commentsPanel, commentsPanel, home, home]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({
+      commentMode: "metadata",
+      budgets: {
+        maxNotesPerQuery: 1, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1,
+        maxNoteScrolls: 0, maxCommentPanels: 1, maxCommentsPerNote: 0,
+      },
+    }),
+    unit: { source: "recommended", keyword: "x" },
+    deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates.length, 1);
+  assert.equal(result.candidates[0].commentMetadata.panelOpened, true);
+  assert.equal(mock.calls.filter((call) => call.operation === "close_comments").length, 1);
+  assert.equal(mock.calls.some((call) => call.operation === "return_to_list"), false);
+});
+
 test("maxCommentPanels is reserved across all work units in the same task", async () => {
   const keyword = "budgeted comments";
   const rawId = "9999999999999999";
@@ -328,7 +373,7 @@ test("a comment-panel attempt remains counted when the destination cannot be ver
   const detail = imageDetail("Conservative budget note", noteId);
   const firstRun = [
     home, home, searchEntry, searchEntry, suggestions(keyword), suggestions(keyword), list, list,
-    detail, detail, list, list, detail, detail, list, list,
+    detail, detail, list, list,
   ];
   const secondRun = [
     home, home, searchEntry, searchEntry, suggestions(keyword), suggestions(keyword), list, list,
@@ -418,6 +463,17 @@ test("unavailable optional sources return skipped without a device-failure signa
   assert.equal(result.skipReason, "source_unavailable:trending");
 });
 
+test("a verified comment panel left by an earlier run is closed before the home navigation failure budget", async () => {
+  const detail = imageDetail("Prior note", "a".repeat(24));
+  const mock = mockAdb([commentsPanel, commentsPanel, detail, detail, home, home, searchEntry, searchEntry]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({ task: task(), unit: { source: "trending", keyword: "x" }, deviceAlias: "content-01" });
+  assert.equal(result.status, "skipped");
+  assert.equal(result.skipReason, "source_unavailable:trending");
+  assert.equal(mock.calls.filter((call) => call.operation === "close_comments_recovery").length, 1);
+  assert.equal(mock.calls.filter((call) => call.operation === "navigate_back").length, 1);
+});
+
 test("human handoff selects an exact fresh card, verifies detail identity, and pauses without interaction", async () => {
   const title = "Exact handoff title";
   const rawId = "6666666666666666";
@@ -487,7 +543,7 @@ test("approved native IME is inventoried, calibrated, used by exact candidate, a
     suggestions(topic), suggestions(topic),
     suggestions(topic), suggestions(topic),
     first, first,
-  ]);
+  ], { consumeClearDumps: true });
   const bridge = "com.android.xwkeyboard/.XwIME";
   const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
   const runner = async (spec) => {
@@ -539,7 +595,7 @@ test("native IME never treats matching Xiaohongshu text as a keyboard candidate"
     node({ package: "com.xingin.xhs", text: "测试", clickable: "true", bounds: "[20,300][300,420]" }),
     node({ "resource-id": "com.xingin.xhs:id/search_suggestion_list", class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true" }),
   );
-  const mock = mockAdb([home, home, searchEntry, searchEntry, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate]);
+  const mock = mockAdb([home, home, searchEntry, searchEntry, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, searchEntry, searchEntry, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate, xhsOnlyCandidate], { consumeClearDumps: true });
   const bridge = "com.android.xwkeyboard/.XwIME";
   const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
   const runner = async (spec) => {
@@ -571,7 +627,7 @@ test("native IME never treats matching Xiaohongshu text as a keyboard candidate"
 test("native IME stops before typing when an old search value survives select-all deletion", async () => {
   const topic = "鞋子";
   const stale = suggestions("sneaker", [], "sneaker");
-  const mock = mockAdb([home, home, searchEntry, searchEntry, stale, stale]);
+  const mock = mockAdb([home, home, searchEntry, searchEntry, stale, stale], { autoClear: false });
   const bridge = "com.android.xwkeyboard/.XwIME";
   const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
   const runner = async (spec) => {
@@ -616,7 +672,7 @@ test("an approved per-device language-key coordinate is gated by display, IME, k
     searchEntry, searchEntry,
     nativeComposition("xiezi", topic), nativeComposition("xiezi", topic),
     suggestions(topic, ["闉嬪瓙鎺ㄨ崘"]), suggestions(topic, ["闉嬪瓙鎺ㄨ崘"]),
-  ]);
+  ], { consumeClearDumps: true });
   const bridge = "com.android.xwkeyboard/.XwIME";
   const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
   const runner = async (spec) => {
@@ -681,7 +737,7 @@ test("approved hidden native candidate may use SPACE only when exact echo verifi
     searchEntry, searchEntry,
     hiddenTopic, hiddenTopic, suggestions(topic), suggestions(topic),
     suggestions(topic), suggestions(topic), first, first,
-  ]);
+  ], { consumeClearDumps: true });
   const bridge = "com.android.xwkeyboard/.XwIME";
   const native = "com.sohu.inputmethod.sogou.xiaomi/.SogouIME";
   const runner = async (spec) => {
@@ -715,16 +771,304 @@ test("approved hidden native candidate may use SPACE only when exact echo verifi
 test("an explicitly approved per-device Xiaowei text adapter takes priority over the Unicode IME", async () => {
   const topic = "夏季通勤穿搭";
   const delivered = [];
+  let restores = 0;
   const mock = mockAdb([home, home, searchEntry, searchEntry, suggestions(topic, ["通勤建议"]), suggestions(topic, ["通勤建议"])]);
   const { provider } = providerFor(mock, {
     xiaoweiTextApprovedAliases: ["content-01"],
-    xiaoweiTextInput: async (value) => { delivered.push(value); },
+    xiaoweiTextInput: async ({ verifyFocusedEditor, verifyCleared, ...value }) => {
+      await verifyFocusedEditor();
+      mock.markCleared();
+      await verifyCleared();
+      mock.markInput();
+      delivered.push(value);
+      return { restore: async () => { restores += 1; } };
+    },
+    nativeIme: {
+      enabled: true,
+      humanApproved: true,
+      approvedAliases: ["content-01"],
+      preferredServices: ["com.sohu.inputmethod.sogou.xiaomi/.SogouIME"],
+      perDevice: { "content-01": { preferredService: "com.sohu.inputmethod.sogou.xiaomi/.SogouIME" } },
+    },
     unicodeInput: { enabled: true, action: "ADB_INPUT_B64", extraKey: "msg", approvedAliases: ["content-01"] },
   });
   const values = await provider.collectTopicSuggestions({ task: task({ topic }), deviceAlias: "content-01" });
   assert.deepEqual(values, ["通勤建议"]);
   assert.deepEqual(delivered, [{ deviceAlias: "content-01", text: topic }]);
+  assert.equal(restores, 1);
   assert.equal(mock.calls.some((call) => call.operation === "input_unicode_b64"), false);
+  assert.equal(mock.calls.some((call) => call.operation === "dismiss_ime_composing"), false);
+});
+
+test("a Xiaowei work unit exposes deidentified bridge selection and restoration evidence", async () => {
+  const topic = "夏季通勤穿搭";
+  const audit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: true,
+    focusedEditorVerified: true,
+    clearVerified: true,
+    apiAccepted: true,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
+  const mock = mockAdb([home, home, searchEntry, searchEntry, suggestions(topic, ["通勤建议"]), suggestions(topic, ["通勤建议"])]);
+  const { provider } = providerFor(mock, {
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiTextInput: async ({ verifyFocusedEditor, verifyCleared }) => {
+      await verifyFocusedEditor();
+      mock.markCleared();
+      await verifyCleared();
+      mock.markInput();
+      return {
+        audit,
+        restore: async () => {
+          audit.restoreAttempted = true;
+          audit.restoreVerified = true;
+        },
+      };
+    },
+  });
+  const result = await provider.executeWorkUnit({ task: task({ topic }), unit: { source: "suggestions", keyword: topic }, deviceAlias: "content-01" });
+  assert.equal(result.status, "completed");
+  assert.equal(result.inputMethodAudit.echoVerified, true);
+  assert.equal(result.inputMethodAudit.restoreAttempted, true);
+  assert.equal(result.inputMethodAudit.restoreVerified, true);
+  assert.equal(JSON.stringify(result.inputMethodAudit).includes("IME"), false);
+});
+
+test("a fixed-hint device uses two exact focused-editor OCR passes without UI-text fallback", async () => {
+  const topic = "澶忓閫氬嫟绌挎惌";
+  const fixedHint = suggestions(topic, ["閫氬嫟寤鸿"], "鎼滅储, ");
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    fixedHint, fixedHint, fixedHint, fixedHint,
+  ]);
+  const audit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: true,
+    focusedEditorVerified: true,
+    clearVerified: false,
+    apiAccepted: true,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
+  const ocrCalls = [];
+  let clearCallbacks = 0;
+  const runner = async (spec) => {
+    if (spec.operation?.startsWith("capture_search_echo_")) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: Buffer.from("89504e470d0a1a0a00", "hex") };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiOcrEchoAliases: ["content-01"],
+    localOcr: async (input) => {
+      ocrCalls.push(input);
+      return { exactTextMatch: true, ocrAvailable: true, safeForCloud: false };
+    },
+    xiaoweiTextInput: async ({ verifyFocusedEditor, verifyCleared }) => {
+      await verifyFocusedEditor();
+      assert.equal(typeof verifyCleared, "function");
+      clearCallbacks += 0;
+      mock.markInput();
+      return {
+        audit,
+        restore: async () => {
+          audit.restoreAttempted = true;
+          audit.restoreVerified = true;
+        },
+      };
+    },
+  });
+  const result = await provider.executeWorkUnit({
+    task: task({ topic }),
+    unit: { source: "suggestions", keyword: topic },
+    deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(clearCallbacks, 0);
+  assert.equal(ocrCalls.length, 2);
+  assert.equal(ocrCalls.every((call) => call.mode === "exact_text" && call.expectedText === topic), true);
+  assert.deepEqual(ocrCalls[0].bounds, { left: 80, top: 50, right: 800, bottom: 180, width: 720, height: 130 });
+  assert.equal(result.inputMethodAudit.clearVerified, true);
+  assert.equal(result.inputMethodAudit.echoVerified, true);
+  assert.equal(result.inputMethodAudit.restoreVerified, true);
+  assert.equal(mock.calls.filter((call) => call.operation?.startsWith("capture_search_echo_")).length, 2);
+  assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
+});
+
+test("a fixed-hint OCR mismatch is cleaned without submission and remains honestly unverified", async () => {
+  const topic = "澶忓閫氬嫟绌挎惌";
+  const fixedHint = suggestions(topic, ["閫氬嫟寤鸿"], "鎼滅储, ");
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry,
+    searchEntry, searchEntry,
+    fixedHint, fixedHint, fixedHint, fixedHint,
+  ]);
+  const audit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: true,
+    focusedEditorVerified: true,
+    clearVerified: false,
+    apiAccepted: true,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
+  const runner = async (spec) => {
+    if (spec.operation?.startsWith("capture_search_echo_")) {
+      mock.calls.push({ ...spec, args: [...spec.args] });
+      return { exitCode: 0, stdout: Buffer.from("89504e470d0a1a0a00", "hex") };
+    }
+    return mock.runner(spec);
+  };
+  const { provider } = providerFor(mock, {
+    commandRunner: runner,
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiOcrEchoAliases: ["content-01"],
+    localOcr: async () => ({ exactTextMatch: false, ocrAvailable: true, safeForCloud: false }),
+    xiaoweiTextInput: async ({ verifyFocusedEditor }) => {
+      await verifyFocusedEditor();
+      mock.markInput();
+      return {
+        audit,
+        restore: async () => {
+          audit.restoreAttempted = true;
+          audit.restoreVerified = true;
+        },
+      };
+    },
+  });
+  const result = await provider.executeWorkUnit({
+    task: task({ topic }),
+    unit: { source: "search", keyword: topic },
+    deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "human_required");
+  assert.equal(result.failureSignature, "input:echo_mismatch");
+  assert.equal(result.inputMethodAudit.clearVerified, false);
+  assert.equal(result.inputMethodAudit.echoVerified, false);
+  assert.equal(result.inputMethodAudit.restoreVerified, true);
+  assert.equal(mock.calls.some((call) => call.operation === "clear_search_backward"), true);
+  assert.equal(mock.calls.some((call) => call.operation === "clear_search_forward"), true);
+  assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
+});
+
+test("a structured Xiaowei pre-input failure is not collapsed to provider unexpected", async () => {
+  const topic = "夏季通勤穿搭";
+  const audit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: false,
+    bridgeSelectionVerified: false,
+    focusedEditorVerified: true,
+    clearVerified: false,
+    apiAccepted: false,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
+  const mock = mockAdb([home, home, searchEntry, searchEntry]);
+  const { provider } = providerFor(mock, {
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiTextInput: async () => {
+      const error = new Error("identity mismatch");
+      error.name = "XiaoweiTextInputError";
+      error.action = "identity";
+      error.code = "IDENTITY_MISMATCH";
+      error.inputMethodAudit = audit;
+      throw error;
+    },
+  });
+
+  const result = await provider.executeWorkUnit({
+    task: task({ topic }),
+    unit: { source: "search", keyword: topic },
+    deviceAlias: "content-01",
+  });
+
+  assert.equal(result.status, "human_required");
+  assert.equal(result.failureSignature, "input:xiaowei_identity_identity_mismatch");
+  assert.deepEqual(result.inputMethodAudit, audit);
+  assert.equal(result.affectsDeviceHealth, false);
+});
+
+test("a Xiaowei echo mismatch clears stale bridge text before restoring and stopping", async () => {
+  const topic = "夏季通勤穿搭";
+  const mismatch = suggestions("错误文本", ["通勤建议"], "错误文本");
+  const mock = mockAdb([home, home, searchEntry, searchEntry, mismatch, mismatch]);
+  let restores = 0;
+  const { provider } = providerFor(mock, {
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiTextInput: async ({ verifyFocusedEditor, verifyCleared }) => {
+      await verifyFocusedEditor();
+      mock.markCleared();
+      await verifyCleared();
+      mock.markInput();
+      return { restore: async () => { restores += 1; } };
+    },
+  });
+
+  const result = await provider.executeWorkUnit({
+    task: task({ topic }),
+    unit: { source: "search", keyword: topic },
+    deviceAlias: "content-01",
+  });
+
+  assert.equal(result.status, "human_required");
+  assert.equal(result.failureSignature, "input:echo_mismatch");
+  assert.equal(mock.calls.some((call) => call.operation === "clear_search"), true);
+  assert.equal(restores, 1);
+  assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
+});
+
+test("topic-discovery IME evidence is carried into the first formal work-unit event result", async () => {
+  const topic = "夏季通勤穿搭";
+  const audit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: true,
+    focusedEditorVerified: true,
+    clearVerified: true,
+    apiAccepted: true,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
+  let inputCalls = 0;
+  const page = suggestions(topic, ["通勤建议"]);
+  const mock = mockAdb([home, home, searchEntry, searchEntry, page, page, page, page]);
+  const { provider } = providerFor(mock, {
+    xiaoweiTextApprovedAliases: ["content-01"],
+    xiaoweiTextInput: async ({ verifyFocusedEditor, verifyCleared }) => {
+      inputCalls += 1;
+      await verifyFocusedEditor();
+      mock.markCleared();
+      await verifyCleared();
+      mock.markInput();
+      return {
+        audit,
+        restore: async () => {
+          audit.restoreAttempted = true;
+          audit.restoreVerified = true;
+        },
+      };
+    },
+  });
+  const sharedTask = task({ taskId: "topic-audit-carry", topic });
+  assert.deepEqual(await provider.collectTopicSuggestions({ task: sharedTask, deviceAlias: "content-01" }), ["通勤建议"]);
+  const result = await provider.executeWorkUnit({ task: sharedTask, unit: { source: "suggestions", keyword: topic }, deviceAlias: "content-01" });
+  assert.equal(result.status, "completed");
+  assert.equal(inputCalls, 1);
+  assert.equal(result.inputMethodAudit.restoreVerified, true);
 });
 
 test("unapproved Unicode input safely returns human_required without submitting text", async () => {
@@ -744,7 +1088,7 @@ test("an exact EditText mismatch stops instead of submitting a potentially garbl
   const { provider } = providerFor(mock);
   const result = await provider.executeWorkUnit({ task: task(), unit: { source: "search", keyword }, deviceAlias: "content-01" });
   assert.equal(result.status, "human_required");
-  assert.equal(result.failureSignature, "input:verification_failed");
+  assert.equal(result.failureSignature, "input:echo_mismatch");
   assert.equal(mock.calls.some((call) => call.operation === "submit_search" || call.operation === "tap_search_submit"), false);
 });
 
@@ -772,6 +1116,108 @@ test("an exact visible search-results echo can be read without re-entering the k
   assert.equal(result.status, "completed");
   assert.equal(result.candidates[0].title, "Visible result");
   assert.equal(mock.calls.some((call) => call.operation === "input_ascii" || call.operation === "tap_search_entry"), false);
+});
+
+test("obfuscated search-result cards are extracted from a dated clickable card structure", async () => {
+  const keyword = "夏季通勤穿搭";
+  const structuralCard = node({
+    "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated",
+    class: "android.widget.FrameLayout",
+    clickable: "true",
+  }, node({ class: "android.widget.RelativeLayout" }, [
+    node({ class: "android.widget.TextView", text: "基础淡人感上衣通勤穿搭" }),
+    node({ class: "android.widget.TextView", text: "公开作者" }),
+    node({ class: "android.widget.TextView", text: "07-02" }),
+    node({ class: "android.widget.TextView", text: "9506" }),
+  ].join("")));
+  const page = textResults(keyword, [structuralCard]);
+  const mock = mockAdb([page, page]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 5, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 0, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "基础淡人感上衣通勤穿搭");
+  assert.equal(result.candidates[0].author, "公开作者");
+});
+
+test("obfuscated search-result cards accept current hour-relative timestamps", async () => {
+  const keyword = "adidas";
+  const structuralCard = node({
+    "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated",
+    class: "android.widget.FrameLayout",
+    clickable: "true",
+  }, node({ class: "android.widget.RelativeLayout" }, [
+    node({ class: "android.widget.TextView", text: "Adidas outfit guide" }),
+    node({ class: "android.widget.TextView", text: "Public Author" }),
+    node({ class: "android.widget.TextView", text: "15\u5c0f\u65f6\u524d" }),
+    node({ class: "android.widget.TextView", text: "104" }),
+  ].join("")));
+  const page = textResults(keyword, [structuralCard]);
+  const mock = mockAdb([page, page]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 5, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 0, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "Adidas outfit guide");
+  assert.equal(result.candidates[0].author, "Public Author");
+});
+
+test("obfuscated search-result cards accept full publication dates", async () => {
+  const keyword = "autumn commute coat";
+  const structuralCard = node({
+    "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated",
+    class: "android.widget.FrameLayout",
+    clickable: "true",
+  }, node({ class: "android.widget.RelativeLayout" }, [
+    node({ class: "android.widget.TextView", text: "Autumn commute layering guide" }),
+    node({ class: "android.widget.TextView", text: "Public Author" }),
+    node({ class: "android.widget.TextView", text: "2025-11-06" }),
+    node({ class: "android.widget.TextView", text: "852" }),
+  ].join("")));
+  const page = textResults(keyword, [structuralCard]);
+  const mock = mockAdb([page, page]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 5, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 0, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, "Autumn commute layering guide");
+  assert.equal(result.candidates[0].author, "Public Author");
+});
+
+test("detail sampling opens the uniquely extracted obfuscated full-date card and returns", async () => {
+  const keyword = "autumn commute coat";
+  const title = "Autumn commute layering guide";
+  const structuralCard = node({
+    "resource-id": "com.xingin.xhs:id/0_resource_name_obfuscated",
+    class: "android.widget.FrameLayout",
+    clickable: "true",
+    bounds: "[40,420][1040,1120]",
+  }, node({ class: "android.widget.RelativeLayout" }, [
+    node({ class: "android.widget.TextView", text: title }),
+    node({ class: "android.widget.TextView", text: "Public Author" }),
+    node({ class: "android.widget.TextView", text: "2025-11-06" }),
+    node({ class: "android.widget.TextView", text: "852" }),
+  ].join("")));
+  const page = textResults(keyword, [structuralCard]);
+  const detail = imageDetail(title, "a".repeat(24));
+  const mock = mockAdb([page, page, detail, detail, detail, detail, page, page]);
+  const { provider } = providerFor(mock);
+  const result = await provider.executeWorkUnit({
+    task: task({ budgets: { maxNotesPerQuery: 1, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 1, maxCommentPanels: 0, maxCommentsPerNote: 0 } }),
+    unit: { source: "search", keyword }, deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "completed");
+  assert.equal(result.candidates[0].title, title);
+  assert.equal(result.candidates[0].author, "Detail Author");
+  const exactTap = mock.calls.find((call) => call.operation === "tap_exact_detail_candidate");
+  assert.deepEqual(exactTap.args.slice(-2), ["540", "770"]);
+  assert.equal(mock.calls.filter((call) => call.operation === "return_to_list").length, 1);
 });
 
 test("search echo accepts the current localized hint prefix", async () => {
@@ -839,6 +1285,31 @@ test("configured local diagnostics retain hierarchy and screenshot paths after a
   await access(result.diagnostics.hierarchyPath);
   await access(result.diagnostics.screenshotPath);
   assert.equal(JSON.stringify(result.diagnostics).includes("REAL-SERIAL"), false);
+});
+
+test("an unexpected note detail retains diagnostics before returning to the recommendation list", async () => {
+  const root = await mkdtemp(join(tmpdir(), "xhs-provider-detail-diagnostics-"));
+  const mock = mockAdb([
+    descriptorHome, descriptorHome,
+    unknownWithSearch, unknownWithSearch, unknownWithSearch, unknownWithSearch,
+    descriptorHome, descriptorHome,
+  ]);
+  const { provider } = providerFor(mock, { failureArtifactsRoot: root });
+  const result = await provider.executeWorkUnit({
+    task: task({
+      taskId: "detail-diagnostic-task",
+      commentMode: "none",
+      budgets: { maxNotesPerQuery: 3, maxResultScrollsPerQuery: 0, maxNoNewScrolls: 1, maxNoteScrolls: 1, maxCommentPanels: 0, maxCommentsPerNote: 0 },
+    }),
+    unit: { unitId: "detail-diagnostic-unit", source: "recommended", keyword: "commute" },
+    deviceAlias: "content-01",
+  });
+  assert.equal(result.status, "partial");
+  assert.equal(result.failureSignature, "detail:unexpected_state:UNKNOWN");
+  assert.equal(typeof result.diagnostics.hierarchyPath, "string");
+  assert.equal(typeof result.diagnostics.screenshotPath, "string");
+  await access(result.diagnostics.hierarchyPath);
+  await access(result.diagnostics.screenshotPath);
 });
 
 test("page recovery rejects coordinates and never converts them into a device tap", async () => {
@@ -952,7 +1423,7 @@ test("valid page recovery refreshes UI and re-resolves the semantic target befor
   assert.equal(result.status, "completed");
   assert.equal(recoveryCalls, 1);
   const recoveredTap = mock.calls.find((call) => call.operation === "tap_search_entry");
-  assert.deepEqual(recoveredTap.args.slice(-2), ["875", "110"]);
+  assert.deepEqual(recoveredTap.args.slice(-2), ["440", "115"]);
   assert.equal(mock.calls.filter((call) => call.operation === "tap_search_entry").length, 1);
 });
 

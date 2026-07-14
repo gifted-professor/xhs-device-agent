@@ -37,6 +37,21 @@
       "uniqueItems": true,
       "items": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }
     },
+    "sourceSkips": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "reason", "deviceAlias"],
+        "properties": {
+          "source": { "enum": ["search", "suggestions", "trending", "recommended"] },
+          "keyword": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "reason": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "deviceAlias": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,64}$" }
+        }
+      }
+    },
     "globalFuse": {
       "type": ["object", "null"],
       "additionalProperties": false,

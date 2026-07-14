@@ -13,6 +13,19 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+const INPUT_METHOD_AUDIT_BOOLEAN_FIELDS = Object.freeze([
+  "apiIdentityVerified", "bridgeSelectionVerified", "focusedEditorVerified", "clearVerified",
+  "apiAccepted", "echoVerified", "restoreAttempted", "restoreVerified",
+]);
+
+function safeInputMethodAudit(value) {
+  if (!isObject(value) || value.adapter !== "xiaowei_api") return null;
+  return {
+    adapter: "xiaowei_api",
+    ...Object.fromEntries(INPUT_METHOD_AUDIT_BOOLEAN_FIELDS.map((field) => [field, value[field] === true])),
+  };
+}
+
 async function readJsonIfExists(filePath) {
   try {
     return JSON.parse(await readFile(filePath, "utf8"));
@@ -196,7 +209,9 @@ function shortCircuitUnicodeInput(provider, discovery) {
     };
   }
   const blockedByAlias = new Map((discovery?.inputBlockedDevices ?? []).flatMap((entry) =>
-    entry && typeof entry.deviceAlias === "string" ? [[entry.deviceAlias, entry]] : []));
+    entry && typeof entry.deviceAlias === "string" && String(entry.failureSignature ?? "").startsWith("input:")
+      ? [[entry.deviceAlias, entry]]
+      : []));
   if (blockedByAlias.size === 0) return provider;
   return {
     ...provider,
@@ -207,7 +222,11 @@ function shortCircuitUnicodeInput(provider, discovery) {
         status: "human_required",
         candidates: [],
         humanReview: blocked.humanReview ?? [{ reason: "Manual Unicode search input is required on this device" }],
-        failureSignature: `${blocked.failureSignature ?? "input:human_required"}:${context.deviceAlias}`,
+        failureSignature: blocked.failureSignature ?? "input:human_required",
+        ...(blocked.diagnostics ? { diagnostics: blocked.diagnostics } : {}),
+        ...(safeInputMethodAudit(blocked.inputMethodAudit)
+          ? { inputMethodAudit: safeInputMethodAudit(blocked.inputMethodAudit) }
+          : {}),
         affectsDeviceHealth: false,
       };
     },
@@ -383,7 +402,7 @@ export async function runResearchSession(taskInput, options = {}) {
     if (!discovery && typeof provider.collectTopicSuggestions === "function") {
       discovery = { status: "skipped", suggestions: [] };
       const inputBlockedDevices = [];
-      const discoveryFailures = [];
+      const discoveryDeviceFailures = [];
       let discoveryStop = null;
       const devices = await provider.listDevices({ deviceGroup: originalTask.deviceGroup, task: originalTask });
       const healthyDevices = devices.filter((device) => device?.online !== false).sort((a, b) => a.alias.localeCompare(b.alias));
@@ -393,7 +412,7 @@ export async function runResearchSession(taskInput, options = {}) {
           if (Array.isArray(value)) {
             suggestions = uniqueQueries(value, originalTask.topic, 12);
             if (suggestions.length > 0) {
-              discovery = { status: "completed", suggestions, inputBlockedDevices };
+              discovery = { status: "completed", suggestions, inputBlockedDevices, discoveryDeviceFailures };
               break;
             }
           } else if (isObject(value)) {
@@ -410,38 +429,61 @@ export async function runResearchSession(taskInput, options = {}) {
             const deviceSuggestions = uniqueQueries(value.suggestions ?? [], originalTask.topic, 12);
             if (deviceSuggestions.length > 0) {
               suggestions = deviceSuggestions;
-              discovery = { ...value, status: value.status ?? "completed", suggestions, inputBlockedDevices };
+              discovery = { ...value, status: value.status ?? "completed", suggestions, inputBlockedDevices, discoveryDeviceFailures };
               break;
             }
             if (value.status === "human_required") {
-              inputBlockedDevices.push({
+              const failure = {
                 deviceAlias: device.alias,
                 failureSignature: value.failureSignature ?? "input:human_required",
                 humanReview: Array.isArray(value.humanReview) ? value.humanReview : [{ reason: "Manual Unicode search input is required on this device" }],
-              });
+                ...(value.diagnostics ? { diagnostics: value.diagnostics } : {}),
+                ...(safeInputMethodAudit(value.inputMethodAudit)
+                  ? { inputMethodAudit: safeInputMethodAudit(value.inputMethodAudit) }
+                  : {}),
+              };
+              if (failure.failureSignature.startsWith("input:")) inputBlockedDevices.push(failure);
+              else discoveryDeviceFailures.push(failure);
             } else {
-              discoveryFailures.push(value.failureSignature ?? `suggestions:empty:${device.alias}`);
+              discoveryDeviceFailures.push({
+                deviceAlias: device.alias,
+                failureSignature: value.failureSignature ?? `suggestions:empty:${device.alias}`,
+                humanReview: Array.isArray(value.humanReview) ? value.humanReview : [],
+                ...(value.diagnostics ? { diagnostics: value.diagnostics } : {}),
+              });
             }
           }
         } catch (error) {
-          discoveryFailures.push(error.failureSignature ?? error.code ?? `suggestions:failed:${device.alias}`);
+          discoveryDeviceFailures.push({
+            deviceAlias: device.alias,
+            failureSignature: error.failureSignature ?? error.code ?? `suggestions:failed:${device.alias}`,
+            humanReview: [],
+            ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}),
+          });
         }
       }
       if (discoveryStop) {
         discovery = discoveryStop;
       } else if (suggestions.length === 0) {
-        discovery = inputBlockedDevices.length > 0
+        discovery = inputBlockedDevices.length > 0 && discoveryDeviceFailures.length === 0
           ? {
               status: "human_required",
               suggestions: [],
               inputBlockedDevices,
+              discoveryDeviceFailures,
               failureSignature: "input:no_approved_device",
               humanReview: inputBlockedDevices.flatMap((entry) => entry.humanReview),
             }
           : {
-              status: discoveryFailures.length > 0 ? "partial" : "skipped",
+              status: discoveryDeviceFailures.length > 0 ? "partial" : "skipped",
               suggestions: [],
-              failureSignature: discoveryFailures[0] ?? null,
+              inputBlockedDevices,
+              discoveryDeviceFailures,
+              failureSignature: discoveryDeviceFailures[0]?.failureSignature ?? null,
+              humanReview: [
+                ...inputBlockedDevices.flatMap((entry) => entry.humanReview),
+                ...discoveryDeviceFailures.flatMap((entry) => entry.humanReview),
+              ],
             };
       }
     }

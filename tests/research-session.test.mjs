@@ -136,7 +136,7 @@ test("topic planning and result analysis share the hard automatic-call budget", 
   assertSchemaValid(assert, resultSchema, summary, "AI session result");
 });
 
-test("manual Unicode discovery blocks only input-dependent units and does not poison device health", async () => {
+test("structured input discovery carries only a deidentified audit into blocked units", async () => {
   const root = await outputRoot();
   const input = task("session-human-input", {
     sources: ["search", "suggestions", "trending"],
@@ -144,11 +144,28 @@ test("manual Unicode discovery blocks only input-dependent units and does not po
     aiPolicy: { ...example.aiPolicy, topicPlanner: false, resultAnalysis: false },
   });
   const executed = [];
+  const expectedAudit = {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: false,
+    focusedEditorVerified: true,
+    clearVerified: false,
+    apiAccepted: false,
+    echoVerified: false,
+    restoreAttempted: false,
+    restoreVerified: false,
+  };
   const provider = {
     async listDevices() { return [{ alias: "device-01", online: true }]; },
     async isDeviceOnline() { return true; },
     async collectTopicSuggestions() {
-      return { status: "human_required", suggestions: [], failureSignature: "input:unicode_requires_human", humanReview: [{ reason: "manual paste" }] };
+      return {
+        status: "human_required",
+        suggestions: [],
+        failureSignature: "input:xiaowei_app_focus_app_focus_mismatch",
+        humanReview: [{ reason: "focus check" }],
+        inputMethodAudit: { ...expectedAudit, serial: "must-not-leak", imeService: "must-not-leak" },
+      };
     },
     async executeWorkUnit({ unit }) {
       executed.push(unit.source);
@@ -159,6 +176,14 @@ test("manual Unicode discovery blocks only input-dependent units and does not po
   assert.equal(summary.status, "human_required");
   assert.deepEqual(executed, ["trending"]);
   assert.equal(summary.globalFuse, null);
+  const discovery = JSON.parse(await readFile(path.join(root, input.taskId, "topic-discovery.json"), "utf8"));
+  assert.deepEqual(discovery.inputBlockedDevices[0].inputMethodAudit, expectedAudit);
+  const checkpoint = JSON.parse(await readFile(path.join(root, input.taskId, "checkpoint.json"), "utf8"));
+  const blockedResults = Object.values(checkpoint.units)
+    .map((entry) => entry.result)
+    .filter((result) => result.failureSignature === "input:xiaowei_app_focus_app_focus_mismatch");
+  assert.equal(blockedResults.length, 2);
+  assert.deepEqual(blockedResults[0].inputMethodAudit, expectedAudit);
 });
 
 test("Unicode suggestion discovery tries the next device and only blocks incapable aliases", async () => {
@@ -196,6 +221,45 @@ test("Unicode suggestion discovery tries the next device and only blocks incapab
   assert.equal(summary.globalFuse, null);
   const discovery = JSON.parse(await readFile(path.join(root, input.taskId, "topic-discovery.json"), "utf8"));
   assert.deepEqual(discovery.inputBlockedDevices.map((entry) => entry.deviceAlias), ["device-01"]);
+});
+
+test("a page-classification discovery failure is preserved once and never copied into input-blocked work", async () => {
+  const root = await outputRoot();
+  const input = task("session-page-unknown-isolation", {
+    sources: ["search"],
+    seedKeywords: [],
+    aiPolicy: { ...example.aiPolicy, topicPlanner: false, resultAnalysis: false },
+  });
+  let executed = 0;
+  const diagnostics = { hierarchyPath: "diagnostics/page.xml", screenshotPath: "diagnostics/page.png" };
+  const provider = {
+    async listDevices() { return [{ alias: "device-01", online: true }]; },
+    async isDeviceOnline() { return true; },
+    async collectTopicSuggestions() {
+      return {
+        status: "human_required",
+        suggestions: [],
+        failureSignature: "page:unknown",
+        humanReview: [{ reason: "unclassified search page" }],
+        diagnostics,
+      };
+    },
+    async executeWorkUnit() {
+      executed += 1;
+      return { status: "completed", candidates: [], humanReview: [] };
+    },
+  };
+  const summary = await runResearchSession(input, { provider, outputRoot: root });
+  assert.equal(executed, 1, "the real provider work unit must run after a page discovery failure");
+  assert.equal(summary.counts.completedUnits, 1);
+  const discovery = JSON.parse(await readFile(path.join(root, input.taskId, "topic-discovery.json"), "utf8"));
+  assert.deepEqual(discovery.inputBlockedDevices, []);
+  assert.deepEqual(discovery.discoveryDeviceFailures, [{
+    deviceAlias: "device-01",
+    failureSignature: "page:unknown",
+    humanReview: [{ reason: "unclassified search page" }],
+    diagnostics,
+  }]);
 });
 
 test("a sensitive discovery screen stops before probing a peer or executing work", async () => {

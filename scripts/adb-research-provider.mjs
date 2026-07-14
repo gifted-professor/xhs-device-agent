@@ -29,6 +29,10 @@ const NATIVE_IME_SUBTYPE_EVIDENCE = [
   [/com\.baidu\.input/iu, /mImeName=[^\r\n]*百度[^\r\n]*mSubtypeName=中文（中国）/u],
   [/com\.iflytek\.inputmethod/iu, /mImeName=[^\r\n]*讯飞[^\r\n]*mSubtypeName=中文（中国）/u],
 ];
+const INPUT_METHOD_AUDIT_BOOLEAN_FIELDS = Object.freeze([
+  "apiIdentityVerified", "bridgeSelectionVerified", "focusedEditorVerified", "clearVerified",
+  "apiAccepted", "echoVerified", "restoreAttempted", "restoreVerified",
+]);
 const PAGE_TARGET_ALIASES = new Map([
   ["search_entry", "search_entry"], ["search field", "search_entry"], ["search box", "search_entry"], ["搜索框", "search_entry"],
   ["home_tab", "home_tab"], ["home tab", "home_tab"], ["首页", "home_tab"],
@@ -49,6 +53,39 @@ class ProviderStop extends Error {
     this.humanReview = options.humanReview ?? [];
     this.affectsDeviceHealth = options.affectsDeviceHealth !== false;
   }
+}
+
+function safeFailureToken(value, fallback) {
+  const token = String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/gu, "_").replace(/^_+|_+$/gu, "");
+  return token || fallback;
+}
+
+function providerStopFromError(error) {
+  if (error instanceof ProviderStop) return error;
+  if (error?.name === "XiaoweiClientError" || error?.name === "XiaoweiTextInputError") {
+    const action = safeFailureToken(error?.action, "adapter");
+    const code = safeFailureToken(error?.code, "failed");
+    const vendor = Number.isInteger(error?.vendorCode) ? `_vendor_${error.vendorCode}` : "";
+    const outcome = error?.outcome === "unknown" ? "_unknown" : "";
+    return new ProviderStop(
+      "human_required",
+      `input:xiaowei_${action}_${code}${vendor}${outcome}`,
+      "Xiaowei input stopped with a structured adapter failure",
+      {
+        humanReview: [{ reason: `Xiaowei ${action} stopped with ${code}${vendor}${outcome}; no automatic retry was performed` }],
+        affectsDeviceHealth: false,
+      },
+    );
+  }
+  return new ProviderStop("failed", "provider:unexpected", "Unexpected provider failure");
+}
+
+function safeInputMethodAudit(value) {
+  if (!value || typeof value !== "object" || value.adapter !== "xiaowei_api") return null;
+  return {
+    adapter: "xiaowei_api",
+    ...Object.fromEntries(INPUT_METHOD_AUDIT_BOOLEAN_FIELDS.map((field) => [field, value[field] === true])),
+  };
 }
 
 function defaultCommandRunner({ file, args, timeoutMs = 15_000, encoding = "utf8" }) {
@@ -168,6 +205,10 @@ function firstText(nodes, idPattern, excluded = new Set()) {
   return compact(fallback?.text);
 }
 
+function preferredText(nodes, idPattern) {
+  return compact(nodes.find((node) => idPattern.test(node.resourceId) && compact(node.text))?.text);
+}
+
 function noteCardEntries(document) {
   const roots = [];
   for (const node of document.nodes) {
@@ -186,6 +227,21 @@ function noteCardEntries(document) {
   }
   for (const node of document.nodes) {
     if (descriptorNoteMetadata(node.contentDesc)) roots.push(node);
+  }
+  if (!roots.length) {
+    for (const node of document.nodes.filter((candidate) => candidate.clickable)) {
+      const nodes = [node, ...descendants(document, node)];
+      const texts = nodes.map((candidate) => compact(candidate.text)).filter(Boolean);
+      const hasDate = texts.some((value) => /^(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{2}-\d{2}|\d+\s*(?:\u79d2|\u5206\u949f|\u5c0f\u65f6|\u5929|\u5468|\u4e2a\u6708|\u6708|\u5e74)\u524d|\u6628\u5929|\u524d\u5929|\u521a\u521a)$/u.test(value));
+      const hasTitle = texts.some((value) => value.length >= 6 && value.length <= 200 && !/^\d+(?:[.,]\d+)?(?:万|w|k)?$/iu.test(value));
+      let ancestor = node;
+      let insideScrollableList = false;
+      for (let depth = 0; depth < 3 && ancestor.parentIndex !== null; depth += 1) {
+        ancestor = document.nodes[ancestor.parentIndex];
+        if (ancestor?.scrollable) { insideScrollableList = true; break; }
+      }
+      if (insideScrollableList && hasDate && hasTitle) roots.push(node);
+    }
   }
   const chrome = new Set(["综合", "最新", "用户", "商品", "搜索", "关注", "发现", "推荐", "首页"]);
   const output = [];
@@ -320,13 +376,14 @@ function deidentifyComment(value) {
 
 function detailMetadata(snapshot) {
   const nodes = snapshot.document.nodes;
-  const countNode = nodes.find((node) => /comment[_-]?(?:count|entry)|comment_count/iu.test(node.resourceId));
+  const countNode = nodes.find((node) => /comment[_-]?(?:count|entry)|comment_count/iu.test(node.resourceId)) ??
+    nodes.find((node) => /(?:共\s*)?\d+\s*(?:条)?评论|评论\s*\d+/u.test(compact(node.text || node.contentDesc)));
   const countSource = compact(countNode?.text || countNode?.contentDesc);
   const parsedCount = /(?:共\s*)?(\d+)\s*(?:条)?评论/iu.exec(countSource)?.[1];
   const count = parsedCount ?? (/^\d+$/.test(countSource) ? countSource : null);
   return {
-    title: firstText(nodes, /note[_-]?title|title_text/iu),
-    author: firstText(nodes, /author|nickname|user[_-]?name/iu),
+    title: preferredText(nodes, /note[_-]?title|title_text/iu),
+    author: preferredText(nodes, /author|nickname|user[_-]?name/iu),
     count,
   };
 }
@@ -387,12 +444,14 @@ export function createAdbResearchProvider(options = {}) {
   const sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const stablePollMs = clampInteger(options.stablePollMs, 500, 100, 2_000);
   const stableTimeoutMs = clampInteger(options.stableTimeoutMs, 8_000, stablePollMs, 30_000);
+  const unknownStableMs = clampInteger(options.unknownStableMs, 1_500, stablePollMs, stableTimeoutMs);
   const pageRecovery = typeof options.pageRecovery === "function" ? options.pageRecovery : null;
   const localOcr = typeof options.localOcr === "function" ? options.localOcr : null;
   const unicodeInput = options.unicodeInput ?? {};
   const nativeIme = options.nativeIme ?? {};
   const xiaoweiTextInput = typeof options.xiaoweiTextInput === "function" ? options.xiaoweiTextInput : null;
   const xiaoweiTextApprovedAliases = new Set(options.xiaoweiTextApprovedAliases ?? []);
+  const xiaoweiOcrEchoAliases = new Set(options.xiaoweiOcrEchoAliases ?? []);
   const onResourceUsage = typeof options.onResourceUsage === "function" ? options.onResourceUsage : null;
   const records = (options.devices ?? []).map((device, index) => {
     if (!device || typeof device.alias !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(device.alias.trim()) || typeof device.serial !== "string" || !device.serial.trim()) {
@@ -410,6 +469,7 @@ export function createAdbResearchProvider(options = {}) {
   const contextCache = new Map();
   const calibratedNativeIme = new Map();
   const commentPanelsByTask = new Map();
+  const pendingInputMethodAudits = new Map();
   for (const [taskId, count] of Object.entries(options.initialCommentPanelsByTask ?? {})) {
     const normalizedTaskId = compact(taskId);
     const used = clampInteger(count, 0, 0, 15);
@@ -426,6 +486,16 @@ export function createAdbResearchProvider(options = {}) {
       return anonymousTaskKeys.get(task);
     }
     return "anonymous:none";
+  }
+
+  function inputMethodAuditKey(session) {
+    return session ? `${session.taskCounterKey}:${session.record.alias}` : null;
+  }
+
+  function rememberInputMethodAudit(session) {
+    const key = inputMethodAuditKey(session);
+    const audit = safeInputMethodAudit(session?.inputMethodAudits?.at(-1));
+    if (key && audit) pendingInputMethodAudits.set(key, audit);
   }
 
   async function reserveCommentPanel(session, maximum) {
@@ -567,7 +637,10 @@ export function createAdbResearchProvider(options = {}) {
     let previous = null;
     for (let elapsed = 0; elapsed <= stableTimeoutMs; elapsed += stablePollMs) {
       const current = await snapshot(session);
-      if (previous && previous.classification.fingerprint.hash === current.classification.fingerprint.hash) return current;
+      if (previous && previous.classification.fingerprint.hash === current.classification.fingerprint.hash &&
+          (current.classification.state !== "UNKNOWN" || elapsed >= unknownStableMs)) {
+        return current;
+      }
       previous = current;
       if (elapsed + stablePollMs <= stableTimeoutMs) await sleep(stablePollMs);
     }
@@ -739,6 +812,15 @@ export function createAdbResearchProvider(options = {}) {
 
   async function goHome(session, current) {
     if (current.classification.state === "HOME_FEED") return current;
+    if (current.classification.state === "COMMENT_PANEL") {
+      // A previous bounded run may have stopped while a verified comments
+      // surface was open. Closing that known overlay is cleanup, not a failed
+      // navigation attempt, so preserve the two-attempt budget for reaching
+      // the home feed itself.
+      await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_BACK"], "close_comments_recovery");
+      current = await stableSnapshot(session);
+      if (current.classification.state === "HOME_FEED") return current;
+    }
     if (current.classification.state === "UNKNOWN") {
       const recovered = await recoverUnknown(session, current, ["home_tab"]);
       current = recovered.current;
@@ -792,14 +874,18 @@ export function createAdbResearchProvider(options = {}) {
   }
 
   async function clearSearchField(session, current, value) {
-    const existingText = String(focusedEditText(current)?.text ?? "");
-    const deleteCount = Math.min(128, Math.max(16, existingText.length + String(value ?? "").length + 4));
+    // ESCAPE dismisses the IME composing state on MIUI/Xiaomi so that
+    // subsequent DEL key events actually reach the EditText. Without this,
+    // DEL is silently consumed by the active input method.
+    await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_ESCAPE"], "dismiss_ime_composing");
     await runAdb(
       session.record,
-      ["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"],
+      ["shell", "input", "keyevent", "KEYCODE_CTRL_A"],
       "select_all_search",
     );
     await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_DEL"], "delete_selected_search");
+    const existingText = String(focusedEditText(current)?.text ?? "");
+    const deleteCount = Math.min(128, Math.max(16, existingText.length + String(value ?? "").length + 4));
     await runAdb(
       session.record,
       ["shell", "input", "keyevent", "KEYCODE_MOVE_END", ...Array(deleteCount).fill("KEYCODE_DEL")],
@@ -807,17 +893,85 @@ export function createAdbResearchProvider(options = {}) {
     );
   }
 
-  function searchFieldIsEmpty(nodeText) {
-    const value = compact(nodeText);
-    return value === "" || value === "搜索" || value.toLowerCase() === "search";
+  async function clearSearchFieldBidirectionally(session) {
+    await runAdb(
+      session.record,
+      ["shell", "input", "keyevent", "KEYCODE_MOVE_END", ...Array(256).fill("KEYCODE_DEL")],
+      "clear_search_backward",
+    );
+    await runAdb(
+      session.record,
+      ["shell", "input", "keyevent", "KEYCODE_MOVE_HOME", ...Array(256).fill("KEYCODE_FORWARD_DEL")],
+      "clear_search_forward",
+    );
+    await sleep(150);
   }
 
-  async function clearAndVerifySearchField(session, current, value) {
+  async function verifyExactSearchEchoWithLocalOcr(session, current, expectedText) {
+    if (!localOcr) return { available: false, matched: false, current };
+    const initialField = focusedEditText(current);
+    const initialBoundsValue = initialField?.attributes?.bounds;
+    const initialBounds = parseBounds(initialBoundsValue);
+    if (!initialField || !initialBounds) return { available: false, matched: false, current };
+    let observed = current;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const field = focusedEditText(observed);
+      if (!field || field.attributes?.bounds !== initialBoundsValue) {
+        return { available: false, matched: false, current: observed };
+      }
+      const directory = await mkdtemp(join(tmpdir(), "xhs-search-echo-"));
+      const imagePath = join(directory, "screen.png");
+      try {
+        const capture = await runAdb(
+          session.record,
+          ["exec-out", "screencap", "-p"],
+          `capture_search_echo_${attempt}`,
+          { encoding: null, timeoutMs: 20_000 },
+        );
+        if (!Buffer.isBuffer(capture.stdout) || capture.stdout.length <= 8) {
+          return { available: false, matched: false, current: observed };
+        }
+        await writeFile(imagePath, capture.stdout);
+        const result = await localOcr({
+          mode: "exact_text",
+          deviceAlias: session.record.alias,
+          imagePath,
+          bounds: initialBounds,
+          expectedText,
+        });
+        if (result?.ocrAvailable !== true) return { available: false, matched: false, current: observed };
+        if (result.exactTextMatch !== true) return { available: true, matched: false, current: observed };
+      } catch {
+        return { available: false, matched: false, current: observed };
+      } finally {
+        await rm(directory, { recursive: true, force: true });
+      }
+      if (attempt < 2) {
+        await sleep(150);
+        observed = await stableSnapshot(session);
+      }
+    }
+    return { available: true, matched: true, current: observed };
+  }
+
+  function searchFieldIsEmpty(nodeText) {
+    const value = compact(nodeText);
+    // MIUI/Xiaomi search fields expose the localized hint with a trailing
+    // separator (e.g. "搜索, " or "搜索,"). Treat those as empty.
+    return value === "" || value === "搜索" || value.toLowerCase() === "search" || /^(?:搜索|search)[\s,，:：]*$/iu.test(value);
+  }
+
+  async function clearAndVerifySearchField(
+    session,
+    current,
+    value,
+    failureSignature = "input:native_ime_clear_failed",
+  ) {
     await clearSearchField(session, current, value);
     const cleared = await stableSnapshot(session);
     const field = focusedEditText(cleared);
     if (!field || !searchFieldIsEmpty(field.text)) {
-      throw nativeImeStop("input:native_ime_clear_failed", "Existing search text could not be cleared before native input");
+      throw nativeImeStop(failureSignature, "Existing search text could not be cleared before input");
     }
     return cleared;
   }
@@ -1054,12 +1208,31 @@ export function createAdbResearchProvider(options = {}) {
     return stableSnapshot(session);
   }
 
+  async function focusSearchEditor(session, current) {
+    if (focusedEditText(current)) return current;
+    const target = resolveSemanticTarget(current.document, session.rules, "search_entry", session.context);
+    if (!target.found) {
+      throw new ProviderStop("human_required", "input:editor_not_found", "No semantic search editor entry is available", {
+        humanReview: [{ reason: "Search editor entry was not found on the current verified page" }],
+        affectsDeviceHealth: false,
+      });
+    }
+    const node = nodeAtPath(current.document, target.node.path);
+    await tapCurrentNode(session, current, node, "search_entry", "tap_search_entry", true);
+    const focused = await stableSnapshot(session);
+    if (!focusedEditText(focused)) {
+      throw new ProviderStop("human_required", "input:editor_not_focused", "Search editor did not gain focus", {
+        humanReview: [{ reason: "Search editor entry was tapped once, but no focused EditText appeared" }],
+        affectsDeviceHealth: false,
+      });
+    }
+    return focused;
+  }
+
   async function navigateToSearch(session, current) {
     const searchStates = new Set(["SEARCH_ENTRY", "SEARCH_SUGGESTIONS", "SEARCH_RESULTS"]);
     if (searchStates.has(current.classification.state)) {
-      if (focusedEditText(current)) return current;
-      await tapSemantic(session, current, "search_entry");
-      return stableSnapshot(session);
+      return focusSearchEditor(session, current);
     }
     if (current.classification.state === "UNKNOWN") {
       const recovered = await recoverUnknown(session, current, ["search_entry"]);
@@ -1073,7 +1246,7 @@ export function createAdbResearchProvider(options = {}) {
     if (!searchStates.has(next.classification.state)) {
       throw new ProviderStop("partial", `navigation:search:${next.classification.state}`, "Search navigation did not reach a search page");
     }
-    return next;
+    return focusSearchEditor(session, next);
   }
 
   function unicodeApproved(alias) {
@@ -1090,7 +1263,8 @@ export function createAdbResearchProvider(options = {}) {
     if (!value) throw new ProviderStop("failed", "input:empty_keyword", "Search keyword is empty");
     const ascii = /^[\x20-\x7e]+$/.test(value);
     const nativeApproved = !ascii && nativeImeApproved(session.record.alias);
-    const xiaoweiApproved = Boolean(xiaoweiTextInput && xiaoweiTextApprovedAliases.has(session.record.alias));
+    const xiaoweiApproved = Boolean(!ascii && xiaoweiTextInput && xiaoweiTextApprovedAliases.has(session.record.alias));
+    const xiaoweiOcrEchoRequired = Boolean(xiaoweiApproved && xiaoweiOcrEchoAliases.has(session.record.alias));
     if (!ascii && !nativeApproved && !xiaoweiApproved && !unicodeApproved(session.record.alias)) {
       throw new ProviderStop("human_required", "input:unicode_requires_human", "Unicode input is not configured and approved", {
         humanReview: [{ reason: "Paste the Unicode topic manually in Xiaowei, then resume" }],
@@ -1098,42 +1272,127 @@ export function createAdbResearchProvider(options = {}) {
       });
     }
     if (!focusedEditText(current)) {
-      await tapSemantic(session, current, "search_entry");
-      current = await stableSnapshot(session);
-    }
-    let next;
-    await clearSearchField(session, current, value);
-    if (nativeApproved) {
-      next = await enterWithNativeIme(session, current, value);
-    } else if (ascii) {
-      const encoded = value.replace(/ /g, "%s");
-      await runAdb(session.record, ["shell", "input", "text", shellQuote(encoded)], "input_ascii");
-    } else if (xiaoweiApproved) {
-      await xiaoweiTextInput({ deviceAlias: session.record.alias, text: value });
-    } else {
-      const payload = Buffer.from(value, "utf8").toString("base64");
-      await runAdb(session.record, ["shell", "am", "broadcast", "-a", unicodeInput.action, "--es", unicodeInput.extraKey ?? "msg", payload], "input_unicode_b64");
-    }
-    if (!next) next = await stableSnapshot(session);
-    let verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
-    if (!verified && ascii && value.includes(" ")) {
-      const observed = next.document.nodes.find((node) => /(?:^|\.)EditText$/u.test(node.className) && node.focused);
-      if (normalizedSearchEcho(observed?.text) === value.replace(/ /g, "")) {
-        // A few Android builds drop `%s` in `input text`; retry once with
-        // explicit SPACE key events inside the already-focused search field.
-        await clearSearchField(session, next, value);
-        await inputAsciiBySegments(session, value);
-        next = await stableSnapshot(session);
-        verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
-      }
-    }
-    if (!verified) {
-      throw new ProviderStop("human_required", "input:verification_failed", "Search text did not exactly match the requested keyword", {
-        humanReview: [{ reason: "Search input did not exactly match; manual correction required" }],
+      throw new ProviderStop("human_required", "input:editor_not_focused", "Search input is blocked because no editor is focused", {
+        humanReview: [{ reason: "No focused search EditText was available before input" }],
         affectsDeviceHealth: false,
       });
     }
-    return next;
+    if (!xiaoweiOcrEchoRequired && current.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value))) {
+      return current;
+    }
+    let next;
+    let xiaoweiRestore = null;
+    let xiaoweiAudit = null;
+    let xiaoweiInputSession = null;
+    try {
+      if (xiaoweiApproved) {
+        let inputSession;
+        try {
+          inputSession = await xiaoweiTextInput({
+            deviceAlias: session.record.alias,
+            text: value,
+            verifyFocusedEditor: async () => {
+              current = await stableSnapshot(session);
+              if (focusedEditText(current)) return true;
+              throw new ProviderStop("human_required", "input:editor_not_focused", "Search editor focus was lost before Xiaowei input", {
+                humanReview: [{ reason: "The focused search EditText disappeared before bridge input" }],
+                affectsDeviceHealth: false,
+              });
+            },
+            verifyCleared: async () => {
+              if (xiaoweiOcrEchoRequired) {
+                throw new ProviderStop("human_required", "input:verification_mode_mismatch", "UI text cannot verify clearing for this device profile", {
+                  humanReview: [{ reason: "The local-OCR device profile unexpectedly requested UI-text clear verification" }],
+                  affectsDeviceHealth: false,
+                });
+              }
+              current = await stableSnapshot(session);
+              const field = focusedEditText(current);
+              if (field && searchFieldIsEmpty(field.text)) return true;
+              throw new ProviderStop("human_required", "input:clear_failed", "Search text was not empty after bridge clearing", {
+                humanReview: [{ reason: "Bridge input was stopped before inputText because the old search value remained" }],
+                affectsDeviceHealth: false,
+              });
+            },
+          });
+        } catch (error) {
+          xiaoweiAudit = safeInputMethodAudit(error?.inputMethodAudit);
+          throw error;
+        }
+        xiaoweiInputSession = inputSession;
+        xiaoweiRestore = typeof inputSession?.restore === "function" ? inputSession.restore : null;
+        xiaoweiAudit = safeInputMethodAudit(inputSession?.audit);
+      } else if (nativeApproved) {
+        next = await enterWithNativeIme(session, current, value);
+      } else if (ascii) {
+        current = await clearAndVerifySearchField(session, current, value, "input:clear_failed");
+        const encoded = value.replace(/ /g, "%s");
+        await runAdb(session.record, ["shell", "input", "text", shellQuote(encoded)], "input_ascii");
+      } else {
+        current = await clearAndVerifySearchField(session, current, value, "input:clear_failed");
+        const payload = Buffer.from(value, "utf8").toString("base64");
+        await runAdb(session.record, ["shell", "am", "broadcast", "-a", unicodeInput.action, "--es", unicodeInput.extraKey ?? "msg", payload], "input_unicode_b64");
+      }
+      if (!next) next = await stableSnapshot(session);
+      let verified = false;
+      let ocrVerificationAvailable = true;
+      if (xiaoweiOcrEchoRequired) {
+        const ocrVerification = await verifyExactSearchEchoWithLocalOcr(session, next, value);
+        next = ocrVerification.current;
+        verified = ocrVerification.matched;
+        ocrVerificationAvailable = ocrVerification.available;
+      } else {
+        verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
+      }
+      if (!verified && ascii && value.includes(" ")) {
+        const observed = next.document.nodes.find((node) => /(?:^|\.)EditText$/u.test(node.className) && node.focused);
+        if (normalizedSearchEcho(observed?.text) === value.replace(/ /g, "")) {
+          // A few Android builds drop `%s` in `input text`; retry once with
+          // explicit SPACE key events inside the already-focused search field.
+          next = await clearAndVerifySearchField(session, next, value, "input:clear_failed");
+          await inputAsciiBySegments(session, value);
+          next = await stableSnapshot(session);
+          verified = next.document.nodes.some((node) => /(?:^|\.)EditText$/u.test(node.className) && searchEchoMatches(node.text, value));
+        }
+      }
+      if (xiaoweiAudit) xiaoweiAudit.echoVerified = verified;
+      if (xiaoweiInputSession?.audit && typeof xiaoweiInputSession.audit === "object") {
+        xiaoweiInputSession.audit.echoVerified = verified;
+        if (xiaoweiOcrEchoRequired) xiaoweiInputSession.audit.clearVerified = verified;
+      }
+      if (!verified) {
+        if (xiaoweiApproved) {
+          // inputText can be accepted by the bridge while the editor still
+          // receives a partial or transformed value. Remove that value and
+          // verify the editor is empty before restoring the previous IME so a
+          // later step can never submit stale bridge output.
+          if (xiaoweiOcrEchoRequired) {
+            await clearSearchFieldBidirectionally(session);
+            next = await stableSnapshot(session);
+          } else {
+            next = await clearAndVerifySearchField(session, next, value, "input:echo_cleanup_failed");
+          }
+        }
+        if (!ocrVerificationAvailable) {
+          throw new ProviderStop("human_required", "input:echo_verification_unavailable", "Local OCR could not verify the search text", {
+            humanReview: [{ reason: "The configured local OCR verifier was unavailable; no search was submitted" }],
+            affectsDeviceHealth: false,
+          });
+        }
+        throw new ProviderStop("human_required", "input:echo_mismatch", "Search text did not exactly match the requested keyword", {
+          humanReview: [{ reason: "Search input did not exactly match; manual correction required" }],
+          affectsDeviceHealth: false,
+        });
+      }
+      return next;
+    } finally {
+      try {
+        if (xiaoweiRestore) await xiaoweiRestore();
+      } finally {
+        const finalAudit = safeInputMethodAudit(xiaoweiInputSession?.audit ?? xiaoweiAudit);
+        if (finalAudit) session.inputMethodAudits.push(finalAudit);
+      }
+    }
   }
 
   async function submitSearch(session, current) {
@@ -1198,25 +1457,42 @@ export function createAdbResearchProvider(options = {}) {
   async function sampleOneDetail(session, listSnapshot, candidate) {
     const expectedListState = listSnapshot.classification.state;
     const review = [];
-    const target = resolveSemanticTarget(listSnapshot.document, session.rules, "note_card", session.context);
-    if (!target.found) {
+    const exact = exactCardMatches(listSnapshot, candidate);
+    if (exact.matches.length !== 1) {
+      const ambiguous = exact.matches.length > 1;
       return {
         current: listSnapshot,
         candidate,
-        humanReview: [{ candidateKey: candidate.candidateId, noteId: candidate.noteId, title: candidate.title, reason: "No semantic note-card target was available; detail sampling was skipped" }],
-        failureSignature: "detail:note_card_missing",
+        humanReview: [{
+          candidateKey: candidate.candidateId,
+          noteId: candidate.noteId,
+          title: candidate.title,
+          reason: ambiguous
+            ? `Multiple cards matched exact ${exact.matchedBy}; detail sampling was skipped`
+            : "The exact extracted note card was no longer available; detail sampling was skipped",
+        }],
+        failureSignature: ambiguous ? `detail:note_card_ambiguous_${exact.matchedBy}` : "detail:note_card_missing",
       };
     }
 
-    await tapSemantic(session, listSnapshot, "note_card");
+    await tapCurrentNode(
+      session,
+      listSnapshot,
+      exact.matches[0].root,
+      `exact_detail_candidate:${candidate.candidateId ?? hash(candidate.title).slice(0, 12)}`,
+      "tap_exact_detail_candidate",
+    );
     let current = await stableSnapshot(session);
     if (!new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(current.classification.state)) {
+      const failureSignature = `detail:unexpected_state:${current.classification.state}`;
+      const diagnostics = await captureFailureArtifacts(session.record, session.task, session.unit, failureSignature);
       const recoveredList = await returnToList(session, current, expectedListState);
       return {
         current: recoveredList,
         candidate,
         humanReview: [{ candidateKey: candidate.candidateId, noteId: candidate.noteId, title: candidate.title, reason: `Note card opened ${current.classification.state}, not a readable note detail` }],
-        failureSignature: `detail:unexpected_state:${current.classification.state}`,
+        failureSignature,
+        diagnostics,
       };
     }
 
@@ -1263,14 +1539,25 @@ export function createAdbResearchProvider(options = {}) {
         await tapSemantic(session, current, "comments_entry");
         const panel = await stableSnapshot(session);
         if (panel.classification.state !== "COMMENT_PANEL") {
-          await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_BACK"], "close_unverified_comments");
-          current = await stableSnapshot(session);
-          if (!new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(current.classification.state)) {
-            throw new ProviderStop("human_required", `detail:comment_return:${current.classification.state}`, "Unverified comments view did not return to note detail", {
-              humanReview: [{ candidateKey: candidate.candidateId, title: candidate.title, reason: "Could not recover from an unverified comments view" }],
+          review.push({ candidateKey: candidate.candidateId, noteId: candidate.noteId, title: candidate.title, reason: `Comments entry opened ${panel.classification.state}, not a comment panel` });
+          if (new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(panel.classification.state)) {
+            // The app kept comments inline on the same detail page. Do not send
+            // an extra BACK that would leave the note entirely.
+            current = panel;
+          } else if (panel.classification.state === expectedListState) {
+            // The tap itself returned to the list. It is already safe to stop
+            // sampling; another BACK would leave the research surface.
+            return {
+              current: panel,
+              candidate: enriched,
+              humanReview: review,
+              failureSignature: "detail:comments_entry_missing_or_unverified",
+            };
+          } else {
+            throw new ProviderStop("human_required", `detail:comments_unexpected_state:${panel.classification.state}`, "Comments entry reached an unverified page", {
+              humanReview: review,
             });
           }
-          review.push({ candidateKey: candidate.candidateId, noteId: candidate.noteId, title: candidate.title, reason: `Comments entry opened ${panel.classification.state}, not a comment panel` });
         } else {
           const panelCount = detailMetadata(panel).count;
           enriched.commentMetadata = {
@@ -1281,6 +1568,13 @@ export function createAdbResearchProvider(options = {}) {
           await runAdb(session.record, ["shell", "input", "keyevent", "KEYCODE_BACK"], "close_comments");
           current = await stableSnapshot(session);
           if (!new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(current.classification.state)) {
+            if (current.classification.state === expectedListState) {
+              // Some current full-page comment surfaces close directly to the
+              // originating list instead of restoring an intermediate detail
+              // page. The exact pre-sampling list state is already verified,
+              // so do not send another BACK or report a false navigation stop.
+              return { current, candidate: enriched, humanReview: review, failureSignature: null };
+            }
             throw new ProviderStop("human_required", `detail:comment_return:${current.classification.state}`, "Comments panel did not return to note detail", {
               humanReview: [{ candidateKey: candidate.candidateId, title: candidate.title, reason: "Comments panel did not return to note detail" }],
             });
@@ -1305,6 +1599,7 @@ export function createAdbResearchProvider(options = {}) {
     const collected = new Map();
     const humanReview = [];
     let detailFailureSignature = null;
+    let detailDiagnostics = null;
     let noNew = 0;
     const add = (values) => {
       const before = collected.size;
@@ -1323,6 +1618,7 @@ export function createAdbResearchProvider(options = {}) {
       collected.set(sampled.candidate.candidateId, sampled.candidate);
       humanReview.push(...sampled.humanReview);
       detailFailureSignature = sampled.failureSignature;
+      detailDiagnostics = sampled.diagnostics ?? null;
     }
     for (let index = 0; index < maxScrolls && collected.size < maximum && noNew < maxNoNew; index += 1) {
       if (current.classification.state === "VIDEO_NOTE") break;
@@ -1339,7 +1635,7 @@ export function createAdbResearchProvider(options = {}) {
       }
       noNew = add(extractCandidates(current, source, keyword)) ? 0 : noNew + 1;
     }
-    return { candidates: [...collected.values()], current, humanReview, detailFailureSignature };
+    return { candidates: [...collected.values()], current, humanReview, detailFailureSignature, detailDiagnostics };
   }
 
   async function createSession(record, task, unit) {
@@ -1359,8 +1655,16 @@ export function createAdbResearchProvider(options = {}) {
       taps: new Set(),
       searchSubmitted: false,
       recoveryCalls: 0,
+      inputMethodAudits: [],
       taskCounterKey: taskCounterKey(task),
     };
+  }
+
+  function withInputMethodAudit(result, session) {
+    const key = inputMethodAuditKey(session);
+    const audit = safeInputMethodAudit(session?.inputMethodAudits?.at(-1) ?? (key ? pendingInputMethodAudits.get(key) : null));
+    if (key) pendingInputMethodAudits.delete(key);
+    return audit ? { ...result, inputMethodAudit: audit } : result;
   }
 
   function stopResult(stop, alias, source, keyword, diagnostics = null) {
@@ -1501,71 +1805,79 @@ export function createAdbResearchProvider(options = {}) {
       const keyword = String(unit?.keyword ?? task?.topic ?? "");
       if (forbiddenRequest(task, unit)) return stopResult(new ProviderStop("failed", "safety:forbidden_interaction", "External interactions are never supported"), record.alias, source, keyword);
       if (!ALLOWED_SOURCES.has(source)) return stopResult(new ProviderStop("failed", `source:unsupported:${source}`, "Unsupported source"), record.alias, source, keyword);
+      let session = null;
       try {
-        const session = await createSession(record, task, unit);
+        session = await createSession(record, task, unit);
         let current = await launch(session);
         current = await routeSource(session, current, source, keyword);
         const collected = await collectWithScrolls(session, current, source, keyword);
         if (!collected.candidates.length) {
           if (source === "suggestions" || source === "trending") {
-            return {
+            return withInputMethodAudit({
               status: "skipped", deviceAlias: record.alias, source, keyword, attempt,
               candidates: [], humanReview: [], failureSignature: null, sourceSkipped: true, skipReason: `source_empty:${source}`,
-            };
+            }, session);
           }
-          return {
+          return withInputMethodAudit({
             status: "partial", deviceAlias: record.alias, source, keyword, attempt,
             candidates: [], humanReview: [], failureSignature: `extraction:no_candidates:${source}`,
-          };
+          }, session);
         }
-        return {
+        return withInputMethodAudit({
           status: collected.humanReview.length ? "partial" : "completed", deviceAlias: record.alias, source, keyword, attempt,
           pageState: collected.current.classification.state,
           candidates: collected.candidates,
           humanReview: collected.humanReview,
           failureSignature: collected.detailFailureSignature,
-        };
+          ...(collected.detailDiagnostics ? { diagnostics: collected.detailDiagnostics } : {}),
+        }, session);
       } catch (error) {
         if (error?.code === "DEVICE_OFFLINE") throw error;
-        const stop = error instanceof ProviderStop
-          ? error
-          : new ProviderStop("failed", "provider:unexpected", "Unexpected provider failure");
+        const stop = providerStopFromError(error);
         if (stop.failureSignature.startsWith("source_unavailable:")) {
-          return {
+          return withInputMethodAudit({
             status: "skipped", deviceAlias: record.alias, source, keyword, attempt,
             candidates: [], humanReview: [], failureSignature: null, sourceSkipped: true, skipReason: stop.failureSignature,
-          };
+          }, session);
         }
         const diagnostics = await captureFailureArtifacts(record, task, unit, stop.failureSignature);
-        return stopResult(stop, record.alias, source, keyword, diagnostics);
+        return withInputMethodAudit(stopResult(stop, record.alias, source, keyword, diagnostics), session);
       }
     },
 
     async collectTopicSuggestions({ task, device, deviceAlias } = {}) {
       const record = recordFor({ device, deviceAlias });
       const topic = String(task?.topic ?? "");
+      let session = null;
       try {
-        const session = await createSession(record, task, { source: "suggestions", keyword: topic });
+        session = await createSession(record, task, { source: "suggestions", keyword: topic });
         let current = await launch(session);
         current = await navigateToSearch(session, current);
         current = await enterKeyword(session, current, topic);
         return queryCandidates(current, "suggestions", topic).map((candidate) => candidate.query);
       } catch (error) {
         if (error?.code === "DEVICE_OFFLINE") throw error;
-        const stop = error instanceof ProviderStop
-          ? error
-          : new ProviderStop("failed", "provider:unexpected", "Unexpected provider failure");
-        if (stop.status === "human_required") {
-          return {
-            status: "human_required",
-            suggestions: [],
-            failureSignature: stop.failureSignature,
-            humanReview: stop.humanReview,
-            affectsDeviceHealth: stop.affectsDeviceHealth,
-            stopAll: stop.stopAll,
-          };
-        }
-        throw stop;
+        const stop = providerStopFromError(error);
+        const diagnostics = await captureFailureArtifacts(
+          record,
+          task,
+          { unitId: "topic-discovery", source: "suggestions", keyword: topic },
+          stop.failureSignature,
+        );
+        return {
+          status: stop.status,
+          suggestions: [],
+          failureSignature: stop.failureSignature,
+          humanReview: stop.humanReview,
+          affectsDeviceHealth: stop.affectsDeviceHealth,
+          stopAll: stop.stopAll,
+          ...(safeInputMethodAudit(session?.inputMethodAudits?.at(-1))
+            ? { inputMethodAudit: safeInputMethodAudit(session.inputMethodAudits.at(-1)) }
+            : {}),
+          ...(diagnostics ? { diagnostics } : {}),
+        };
+      } finally {
+        rememberInputMethodAudit(session);
       }
     },
 
@@ -1579,9 +1891,7 @@ export function createAdbResearchProvider(options = {}) {
         return queryCandidates(current, "trending", topic).map((candidate) => candidate.query);
       } catch (error) {
         if (error?.code === "DEVICE_OFFLINE") throw error;
-        const stop = error instanceof ProviderStop
-          ? error
-          : new ProviderStop("failed", "provider:unexpected", "Unexpected provider failure");
+        const stop = providerStopFromError(error);
         if (stop.failureSignature.startsWith("source_unavailable:")) {
           return { status: "skipped", trendingKeywords: [], failureSignature: null };
         }
@@ -1608,9 +1918,7 @@ export function createAdbResearchProvider(options = {}) {
         return await handoffToCandidate(record, task ?? {}, candidate ?? {});
       } catch (error) {
         if (error?.code === "DEVICE_OFFLINE") throw error;
-        const stop = error instanceof ProviderStop
-          ? error
-          : new ProviderStop("failed", "provider:unexpected", "Unexpected provider failure");
+        const stop = providerStopFromError(error);
         return stopResult(stop, record.alias, "handoff", compact(candidate?.keyword));
       }
     },

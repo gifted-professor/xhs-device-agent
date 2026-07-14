@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const actionScript = join(root, "scripts", "Invoke-MatrixAction.ps1");
 const collectScript = join(root, "scripts", "Collect-PhoneAssets.ps1");
+const exampleConfig = join(root, "config", "matrix.example.psd1");
 const missingConfig = join(tmpdir(), `xhs-missing-${process.pid}.psd1`);
 const windowsOnly = { skip: process.platform !== "win32" };
 
@@ -40,6 +41,29 @@ try {
 } finally {
   Remove-Item -LiteralPath $firstPath, $secondPath -Force -ErrorAction SilentlyContinue
 }`;
+  return spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8" });
+}
+
+function runAcknowledgedVerificationFailureCheck(scriptPath) {
+  const quotedPath = `'${scriptPath.replaceAll("'", "''")}'`;
+  const command = `
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(${quotedPath}, [ref]$tokens, [ref]$errors)
+$definition = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Throw-XiaoweiVerificationFailure' }, $true) | Select-Object -First 1
+if (!$definition) { throw 'Missing function: Throw-XiaoweiVerificationFailure' }
+Invoke-Expression $definition.Extent.Text
+try { throw 'postcondition mismatch' } catch { $verificationError = $_ }
+try {
+  Throw-XiaoweiVerificationFailure $null $true 'startApk' $verificationError
+  throw 'Expected the helper to throw'
+} catch {
+  if ([string]$_.Exception.Data['Outcome'] -ne 'unknown') { throw 'Acknowledged action did not become unknown' }
+  if ($_.Exception.Data['Sent'] -ne $true) { throw 'Acknowledged action did not retain sent=true' }
+  if ([string]$_.Exception.Data['Action'] -ne 'startApk') { throw 'Wire action was not retained' }
+}
+exit 0`;
   return spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command], { encoding: "utf8" });
 }
 
@@ -115,6 +139,61 @@ test("profile navigation is semantic-only and stable waits are bounded", async (
     assert.match(source, /two identical normalized hierarchy fingerprints/);
   }
   assert.equal([...actionSource].some((character) => character.codePointAt(0) > 127), false);
+});
+
+test("named XHS interactions use a separate per-alias semantic authorization", async () => {
+  const [source, configSource] = await Promise.all([
+    readFile(actionScript, "utf8"),
+    readFile(exampleConfig, "utf8"),
+  ]);
+
+  for (const action of ["Like", "Favorite", "Follow", "Comment", "Publish", "Delete"]) {
+    assert.match(source, new RegExp(`"${action}"`));
+  }
+  assert.match(source, /\$xhsSemanticActions\s*=\s*@\("Like", "Favorite", "Follow", "Comment", "Publish", "Delete"\)/);
+  assert.match(source, /Xhs\.Interactions\.AllowedActionsByAlias/);
+  assert.match(source, /function Get-XhsSemanticMatch/);
+  assert.match(source, /function Invoke-XhsApprovedTextInput/);
+  assert.match(configSource, /Interactions\s*=\s*@\{/);
+  assert.match(configSource, /AllowedActionsByAlias\s*=\s*@\{/);
+  assert.doesNotMatch(configSource, /AcceptedActionsByAlias\s*=\s*@\{[^}]*\b(?:like|favorite|follow|comment|publish|delete)\b/is);
+});
+
+test("matrix UI capture prefers direct XML output before the remote-file fallback", async () => {
+  const source = await readFile(actionScript, "utf8");
+  const directIndex = source.indexOf("exec-out uiautomator dump /dev/tty");
+  const fallbackIndex = source.indexOf("/sdcard/xhs_matrix_window.xml");
+  assert.ok(directIndex >= 0, "direct UI hierarchy capture is missing");
+  assert.ok(fallbackIndex > directIndex, "remote-file fallback must follow the direct capture");
+  assert.match(source, /LastIndexOf\(\$closingTag/);
+  assert.match(source, /WriteAllText\(\$Path, \$xml/);
+});
+
+test("sent Xiaowei results remain unknown when parsing or stop verification is inconclusive", async () => {
+  const source = await readFile(actionScript, "utf8");
+  assert.match(source, /gateway result could not be parsed after the worker completed/);
+  assert.match(source, /\$exception\.Data\["Outcome"\]\s*=\s*"unknown"/);
+  assert.match(source, /provenPreSendFailure/);
+  assert.match(source, /outcome -eq "failed"/);
+  assert.match(source, /sent -is \[bool\]/);
+  assert.match(source, /function Test-PackageProcessRunning/);
+  assert.match(source, /Invoke-Adb \$Serial @\("get-state"\)/);
+  assert.doesNotMatch(source, /catch\s*\{\s*\$pid\s*=\s*""\s*\}/);
+  assert.match(source, /function Throw-XiaoweiVerificationFailure/);
+  assert.match(source, /if \(\$ApiAcknowledged\)/);
+  assert.match(source, /Throw-XiaoweiVerificationFailure \$apiError \$apiAcknowledged/);
+  assert.match(source, /must not equal raw ADB identifiers/);
+  assert.match(source, /AcceptedDeviceSerialsByAlias/);
+  assert.match(source, /Test-XiaoweiCapability \$WireAction \$DeviceAliasName \$Serial/);
+  assert.match(source, /XHS_XIAOWEI_GATEWAY_KEY/);
+  assert.match(source, /HMACSHA256/);
+  assert.match(source, /--grant-file/);
+  assert.doesNotMatch(source, /--policy-file/);
+});
+
+test("acknowledged API actions with inconclusive postconditions execute as unknown", windowsOnly, () => {
+  const result = runAcknowledgedVerificationFailureCheck(actionScript);
+  assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });
 
 test("fingerprints ignore bounds, counters, relative time, and clocks", windowsOnly, () => {

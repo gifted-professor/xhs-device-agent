@@ -12,6 +12,7 @@ export const RESEARCH_STATUSES = Object.freeze([
 ]);
 
 const SOURCES = new Set(["search", "suggestions", "trending", "recommended"]);
+const MAX_PARALLEL_DEVICES = 4;
 const TOP_LEVEL_KEYS = new Set([
   "schemaVersion", "taskId", "mode", "topic", "seedKeywords", "sources",
   "deviceGroup", "commentMode", "interactionPolicy", "budgets", "aiPolicy",
@@ -166,17 +167,20 @@ function normalizeAlias(device, index) {
 
 export function buildWorkUnits(taskInput, deviceAliases) {
   const task = validateResearchTask(taskInput);
-  const aliases = [...new Set(deviceAliases)].sort().slice(0, 3);
+  const aliases = [...new Set(deviceAliases)].sort().slice(0, MAX_PARALLEL_DEVICES);
   assert(aliases.length > 0, "NO_DEVICES", "at least one device alias is required");
   const keywords = [...new Set([task.topic, ...task.seedKeywords].map((item) => item.trim()))]
     .slice(0, task.budgets.maxQueries);
+  const sourcePriority = new Map([["suggestions", 0], ["search", 1], ["trending", 2], ["recommended", 3]]);
+  const orderedSources = [...task.sources].sort((left, right) => sourcePriority.get(left) - sourcePriority.get(right));
   const units = [];
-  for (const source of task.sources) {
+  const startOffset = Number.parseInt(stableHash(task.taskId).slice(0, 8), 16) % aliases.length;
+  for (const source of orderedSources) {
     const sourceKeywords = ["trending", "recommended"].includes(source) ? [task.topic] : keywords;
     for (const keyword of sourceKeywords) {
       const ordinal = units.length;
       const unitId = stableHash(`${task.taskId}\u0000${source}\u0000${keyword}`).slice(0, 20);
-      const index = Number.parseInt(stableHash(`${source}\u0000${keyword}`).slice(0, 8), 16) % aliases.length;
+      const index = (startOffset + ordinal) % aliases.length;
       units.push({ unitId, ordinal, source, keyword, assignedDevice: aliases[index], reassignCount: 0 });
     }
   }
@@ -395,7 +399,7 @@ export async function runResearchTask(taskInput, options = {}) {
     const alias = normalizeAlias(device, index);
     if (!deviceMap.has(alias) && device?.online !== false) deviceMap.set(alias, { alias, raw: device });
   });
-  const devices = [...deviceMap.values()].sort((a, b) => a.alias.localeCompare(b.alias)).slice(0, 3);
+  const devices = [...deviceMap.values()].sort((a, b) => a.alias.localeCompare(b.alias)).slice(0, MAX_PARALLEL_DEVICES);
   if (devices.length === 0) {
     const summary = {
       schemaVersion: 1,
@@ -419,6 +423,7 @@ export async function runResearchTask(taskInput, options = {}) {
   for (const unit of units) queues.get(unit.assignedDevice).push(unit);
   const allCandidates = [];
   const allReviews = [];
+  const sourceSkips = [];
   const events = new Map(devices.map((device) => [device.alias, []]));
   const signatureDevices = new Map();
   const reassign = [];
@@ -452,7 +457,17 @@ export async function runResearchTask(taskInput, options = {}) {
       sanitizeReview(review, { ...unit, deviceAlias }, task));
     allReviews.push(...normalizedReviews);
     if (result.status === "completed") completedUnits += 1;
-    else if (result.status === "skipped") skippedUnits += 1;
+    else if (result.status === "skipped") {
+      skippedUnits += 1;
+      if (result.sourceSkipped === true) {
+        sourceSkips.push({
+          source: unit.source,
+          keyword: unit.keyword,
+          reason: String(result.skipReason ?? `source_unavailable:${unit.source}`).slice(0, 200),
+          deviceAlias,
+        });
+      }
+    }
     else {
       failedUnits += 1;
       humanRequired = result.status === "human_required" || humanRequired;
@@ -527,9 +542,9 @@ export async function runResearchTask(taskInput, options = {}) {
         const result = normalizeResult(await provider.executeWorkUnit({
           task, unit: { ...unit }, device: device.raw, deviceAlias: device.alias, attempt: unit.reassignCount,
         }));
-        if (result.status === "completed" || result.status === "skipped" || result.affectsDeviceHealth === false) {
+        if (result.status === "completed") {
           consecutiveFailures = 0;
-        } else {
+        } else if (result.status !== "skipped" && result.affectsDeviceHealth !== false) {
           consecutiveFailures += 1;
         }
         applyResult(result, unit, device.alias);
@@ -540,6 +555,7 @@ export async function runResearchTask(taskInput, options = {}) {
           status: result.status,
           failureSignature: result.failureSignature ?? null,
           diagnostics: isObject(result.diagnostics) ? result.diagnostics : null,
+          ...(isObject(result.inputMethodAudit) ? { inputMethodAudit: result.inputMethodAudit } : {}),
         });
       } catch (error) {
         if (error?.code === "DEVICE_OFFLINE" && error?.notStarted === true) {
@@ -593,10 +609,12 @@ export async function runResearchTask(taskInput, options = {}) {
   await writeAtomic(paths.candidatesJsonl, candidates.map(jsonLine).join(""));
   await writeAtomic(paths.humanReviewJsonl, reviews.map(jsonLine).join(""));
 
+  const benignSkippedUnits = budgetCappedUnits + sourceSkips.length;
+  const blockingSkippedUnits = Math.max(0, skippedUnits - benignSkippedUnits);
   let status;
   if (humanRequired) status = "human_required";
   else if (completedUnits === 0 && (failedUnits > 0 || skippedUnits > budgetCappedUnits)) status = "failed";
-  else if (failedUnits > 0 || skippedUnits > budgetCappedUnits || globalFuse) status = "partial";
+  else if (failedUnits > 0 || blockingSkippedUnits > 0 || globalFuse) status = "partial";
   else status = "completed";
   const summary = {
     schemaVersion: 1,
@@ -618,6 +636,7 @@ export async function runResearchTask(taskInput, options = {}) {
       modelCalls,
     },
     devices: devices.map((device) => device.alias),
+    sourceSkips,
     globalFuse,
     aiCallsUsed: modelCalls,
     paths,

@@ -8,6 +8,7 @@ import { createAdbResearchProvider } from "./adb-research-provider.mjs";
 import { createWindowsLocalOcr } from "./local-ocr.mjs";
 import { createDryRunProvider, validateResearchTask } from "./research-core.mjs";
 import { runResearchSession } from "./research-session.mjs";
+import { createXiaoweiTextInputAdapter, validateXiaoweiTextInputConfig } from "./xiaowei-text-input.mjs";
 
 const execFileAsync = promisify(execFile);
 const SAFE_ALIAS = /^[A-Za-z0-9._-]{1,64}$/;
@@ -71,6 +72,9 @@ export async function validateLiveProviderConfig(taskInput, providerConfig, opti
     }
     if (typeof device.serial !== "string" || device.serial !== device.serial.trim() || !SAFE_SERIAL.test(device.serial)) {
       throw entryError("INVALID_PROVIDER_CONFIG", `Provider device ${index + 1} has an invalid identifier`);
+    }
+    if (device.alias === device.serial) {
+      throw entryError("INVALID_PROVIDER_CONFIG", `Provider device ${index + 1} exposes its raw identifier as an alias`);
     }
     if (aliases.has(device.alias)) {
       throw entryError("INVALID_PROVIDER_CONFIG", "Provider device aliases must be unique");
@@ -146,6 +150,22 @@ export async function validateLiveProviderConfig(taskInput, providerConfig, opti
     }
   }
 
+  try {
+    validateXiaoweiTextInputConfig(providerConfig.xiaowei, aliases);
+  } catch (error) {
+    throw entryError("INVALID_XIAOWEI_TEXT_INPUT_CONFIG", error.message);
+  }
+  const xiaoweiSettings = providerConfig.xiaowei?.textInput;
+  if (xiaoweiSettings?.enabled === true) {
+    const bindings = providerConfig.xiaowei?.api?.acceptedDeviceSerialsByAlias;
+    for (const alias of xiaoweiSettings.approvedAliases ?? []) {
+      const device = providerConfig.devices.find((candidate) => candidate.alias === alias);
+      if (!device || bindings?.[alias] !== device.serial) {
+        throw entryError("INVALID_XIAOWEI_TEXT_INPUT_CONFIG", "Xiaowei text input acceptance is not bound to the mapped physical device");
+      }
+    }
+  }
+
   const inventory = options.listOnlineDevices ?? listOnlineAdbDevices;
   let onlineDevices;
   try {
@@ -163,6 +183,7 @@ export async function validateLiveProviderConfig(taskInput, providerConfig, opti
   if (onlineDevices.some((serial) => !serials.has(serial))) {
     throw entryError("UNMAPPED_ONLINE_DEVICES", "Formal research is blocked because one or more online devices are not mapped");
   }
+  return [...new Set(onlineDevices)].sort();
 }
 
 function parseArguments(argv) {
@@ -228,16 +249,50 @@ export async function runFromArguments(argv, runtime = {}) {
   }
 
   const providerConfig = await readJson(args.providerConfigPath);
-  await validateLiveProviderConfig(task, providerConfig, {
+  const onlineSerials = await validateLiveProviderConfig(task, providerConfig, {
     listOnlineDevices: runtime.listOnlineDevices,
   });
   const localOcr = createWindowsLocalOcr();
+  const xiaoweiSettings = providerConfig.xiaowei?.textInput;
+  const xiaoweiTextInput = xiaoweiSettings?.enabled === true
+    ? (runtime.createXiaoweiTextInputAdapter ?? createXiaoweiTextInputAdapter)({
+        endpoint: providerConfig.xiaowei.endpoint,
+        api: providerConfig.xiaowei.api,
+        adbPath: providerConfig.adbPath,
+        expectedPackage: providerConfig.packageName,
+        expectedOnlineSerials: onlineSerials,
+        devices: providerConfig.devices,
+        approvedAliases: xiaoweiSettings.approvedAliases,
+        preferredImeServices: xiaoweiSettings.preferredImeServices,
+        perDevice: xiaoweiSettings.perDevice,
+      }, runtime.xiaoweiAdapterOptions)
+    : null;
+  if (xiaoweiTextInput && typeof xiaoweiTextInput.verifyIdentity === "function") {
+    try {
+      await xiaoweiTextInput.verifyIdentity();
+    } catch (error) {
+      const mismatch = error?.code === "XIAOWEI_IDENTITY_MISMATCH";
+      throw entryError(
+        mismatch ? "XIAOWEI_IDENTITY_MISMATCH" : "XIAOWEI_IDENTITY_UNVERIFIED",
+        mismatch
+          ? "Formal research is blocked because Xiaowei API and ADB device identities differ"
+          : "Formal research is blocked because Xiaowei API device identity could not be verified",
+      );
+    }
+  }
   return runResearchSession(task, {
     ...common,
     providerFactory({ pageRecovery, resourceUsage, onResourceUsage, taskDirectory }) {
       return createAdbResearchProvider({
         ...providerConfig,
         localOcr,
+        xiaoweiTextInput,
+        xiaoweiTextApprovedAliases: xiaoweiSettings?.enabled === true ? xiaoweiSettings.approvedAliases : [],
+        xiaoweiOcrEchoAliases: xiaoweiSettings?.enabled === true
+          ? Object.entries(xiaoweiSettings.perDevice ?? {})
+              .filter(([, profile]) => profile?.echoVerification === "local_ocr")
+              .map(([alias]) => alias)
+          : [],
         pageRecovery,
         onResourceUsage,
         failureArtifactsRoot: path.join(taskDirectory, "diagnostics"),

@@ -265,14 +265,14 @@
               "weight": 0.45,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["image_pager", "note_image", "photo_view"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图", "图文"] }
+                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图", "图文", "^图片,第\\d+张,共\\d+张"] }
               ]
             },
             {
               "id": "note-metadata",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content", "nickNameTV", "moreOperateIV"] },
                 { "attribute": "contentDesc", "match": "regex", "values": ["作者|笔记正文"] }
               ]
             },
@@ -281,7 +281,9 @@
               "weight": 0.25,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
-                { "attribute": "text", "match": "exact", "values": ["评论"] }
+                { "attribute": "text", "match": "exact", "values": ["评论"] },
+                { "attribute": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["^评论\\s*\\d+$"] }
               ]
             }
           ],
@@ -320,7 +322,9 @@
               "weight": 0.25,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
-                { "attribute": "text", "match": "exact", "values": ["评论"] }
+                { "attribute": "text", "match": "exact", "values": ["评论"] },
+                { "attribute": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
+                { "attribute": "contentDesc", "match": "regex", "values": ["^评论\\s*\\d+$"] }
               ]
             }
           ],
@@ -350,7 +354,7 @@
               "id": "comment-input",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["说点什么...", "说点什么", "友善评论"] },
+                { "attribute": "text", "match": "exact", "values": ["说点什么...", "说点什么", "友善评论", "爱评论的人运气都不差", "留下你的想法吧"] },
                 { "attribute": "contentDesc", "match": "exact", "values": ["说点什么", "添加评论"] },
                 { "attribute": "resourceId", "match": "includes", "values": ["comment_input"] }
               ]
@@ -360,7 +364,8 @@
               "weight": 0.25,
               "any": [
                 { "attribute": "resourceId", "match": "includes", "values": ["comment_panel", "comment_sheet", "comment_dialog"] },
-                { "attribute": "className", "match": "exact", "values": ["android.app.Dialog"] }
+                { "attribute": "className", "match": "exact", "values": ["android.app.Dialog"] },
+                { "attribute": "text", "match": "regex", "values": ["^(?:(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天).*\\s)?回复$", "^展开\\s*\\d+\\s*条回复$"] }
               ]
             }
           ]
@@ -497,7 +502,9 @@
         "comments_entry": [
           { "strategy": "resource-id", "match": "includes", "values": ["comment_entry", "comment_count"] },
           { "strategy": "text", "values": ["评论"] },
+          { "strategy": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
           { "strategy": "content-desc", "values": ["评论", "查看评论"] },
+          { "strategy": "content-desc", "match": "regex", "values": ["^评论\\s*\\d+$"] },
           {
             "id": "comment-label-clickable-ancestor",
             "strategy": "relation",
@@ -519,6 +526,7 @@
         ],
         "note_card": [
           { "strategy": "resource-id", "match": "includes", "values": ["note_card", "feed_item"] },
+          { "strategy": "content-desc", "match": "regex", "values": ["^笔记\\s"] },
           {
             "id": "title-clickable-card-ancestor",
             "strategy": "relation",
@@ -526,12 +534,399 @@
             "maxDepth": 4,
             "anchor": { "attribute": "resourceId", "match": "includes", "values": ["note_title"] },
             "node": { "attribute": "clickable", "equals": true }
+          },
+          {
+            "id": "dated-result-clickable-card-ancestor",
+            "strategy": "relation",
+            "direction": "ancestor",
+            "maxDepth": 5,
+            "anchor": { "attribute": "text", "match": "regex", "values": ["^(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天)$"] },
+            "node": { "attribute": "clickable", "equals": true }
           }
         ]
       }
     }
   ],
-  "deviceOverrides": [],
+  "deviceOverrides": [
+    {
+      "id": "device-6f05e2f6-xhs-9.26.1",
+      "match": {
+        "deviceAlias": "device-6f05e2f6",
+        "androidSdk": "31",
+        "resolution": "1080x2400",
+        "dpi": "440"
+      },
+      "calibratedXhsVersion": "9.26.1",
+      "semanticTargets": {
+        "search_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "id": "focused-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "focused", "equals": true }
+            ]
+          },
+          {
+            "id": "clickable-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          },
+          {
+            "id": "query-text-next-to-clear",
+            "strategy": "relation",
+            "direction": "sibling",
+            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
+            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+          },
+          { "strategy": "content-desc", "values": ["搜索"] }
+        ],
+        "search_submit": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "id": "clickable-search-action",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "text", "match": "exact", "values": ["搜索"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "device-cfb9f8a2-xhs-9.35.1",
+      "match": {
+        "deviceAlias": "device-cfb9f8a2",
+        "androidSdk": "34",
+        "resolution": "1080x2400",
+        "dpi": "440"
+      },
+      "calibratedXhsVersion": "9.35.1",
+      "semanticTargets": {
+        "search_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "id": "focused-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "focused", "equals": true }
+            ]
+          },
+          {
+            "id": "clickable-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          },
+          {
+            "id": "query-text-next-to-clear",
+            "strategy": "relation",
+            "direction": "sibling",
+            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
+            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+          },
+          { "strategy": "content-desc", "values": ["搜索"] }
+        ],
+        "search_submit": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "id": "clickable-search-action",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "text", "match": "exact", "values": ["搜索"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "device-04-xhs-9.36.2",
+      "match": {
+        "deviceAlias": "device-04",
+        "androidSdk": "34",
+        "resolution": "1080x2400",
+        "dpi": "420"
+      },
+      "calibratedXhsVersion": "9.36.2",
+      "states": [
+        {
+          "state": "SEARCH_ENTRY",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.55,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "search-action",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+              ]
+            },
+            {
+              "id": "input-focused",
+              "weight": 0.15,
+              "any": [
+                { "attribute": "focused", "equals": true },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "suggestion-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+              ]
+            },
+            {
+              "id": "result-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "SEARCH_SUGGESTIONS",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "suggestion-heading",
+              "weight": 0.45,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录", "大家都在搜"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史记录"] }
+              ]
+            },
+            {
+              "id": "suggestion-container",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
+                { "attribute": "className", "match": "exact", "values": ["androidx.recyclerview.widget.RecyclerView"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "result-tabs",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        }
+      ],
+      "semanticTargets": {
+        "search_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "id": "focused-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "focused", "equals": true }
+            ]
+          },
+          {
+            "id": "clickable-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          },
+          {
+            "id": "query-text-next-to-clear",
+            "strategy": "relation",
+            "direction": "sibling",
+            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
+            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+          },
+          { "strategy": "content-desc", "values": ["搜索"] }
+        ],
+        "search_submit": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "id": "clickable-search-action",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "text", "match": "exact", "values": ["搜索"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "device-136ffdee-xhs-9.36.2",
+      "match": {
+        "deviceAlias": "device-136ffdee",
+        "androidSdk": "34",
+        "resolution": "1080x2400",
+        "dpi": "440"
+      },
+      "calibratedXhsVersion": "9.36.2",
+      "states": [
+        {
+          "state": "SEARCH_ENTRY",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.55,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "search-action",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+              ]
+            },
+            {
+              "id": "input-focused",
+              "weight": 0.15,
+              "any": [
+                { "attribute": "focused", "equals": true },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "suggestion-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+              ]
+            },
+            {
+              "id": "result-content",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        },
+        {
+          "state": "SEARCH_SUGGESTIONS",
+          "evidence": [
+            {
+              "id": "search-field",
+              "weight": 0.3,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+              ]
+            },
+            {
+              "id": "suggestion-heading",
+              "weight": 0.45,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录", "大家都在搜"] },
+                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史记录"] }
+              ]
+            },
+            {
+              "id": "suggestion-container",
+              "weight": 0.25,
+              "any": [
+                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
+                { "attribute": "className", "match": "exact", "values": ["androidx.recyclerview.widget.RecyclerView"] },
+                { "attribute": "scrollable", "equals": true }
+              ]
+            }
+          ],
+          "penalties": [
+            {
+              "id": "result-tabs",
+              "weight": 0.5,
+              "any": [
+                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
+                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+              ]
+            }
+          ]
+        }
+      ],
+      "semanticTargets": {
+        "search_entry": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "id": "focused-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "focused", "equals": true }
+            ]
+          },
+          {
+            "id": "clickable-search-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          },
+          {
+            "id": "query-text-next-to-clear",
+            "strategy": "relation",
+            "direction": "sibling",
+            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
+            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+          },
+          { "strategy": "content-desc", "values": ["搜索"] }
+        ],
+        "search_submit": [
+          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "id": "clickable-search-action",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "text", "match": "exact", "values": ["搜索"] },
+              { "attribute": "clickable", "equals": true }
+            ]
+          }
+        ]
+      }
+    }
+  ],
   "safety": {
     "humanRequiredStates": ["LOGIN_OR_CHALLENGE"],
     "blockCloudStates": ["LOGIN_OR_CHALLENGE"],

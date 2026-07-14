@@ -59,22 +59,38 @@ test("strict task validation accepts the public shape and blocks interactions", 
   assert.throws(() => validateResearchTask({ ...task(), topic: "请批量点赞这些笔记" }), (error) => error.code === "FORBIDDEN_INTERACTION");
   assert.throws(() => validateResearchTask({ ...task(), extra: true }), (error) => error.code === "INVALID_SCHEMA");
   assert.throws(() => validateResearchTask({ ...task(), mode: "engage" }), (error) => error.code === "INVALID_SCHEMA");
+  assert.throws(() => validateResearchTask({ ...task(), interactionPolicy: "auto" }),
+    (error) => error.code === "INVALID_SCHEMA");
   assert.throws(() => validateResearchTask({ ...task(), aiPolicy: { ...task().aiPolicy, maxAutomaticCalls: 5 } }),
     (error) => error.code === "INVALID_SCHEMA");
 });
 
-test("stable assignment uses at most three devices and each device executes serially", async () => {
+test("stable assignment uses at most four devices and each device executes serially", async () => {
   const input = task({ taskId: "xhs-serial-001" });
-  const first = buildWorkUnits(input, ["d3", "d1", "d2", "d4"]);
-  const second = buildWorkUnits(input, ["d2", "d1", "d3"]);
+  const first = buildWorkUnits(input, ["d5", "d3", "d1", "d2", "d4"]);
+  const second = buildWorkUnits(input, ["d4", "d2", "d1", "d3"]);
   assert.deepEqual(first.map(({ source, keyword, assignedDevice }) => ({ source, keyword, assignedDevice })),
     second.map(({ source, keyword, assignedDevice }) => ({ source, keyword, assignedDevice })));
-  assert.deepEqual([...new Set(first.map((unit) => unit.assignedDevice))].sort(), ["d1", "d2", "d3"]);
+  assert.equal(first.every((unit) => ["d1", "d2", "d3", "d4"].includes(unit.assignedDevice)), true);
+
+  const fourUnitTask = task({
+    taskId: "four-device-balanced-001",
+    sources: ["search"],
+    seedKeywords: ["a", "b", "c"],
+    budgets: { ...task().budgets, maxQueries: 4 },
+  });
+  const balanced = buildWorkUnits(fourUnitTask, ["d4", "d2", "d1", "d3"]);
+  const loads = new Map(["d1", "d2", "d3", "d4"].map((alias) => [alias, 0]));
+  for (const unit of balanced) loads.set(unit.assignedDevice, loads.get(unit.assignedDevice) + 1);
+  assert.equal(balanced.length, 4);
+  assert.deepEqual([...loads.values()].sort(), [1, 1, 1, 1]);
+  const differentTaskIds = new Set(buildWorkUnits({ ...fourUnitTask, taskId: "four-device-balanced-002" }, [...loads.keys()]).map((unit) => unit.unitId));
+  assert.equal(balanced.some((unit) => differentTaskIds.has(unit.unitId)), false);
 
   const active = new Set();
   let overlap = false;
   const provider = createDryRunProvider({
-    devices: ["d3", "d2", "d1", "d4"],
+    devices: ["d5", "d3", "d2", "d1", "d4"],
     async outcomeForUnit(context) {
       if (active.has(context.deviceAlias)) overlap = true;
       active.add(context.deviceAlias);
@@ -89,8 +105,53 @@ test("stable assignment uses at most three devices and each device executes seri
   const summary = await runResearchTask(input, { provider, outputRoot: await temporaryOutput() });
   assert.equal(summary.status, "completed");
   assert.equal(overlap, false);
-  assert.deepEqual(summary.devices, ["d1", "d2", "d3"]);
+  assert.deepEqual(summary.devices, ["d1", "d2", "d3", "d4"]);
   assert.equal(summary.counts.modelCalls, 0);
+});
+
+test("device events retain deidentified Xiaowei input and IME restoration evidence", async () => {
+  const outputRoot = await temporaryOutput();
+  const input = task({ taskId: "xhs-ime-audit-001", sources: ["search"], seedKeywords: ["a"] });
+  const provider = createDryRunProvider({
+    devices: ["d1"],
+    outcomeForUnit({ unit }) {
+      return {
+        status: "completed",
+        candidates: [{ noteId: unit.unitId, author: "a", title: unit.keyword, mediaType: "image" }],
+        inputMethodAudit: {
+          adapter: "xiaowei_api",
+          apiIdentityVerified: true,
+          bridgeSelectionVerified: true,
+          focusedEditorVerified: true,
+          clearVerified: true,
+          apiAccepted: true,
+          echoVerified: true,
+          restoreAttempted: true,
+          restoreVerified: true,
+        },
+      };
+    },
+  });
+  const summary = await runResearchTask(input, { provider, outputRoot });
+  const events = (await readFile(path.join(summary.paths.eventsDirectory, "d1.jsonl"), "utf8"))
+    .trim().split("\n").map((line) => JSON.parse(line));
+  const audit = events.find((event) => event.type === "finished")?.inputMethodAudit;
+  assert.deepEqual(audit, {
+    adapter: "xiaowei_api",
+    apiIdentityVerified: true,
+    bridgeSelectionVerified: true,
+    focusedEditorVerified: true,
+    clearVerified: true,
+    apiAccepted: true,
+    echoVerified: true,
+    restoreAttempted: true,
+    restoreVerified: true,
+  });
+});
+
+test("suggestion discovery units execute before search submission units", () => {
+  const units = buildWorkUnits(task({ taskId: "source-order", sources: ["search", "recommended", "suggestions", "trending"] }), ["d1"]);
+  assert.deepEqual([...new Set(units.map((unit) => unit.source))], ["suggestions", "search", "trending", "recommended"]);
 });
 
 test("candidate dedupe prefers noteId, then metadata hash and n-gram similarity", () => {
@@ -201,18 +262,58 @@ test("source-unavailable units are skipped without isolating a healthy device", 
   const provider = createDryRunProvider({
     devices: ["d1"],
     outcomeForUnit({ unit }) {
-      if (unit.source === "trending") return { status: "skipped", failureSignature: "source_unavailable:trending" };
+      if (unit.source === "trending") {
+        return {
+          status: "skipped",
+          candidates: [],
+          humanReview: [],
+          failureSignature: null,
+          sourceSkipped: true,
+          skipReason: "source_unavailable:trending",
+        };
+      }
       return { status: "completed", candidates: [{ noteId: unit.unitId, title: unit.keyword, mediaType: "image" }] };
     },
   });
-  const summary = await runResearchTask(task({
+  const input = task({
     taskId: "xhs-source-skip-001",
     sources: ["trending", "search"],
-  }), { provider, outputRoot: await temporaryOutput() });
-  assert.equal(summary.status, "partial");
+  });
+  const summary = await runResearchTask(input, { provider, outputRoot: await temporaryOutput() });
+  assert.equal(summary.status, "completed");
   assert.equal(summary.counts.skippedUnits, 1);
+  assert.deepEqual(summary.sourceSkips, [{
+    source: "trending",
+    keyword: input.topic,
+    reason: "source_unavailable:trending",
+    deviceAlias: "d1",
+  }]);
   assert(summary.counts.completedUnits > 2);
   assert(provider.calls.length > 2, "a skipped source must not trip the two-failure device fuse");
+});
+
+test("a neutral skip does not erase a prior device-navigation failure", async () => {
+  let call = 0;
+  const provider = createDryRunProvider({
+    devices: ["d1"],
+    outcomeForUnit() {
+      call += 1;
+      if (call === 1) return { status: "failed", failureSignature: "navigation:first" };
+      if (call === 2) return {
+        status: "skipped",
+        sourceSkipped: true,
+        skipReason: "source_unavailable:trending",
+        affectsDeviceHealth: false,
+      };
+      return { status: "failed", failureSignature: "navigation:second" };
+    },
+  });
+  const summary = await runResearchTask(task({
+    taskId: "xhs-neutral-skip-counter-001",
+    sources: ["search", "trending", "recommended"],
+  }), { provider, outputRoot: await temporaryOutput() });
+  assert.equal(summary.status, "failed");
+  assert.equal(provider.calls.length, 3, "the second navigation failure must isolate the device after a neutral skip");
 });
 
 test("the global note budget stops later work without turning a successful cap into partial", async () => {

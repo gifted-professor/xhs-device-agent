@@ -141,6 +141,60 @@ test("all known states clear the score and margin gates; unmatched UI falls back
   }
 });
 
+test("current obfuscated image-note detail is distinguished from an inline comment section", () => {
+  const xml = hierarchy(
+    node({ "resource-id": "com.xingin.xhs:id/nickNameTV", text: "公开作者" }),
+    node({ "resource-id": "com.xingin.xhs:id/moreOperateIV", clickable: "true" }),
+    node({ class: "android.widget.FrameLayout", "content-desc": "图片,第1张,共1张,双指左划或右划即可查看更多内容" }),
+    node({ text: "共 4 条评论", clickable: "true" }),
+    node({ text: "说点什么...", "content-desc": "评论框", clickable: "true" }),
+    node({ class: "android.widget.Button", "content-desc": "评论 4", clickable: "true" }),
+  );
+  const result = classifyPage(xml, rules, { deviceAlias: "acceptance-device", xhsVersion: "9.26.1" });
+  assert.equal(result.state, "IMAGE_NOTE");
+  assert.equal(result.accepted, true);
+  assert.equal(result.matchedEvidence.includes("image-note-marker"), true);
+});
+
+test("current obfuscated full-page comments are distinguished from note detail and home feed", () => {
+  const xml = hierarchy(
+    node({ "resource-id": "com.xingin.xhs:id/nickNameTV", text: "公开作者" }),
+    node({ text: "关注", clickable: "true" }),
+    node({ text: "共72条评论" }),
+    node({ class: "androidx.recyclerview.widget.RecyclerView", scrollable: "true" }),
+    node({ text: "6天前 湖北 回复" }),
+    node({ text: "爱评论的人运气都不差", class: "android.widget.EditText", clickable: "true" }),
+    node({ class: "android.widget.Button", "content-desc": "评论 72", clickable: "true" }),
+  );
+  const result = classifyPage(xml, rules, { deviceAlias: "acceptance-device", xhsVersion: "9.26.1" });
+  assert.equal(result.state, "COMMENT_PANEL");
+  assert.equal(result.accepted, true);
+  assert.deepEqual(result.matchedEvidence, ["comment-heading", "comment-input", "comment-modal"]);
+  assert.ok(result.margin >= 0.15, JSON.stringify(result.candidates));
+});
+
+test("a dated obfuscated result card resolves through a clickable ancestor relation", () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?><hierarchy rotation="0"><node class="androidx.recyclerview.widget.RecyclerView" resource-id="com.xingin.xhs:id/0_resource_name_obfuscated" scrollable="true" enabled="true"><node class="android.widget.FrameLayout" clickable="true" enabled="true"><node class="android.widget.RelativeLayout" enabled="true"><node class="android.widget.TextView" text="公开笔记标题" enabled="true"/><node class="android.widget.TextView" text="07-02" enabled="true"/></node></node></node></hierarchy>`;
+  const target = resolveSemanticTarget(xml, rules, "note_card", { deviceAlias: "acceptance-device", xhsVersion: "9.26.1" });
+  assert.equal(target.found, true);
+  assert.equal(target.strategy, "relation");
+  assert.equal(target.selector.relation, "dated-result-clickable-card-ancestor");
+});
+
+test("current obfuscated video detail clears the state threshold with a public comment count", () => {
+  const xml = hierarchy(
+    node({ class: "android.view.ViewGroup", "content-desc": "暂停" }),
+    node({ "resource-id": "com.xingin.xhs:id/matrixNickNameView", text: "公开作者", "content-desc": "作者公开作者" }),
+    node({ "resource-id": "com.xingin.xhs:id/noteContentLayout", "content-desc": "公开视频正文" }),
+    node({ class: "android.widget.FrameLayout", "content-desc": "已播放到0分7秒，共0分11秒" }),
+    node({ class: "android.widget.Button", "content-desc": "评论22", clickable: "true" }),
+  );
+  const result = classifyPage(xml, rules, { deviceAlias: "acceptance-device", xhsVersion: "9.26.1" });
+  assert.equal(result.state, "VIDEO_NOTE");
+  assert.equal(result.accepted, true);
+  assert.equal(result.matchedEvidence.includes("note-comment-entry"), true);
+});
+
 test("current obfuscated search results use visible search action and scrollable list evidence", () => {
   const currentUi = hierarchy(
     node({ text: "adidas", class: "android.widget.TextView", clickable: "true" }),
@@ -204,6 +258,44 @@ test("semantic target resolution prioritizes resource-id over exact text and con
   assert.match(target.selector.resourceId, /search_input/);
   assert.equal(JSON.stringify(target).includes("bounds"), false);
   assert.equal(JSON.stringify(target).includes("coordinate"), false);
+});
+
+test("composite attribute selectors distinguish a focused editor from the clickable search action", () => {
+  const compositeRules = {
+    states: [{ state: "UNKNOWN", fallback: true, evidence: [] }],
+    semanticTargets: {
+      search_entry: [{
+        id: "focused-editor",
+        strategy: "attributes",
+        all: [
+          { attribute: "className", match: "exact", values: ["android.widget.EditText"] },
+          { attribute: "focused", equals: true },
+        ],
+      }],
+    },
+  };
+  const xml = hierarchy(
+    node({ text: "搜索", class: "android.widget.TextView", clickable: "true" }),
+    node({ text: "旧查询", class: "android.widget.EditText", clickable: "true", focused: "true" }),
+  );
+  const target = resolveSemanticTarget(xml, compositeRules, "search_entry");
+  assert.equal(target.found, true);
+  assert.equal(target.strategy, "attributes");
+  assert.equal(target.node.className, "android.widget.EditText");
+  assert.deepEqual(target.selector, { attributes: "focused-editor" });
+  assert.equal(target.node.path, "/1");
+});
+
+test("9.35 result-page profile resolves the query sibling instead of the search submit label", () => {
+  const xml = `<?xml version="1.0"?><hierarchy><node class="android.view.ViewGroup" enabled="true"><node text="adidas中裤" class="android.widget.TextView" clickable="true" enabled="true"/><node content-desc="全部删除" class="android.widget.ImageView" clickable="true" enabled="true"/></node><node text="搜索" class="android.widget.TextView" clickable="true" enabled="true"/><node text="综合" class="android.widget.TextView" enabled="true"/><node class="androidx.recyclerview.widget.RecyclerView" scrollable="true" enabled="true"/></hierarchy>`;
+  const context = {
+    deviceAlias: "device-cfb9f8a2", androidSdk: "34", resolution: "1080x2400", dpi: "440", xhsVersion: "9.35.1",
+  };
+  const target = resolveSemanticTarget(xml, rules, "search_entry", context);
+  assert.equal(target.found, true);
+  assert.equal(target.strategy, "relation");
+  assert.deepEqual(target.selector, { relation: "query-text-next-to-clear" });
+  assert.equal(target.node.path, "/0/0");
 });
 
 test("stable parent-child relations are the final semantic fallback", () => {
@@ -283,6 +375,29 @@ test("device overrides only activate for the exact calibrated app version", () =
     resolveRuleProfile(localRules, { deviceAlias: "content-01", resolution: "1080x2400", dpi: "420", xhsVersion: "9.9.10" }).overrideId,
     null,
   );
+});
+
+test("both 9.36 device profiles classify partial and non-scrollable search pages only on exact calibration", () => {
+  const partial = hierarchy(
+    node({ class: "android.widget.EditText", text: "搜索", clickable: "true", focused: "false" }),
+    node({ class: "android.widget.TextView", text: "搜索", clickable: "true" }),
+  );
+  const history = hierarchy(
+    node({ class: "android.widget.EditText", text: "搜索", clickable: "true", focused: "false" }),
+    node({ class: "android.widget.TextView", text: "历史记录" }),
+    node({ class: "androidx.recyclerview.widget.RecyclerView", scrollable: "false" }),
+  );
+  for (const context of [
+    { deviceAlias: "device-04", androidSdk: "34", resolution: "1080x2400", dpi: "420", xhsVersion: "9.36.2" },
+    { deviceAlias: "device-136ffdee", androidSdk: "34", resolution: "1080x2400", dpi: "440", xhsVersion: "9.36.2" },
+  ]) {
+    const entry = classifyPage(partial, rules, context);
+    assert.equal(entry.state, "SEARCH_ENTRY", `${context.deviceAlias}: ${JSON.stringify(entry.candidates)}`);
+    assert.equal(entry.score, 0.85);
+    assert.equal(classifyPage(history, rules, context).state, "SEARCH_SUGGESTIONS");
+    assert.equal(classifyPage(partial, rules, { ...context, dpi: context.dpi === "420" ? "440" : "420" }).state, "UNKNOWN");
+    assert.equal(classifyPage(history, rules, { ...context, xhsVersion: "9.36.3" }).state, "UNKNOWN");
+  }
 });
 
 test("CLI classify emits JSON and uses the default rules file", async () => {

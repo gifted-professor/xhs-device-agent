@@ -415,16 +415,30 @@ export function classifyPage(input, config, context = {}) {
 }
 
 function selectorPriority(selector) {
-  return { "resource-id": 1, text: 2, "content-desc": 2, relation: 3 }[selector.strategy] ?? 99;
+  return { "resource-id": 1, attributes: 1, text: 2, "content-desc": 2, relation: 3 }[selector.strategy] ?? 99;
 }
 
 function selectorSignal(selector) {
   if (selector.strategy === "resource-id") {
     return { attribute: "resourceId", match: selector.match ?? "exact", values: selector.values ?? [] };
   }
-  if (selector.strategy === "text") return { attribute: "text", match: "exact", values: selector.values ?? [] };
-  if (selector.strategy === "content-desc") return { attribute: "contentDesc", match: "exact", values: selector.values ?? [] };
+  if (selector.strategy === "text") return { attribute: "text", match: selector.match ?? "exact", values: selector.values ?? [] };
+  if (selector.strategy === "content-desc") return { attribute: "contentDesc", match: selector.match ?? "exact", values: selector.values ?? [] };
   return null;
+}
+
+function selectorNodes(document, selector) {
+  if (selector.strategy === "relation") {
+    return relationMatches(document, { kind: "relation", ...selector }).map((entry) => entry.node);
+  }
+  if (selector.strategy === "attributes") {
+    const signals = Array.isArray(selector.all) ? selector.all : [];
+    if (!signals.length || signals.some((signal) => !signal?.attribute)) return [];
+    return document.nodes.filter((node) => signals.every((signal) =>
+      scalarMatches(nodeAttribute(node, signal.attribute), signal)));
+  }
+  const signal = selectorSignal(selector);
+  return signal ? matchingNodes(document, signal) : [];
 }
 
 function nodePath(document, node) {
@@ -444,6 +458,7 @@ function nodePath(document, node) {
 
 function semanticSelectorReference(selector, node) {
   if (selector.strategy === "resource-id") return { resourceId: node.resourceId };
+  if (selector.strategy === "attributes") return { attributes: selector.id ?? "stable-attributes" };
   if (selector.strategy === "text") return { text: selector.values.find((value) => compactWhitespace(value) === compactWhitespace(node.text)) };
   if (selector.strategy === "content-desc") {
     return { contentDesc: selector.values.find((value) => compactWhitespace(value) === compactWhitespace(node.contentDesc)) };
@@ -461,9 +476,7 @@ export function resolveSemanticTarget(input, config, semanticTarget, context = {
 
   for (const selector of selectors) {
     if (selectorPriority(selector) === 99) continue;
-    let node;
-    if (selector.strategy === "relation") node = relationMatches(document, { kind: "relation", ...selector })[0]?.node;
-    else node = matchingNodes(document, selectorSignal(selector))[0];
+    const node = selectorNodes(document, selector)[0];
     if (!node || node.enabled === false) continue;
     return {
       semanticTarget,

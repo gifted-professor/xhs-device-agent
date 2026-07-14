@@ -147,6 +147,11 @@ test("live gate rejects implicit groups, duplicate aliases, duplicate identifier
       "INVALID_PROVIDER_CONFIG",
     ],
     [
+      "raw identifier exposed as alias",
+      [{ alias: "raw-device", serial: "raw-device", groups: ["content"] }],
+      "INVALID_PROVIDER_CONFIG",
+    ],
+    [
       "empty task group",
       [{ alias: "spare-01", serial: "test-serial-a", groups: ["spare"] }],
       "EMPTY_TASK_DEVICE_GROUP",
@@ -211,4 +216,76 @@ test("formal run entry performs the Node inventory gate before creating a provid
     }),
     (error) => error.code === "UNMAPPED_ONLINE_DEVICES" && !error.message.includes("private-unmapped-device"),
   );
+});
+
+test("formal run rechecks Xiaowei identity before creating a research session", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "xhs-live-identity-gate-"));
+  const taskPath = path.join(root, "task.json");
+  const configPath = path.join(root, "provider.json");
+  const bridgeIme = "com.android.xwkeyboard/.XwIME";
+  const liveConfig = {
+    ...providerConfig([mappedDevices[0]]),
+    packageName: "com.xingin.xhs",
+    xiaowei: {
+      endpoint: "ws://127.0.0.1:22222/",
+      api: {
+        enabled: true,
+        acceptedActions: ["imeList", "selectIme", "inputText"],
+        acceptedActionsByAlias: { "content-01": ["imeList", "selectIme", "inputText"] },
+        acceptedDeviceSerialsByAlias: { "content-01": "test-serial-a" },
+        acceptedXiaoweiVersion: "test-version",
+        currentXiaoweiVersion: "test-version",
+      },
+      textInput: {
+        enabled: true,
+        humanApproved: true,
+        approvedAliases: ["content-01"],
+        preferredImeServices: [bridgeIme],
+        perDevice: {
+          "content-01": {
+            preferredImeService: bridgeIme,
+            allowTemporaryEnable: false,
+            echoVerification: "ui_text",
+          },
+        },
+      },
+    },
+  };
+  await Promise.all([
+    writeFile(taskPath, JSON.stringify(await task({ taskId: "node-live-identity-gate" })), "utf8"),
+    writeFile(configPath, JSON.stringify(liveConfig), "utf8"),
+  ]);
+
+  let identityChecks = 0;
+  await assert.rejects(
+    runFromArguments([
+      "--task", taskPath,
+      "--provider-config", configPath,
+      "--output-root", path.join(root, "output"),
+    ], {
+      listOnlineDevices: async () => ["test-serial-a"],
+      createXiaoweiTextInputAdapter: () => {
+        const adapter = async () => { assert.fail("research work must not start"); };
+        adapter.verifyIdentity = async () => {
+          identityChecks += 1;
+          const error = new Error("identity changed");
+          error.code = "XIAOWEI_IDENTITY_MISMATCH";
+          throw error;
+        };
+        return adapter;
+      },
+    }),
+    (error) => error.code === "XIAOWEI_IDENTITY_MISMATCH"
+      && !error.message.includes("test-serial-a"),
+  );
+  assert.equal(identityChecks, 1);
+});
+
+test("doctor blocks enabled Xiaowei text input when API and ADB identities differ", async () => {
+  const source = await readFile(new URL("../scripts/Matrix-Preflight.ps1", import.meta.url), "utf8");
+  assert.match(
+    source,
+    /elseif \(!\$api\.identityAligned\)\s*\{\s*\$configurationBlockers\.Add\("enabled Xiaowei text input requires aligned API and ADB device identities"\)\s*\}/u,
+  );
+  assert.match(source, /readyForDeviceWork\s*=\s*!\$configurationBlockers\.Count/u);
 });

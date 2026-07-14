@@ -1,13 +1,22 @@
 ﻿param(
     [string]$AdbPath = "D:\download\lvjian\tools\adb.exe",
     [string]$OutputDir,
-    [switch]$OpenXhsProfile
+    [switch]$OpenXhsProfile,
+    [string]$DeviceSerialsCsv = $env:XHS_LOCKED_DEVICE_SERIALS_CSV,
+    [string]$DeviceAliasesCsv = $env:XHS_LOCKED_DEVICE_ALIASES_CSV
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-if (!$OutputDir) { $OutputDir = Join-Path $projectRoot "data\device_inventory" }
+$dataRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "data"))
+if (!$OutputDir) { $OutputDir = Join-Path $dataRoot "device_inventory" }
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$dataRootPrefix = $dataRoot.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+if (!$OutputDir.Equals($dataRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+    !$OutputDir.StartsWith($dataRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "资产、截图和 UI 层级只能写入项目中已忽略的 data 目录"
+}
 
 function Invoke-Adb {
     param(
@@ -59,10 +68,15 @@ function Get-UiSummary {
 function Save-UiHierarchy {
     param([string]$Serial, [string]$LocalPath, [string]$RemotePath = "/sdcard/codex_inventory_window.xml")
     Remove-Item -LiteralPath $LocalPath -Force -ErrorAction SilentlyContinue
-    Invoke-Adb $Serial shell rm -f $RemotePath | Out-Null
-    Invoke-Adb $Serial shell uiautomator dump $RemotePath | Out-Null
-    Invoke-Adb $Serial pull $RemotePath $LocalPath | Out-Null
-    Test-Path -LiteralPath $LocalPath
+    try {
+        Invoke-Adb $Serial shell rm -f $RemotePath | Out-Null
+        Invoke-Adb $Serial shell uiautomator dump $RemotePath | Out-Null
+        Invoke-Adb $Serial pull $RemotePath $LocalPath | Out-Null
+        Test-Path -LiteralPath $LocalPath
+    } finally {
+        # Device-side diagnostics are temporary and may contain account data.
+        try { Invoke-Adb $Serial shell rm -f $RemotePath | Out-Null } catch {}
+    }
 }
 
 function Normalize-UiFingerprintText {
@@ -193,17 +207,57 @@ if (!(Test-Path -LiteralPath $AdbPath)) {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $deviceLines = & $AdbPath devices | Select-Object -Skip 1
-$serials = @(
+$onlineSerials = @(
     foreach ($line in $deviceLines) {
         if ($line -match '^([^\s]+)\s+device$') { $matches[1] }
     }
 )
 
-if (!$serials.Count) { throw "没有发现在线 ADB 设备" }
+if (!$onlineSerials.Count) { throw "没有发现在线 ADB 设备" }
 
-$inventory = foreach ($serial in $serials) {
-    Write-Host "采集设备 $serial ..."
-    $deviceDir = Join-Path $OutputDir $serial
+$serials = $onlineSerials
+if ($DeviceSerialsCsv) {
+    $requestedSerials = @($DeviceSerialsCsv -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if (!$requestedSerials.Count -or @($requestedSerials | Select-Object -Unique).Count -ne $requestedSerials.Count) {
+        throw "显式设备清单为空或包含重复项"
+    }
+    if (@($requestedSerials | Where-Object { $_ -notmatch '^[A-Za-z0-9._:-]{1,128}$' }).Count) {
+        throw "显式设备清单包含无效序列号格式"
+    }
+    if (@($requestedSerials | Where-Object { $_ -notin $onlineSerials }).Count) {
+        throw "锁定后的目标设备已离线；停止采集"
+    }
+    $serials = $requestedSerials
+}
+
+$displayAliases = @()
+if ($DeviceAliasesCsv) {
+    $displayAliases = @($DeviceAliasesCsv -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($displayAliases.Count -ne $serials.Count) {
+        throw "设备别名数量必须与锁定设备数量一致"
+    }
+    if (@($displayAliases | Select-Object -Unique).Count -ne $displayAliases.Count) {
+        throw "设备别名必须唯一"
+    }
+    if (@($displayAliases | Where-Object { $_ -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }).Count) {
+        throw "设备别名格式无效"
+    }
+    for ($aliasIndex = 0; $aliasIndex -lt $displayAliases.Count; $aliasIndex++) {
+        if ($displayAliases[$aliasIndex].Equals([string]$serials[$aliasIndex], [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "设备别名不能等于真实设备序列号"
+        }
+    }
+} else {
+    # Direct local runs still avoid revealing raw hardware identifiers in
+    # console output and directory names.
+    for ($i = 0; $i -lt $serials.Count; $i++) { $displayAliases += "device-$($i + 1)" }
+}
+
+$inventory = for ($deviceIndex = 0; $deviceIndex -lt $serials.Count; $deviceIndex++) {
+    $serial = [string]$serials[$deviceIndex]
+    $deviceAlias = [string]$displayAliases[$deviceIndex]
+    Write-Host "采集设备别名 $deviceAlias ..."
+    $deviceDir = Join-Path $OutputDir $deviceAlias
     New-Item -ItemType Directory -Force -Path $deviceDir | Out-Null
 
     $wmSizeText = (Invoke-Adb $serial shell wm size | Out-String).Trim()
@@ -230,7 +284,9 @@ $inventory = foreach ($serial in $serials) {
     } elseif ($OpenXhsProfile -and $xhsInstalled) {
         $profileNavigationStatus = "pending"
         try {
-            Invoke-Adb $serial shell am start -n com.xingin.xhs/.index.v2.IndexActivityV2 | Out-Null
+            # Resolve the launcher through Android instead of pinning an XHS
+            # activity name that changes between app versions.
+            Invoke-Adb $serial shell monkey -p com.xingin.xhs -c android.intent.category.LAUNCHER 1 | Out-Null
             Wait-UiStable $serial $deviceDir "profile-entry" | Out-Null
             if (!(Test-FocusedPackage $serial "com.xingin.xhs")) { throw "Profile precondition failed: XHS was not focused; device navigation stopped" }
 
@@ -264,10 +320,16 @@ $inventory = foreach ($serial in $serials) {
     $hierarchyCaptured = Save-UiHierarchy $serial $localXml $remoteXml
     # 直接执行二进制截图与拉取，避免 PowerShell 包装函数吞掉文件输出。
     Remove-Item -LiteralPath $localPng -Force -ErrorAction SilentlyContinue
-    Invoke-Adb $serial shell rm -f $remotePng | Out-Null
-    & $AdbPath -s $serial shell screencap -p $remotePng 2>$null | Out-Null
-    & $AdbPath -s $serial pull $remotePng $localPng 2>$null | Out-Null
-    $screenshotCaptured = Test-Path -LiteralPath $localPng -PathType Leaf
+    $screenshotCaptured = $false
+    try {
+        Invoke-Adb $serial shell rm -f $remotePng | Out-Null
+        & $AdbPath -s $serial shell screencap -p $remotePng 2>$null | Out-Null
+        & $AdbPath -s $serial pull $remotePng $localPng 2>$null | Out-Null
+        $screenshotCaptured = Test-Path -LiteralPath $localPng -PathType Leaf
+    } finally {
+        # Always remove the device-side frame even when capture or pull fails.
+        try { Invoke-Adb $serial shell rm -f $remotePng | Out-Null } catch {}
+    }
 
     $uiItems = Get-UiSummary $localXml
     $uiItems | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $deviceDir "page_structure.csv")
@@ -307,6 +369,7 @@ $inventory = foreach ($serial in $serials) {
 
     $result = [PSCustomObject]@{
         collectedAt       = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        alias             = $deviceAlias
         serial            = $serial
         manufacturer      = Get-Prop $serial 'ro.product.manufacturer'
         brand             = Get-Prop $serial 'ro.product.brand'
@@ -351,5 +414,5 @@ $inventory = foreach ($serial in $serials) {
 $inventory | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $OutputDir "devices.csv")
 $inventory | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDir "devices.json")
 
-$inventory | Format-Table serial,model,androidVersion,resolution,xhsInstalled,xhsVersion,profileDetected,xhsPublicId -AutoSize
+$inventory | Format-Table alias,model,androidVersion,resolution,xhsInstalled,xhsVersion,profileDetected -AutoSize
 Write-Host "采集完成：$OutputDir"
