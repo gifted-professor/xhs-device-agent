@@ -4,10 +4,10 @@ import test from "node:test";
 import { buildDispatch, parseCliArgs, runCli } from "../scripts/xhs-agent.mjs";
 
 test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
-  const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--device", "device-01"]));
+  const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
   assert.equal(dispatch.executable, "powershell.exe");
   assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
-  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "OpenXhs", "-DeviceAlias", "device-01"]);
+  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "OpenXhs", "-MachineNumber", "04"]);
 });
 
 test("host status and start remain available through the unified entry", () => {
@@ -43,11 +43,11 @@ test("visible Xiaowei window capture stays behind the unified host entry", () =>
 test("ordinary device commands reject implicit all-device targeting", () => {
   assert.throws(
     () => buildDispatch(parseCliArgs(["device", "screen"])),
-    /explicit --device or --group/u,
+    /explicit --machine, --machine-name, or --group/u,
   );
 });
 
-test("device aliases are repeatable but cannot be combined with a group", () => {
+test("internal device bindings remain compatible but cannot be combined with a group", () => {
   const dispatch = buildDispatch(parseCliArgs([
     "device", "ui", "--device", "device-01", "--device", "device-02",
   ]));
@@ -56,7 +56,26 @@ test("device aliases are repeatable but cannot be combined with a group", () => 
     () => buildDispatch(parseCliArgs([
       "device", "ui", "--device", "device-01", "--device", "device-02", "--group", "content",
     ])),
-    /not both/u,
+    /Use one of/u,
+  );
+});
+
+test("machine numbers are repeatable and visible names stay a single unambiguous selector", () => {
+  const multiple = buildDispatch(parseCliArgs([
+    "device", "ui", "--machine", "01", "--machine", "03",
+  ]));
+  assert.deepEqual(multiple.args.slice(-4), ["-Action", "DumpUi", "-MachineNumbersCsv", "01,03"]);
+
+  const named = buildDispatch(parseCliArgs([
+    "device", "screen", "--machine-name", "VISIBLE_NAME",
+  ]));
+  assert.deepEqual(named.args.slice(-4), ["-Action", "Screenshot", "-MachineName", "VISIBLE_NAME"]);
+
+  assert.throws(
+    () => buildDispatch(parseCliArgs([
+      "device", "screen", "--machine", "04", "--machine-name", "VISIBLE_NAME",
+    ])),
+    /Use one of/u,
   );
 });
 
@@ -131,7 +150,7 @@ test("each command rejects options that belong to a different command", () => {
   }
 });
 
-test("handoff requires exactly one device and synchronization confirmation", () => {
+test("handoff requires exactly one machine and synchronization confirmation", () => {
   assert.throws(
     () => buildDispatch(parseCliArgs([
       "handoff", "review", "--task", "task.json", "--candidate", "candidate-1", "--device", "device-01",
@@ -195,21 +214,21 @@ test("named XHS interaction commands route through the matrix executor", () => {
   }
 });
 
-test("feed run requires one device and routes deterministic positions", () => {
+test("feed run requires one machine and routes deterministic positions", () => {
   assert.throws(
     () => buildDispatch(parseCliArgs(["feed", "run", "--task-id", "feed-001", "--count", "10"])),
-    /exactly one --device/u,
+    /exactly one machine number or machine name/u,
   );
   assert.throws(
     () => buildDispatch(parseCliArgs([
       "feed", "run", "--device", "device-01", "--device", "device-02",
       "--task-id", "feed-001", "--count", "10",
     ])),
-    /exactly one --device/u,
+    /exactly one machine number or machine name/u,
   );
   const dispatch = buildDispatch(parseCliArgs([
     "feed", "run",
-    "--device", "device-01",
+    "--machine", "04",
     "--task-id", "feed-001",
     "--count", "10",
     "--like-at", "5",
@@ -219,14 +238,14 @@ test("feed run requires one device and routes deterministic positions", () => {
   assert.deepEqual(dispatch.args.slice(-10), [
     "-TaskId", "feed-001",
     "-Count", "10",
-    "-DeviceAlias", "device-01",
+    "-MachineNumber", "04",
     "-LikeAt", "5",
     "-FavoriteAt", "10",
   ]);
 
   const customized = buildDispatch(parseCliArgs([
     "feed", "run",
-    "--device", "device-01",
+    "--machine-name", "UNIQUE_VISIBLE_NAME",
     "--task-id", "feed-002",
     "--count", "10",
     "--image-min-seconds", "2",
@@ -246,13 +265,13 @@ test("trusted-10 feed template pins the verified count, interactions, and video 
   const dispatch = buildDispatch(parseCliArgs([
     "feed", "run",
     "--template", "trusted-10",
-    "--device", "device-04",
+    "--machine", "04",
     "--task-id", "feed-trusted-001",
   ]));
   assert.deepEqual(dispatch.args.slice(-14), [
     "-TaskId", "feed-trusted-001",
     "-Count", "10",
-    "-DeviceAlias", "device-04",
+    "-MachineNumber", "04",
     "-LikeAt", "5",
     "-FavoriteAt", "7",
     "-VideoMinSeconds", "5",
@@ -262,7 +281,7 @@ test("trusted-10 feed template pins the verified count, interactions, and video 
     () => buildDispatch(parseCliArgs([
       "feed", "run",
       "--template", "trusted-10",
-      "--device", "device-04",
+      "--machine", "04",
       "--task-id", "feed-trusted-002",
       "--favorite-at", "8",
     ])),
@@ -272,7 +291,7 @@ test("trusted-10 feed template pins the verified count, interactions, and video 
     () => buildDispatch(parseCliArgs([
       "feed", "run",
       "--template", "missing",
-      "--device", "device-04",
+      "--machine", "04",
       "--task-id", "feed-trusted-003",
     ])),
     /Unknown feed template/u,
@@ -297,6 +316,9 @@ test("help completes without spawning a child process", () => {
   assert.equal(status, 0);
   assert.equal(spawned, false);
   assert.match(text, /统一入口/u);
+  assert.match(text, /--machine 04/u);
+  assert.match(text, /--machine-name/u);
+  assert.doesNotMatch(text, /--device\s+device-/u);
   for (const command of ["like", "favorite", "follow", "comment", "publish", "delete"]) {
     assert.match(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
   }

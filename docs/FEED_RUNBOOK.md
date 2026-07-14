@@ -9,17 +9,17 @@
 ```powershell
 .\xhs.cmd feed run `
   --template trusted-10 `
-  --device device-01 `
+  --machine 04 `
   --task-id feed-trusted-001
 ```
 
-`trusted-10` 固定为 10 条、第 5 条点赞、第 7 条收藏、视频 5 秒，并拒绝冲突覆盖。`device-01` 是文档占位符；运行前先执行 `xhs.cmd device list`，使用当前配置中唯一映射且在线的别名。
+`trusted-10` 固定为 10 条、第 5 条点赞、第 7 条收藏、视频 5 秒，并拒绝冲突覆盖。运行前先执行 `xhs.cmd device list`，使用当前配置中唯一映射且在线的两位机器编号；名称重复时不能按名称选择。
 
 需要自定义规格时再使用展开形式：
 
 ```powershell
 .\xhs.cmd feed run `
-  --device device-01 `
+  --machine 04 `
   --task-id feed-test-001 `
   --count 10 `
   --like-at 5 `
@@ -71,8 +71,8 @@
 AI 接管时先执行只读采集：
 
 ```powershell
-.\xhs.cmd device screen --device device-01
-.\xhs.cmd device ui --device device-01
+.\xhs.cmd device screen --machine 04
+.\xhs.cmd device ui --machine 04
 ```
 
 同时检查任务目录中的 `events.jsonl`、`checkpoint.json`、最后两份 XML 和 `failure.png`。AI 应判断：
@@ -135,7 +135,7 @@ AI 接管时先执行只读采集：
 
 优先模板基线任务 `codex-feed-runbook-10-20260714-1935`：
 
-- `device-01` 在当前本地配置中不存在，预检在创建任务和发送互动前安全拒绝；核对 `device list` 后改用唯一在线映射 `device-04`；
+- 旧示例引用了不存在的内部绑定，预检在创建任务和发送互动前安全拒绝；核对 `device list` 后改用在线机器编号 `04`；
 - 19:35:04 启动，19:40:41 完成，核心流程耗时 5 分 37 秒；
 - 完成 10/10，0 跳过、0 失败，9 条图文、1 条视频；
 - 10 条均满足前台校验、实际停留不少于计划停留、返回 Feed；

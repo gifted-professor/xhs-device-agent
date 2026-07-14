@@ -6,7 +6,10 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$CandidateId,
 
-    [Parameter(Mandatory = $true)]
+    [string]$MachineNumber,
+
+    [string]$MachineName,
+
     [string]$DeviceAlias,
 
     [string]$CandidatesPath,
@@ -25,12 +28,12 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "Device-Lock.ps1")
+. (Join-Path $PSScriptRoot "Machine-Identity.ps1")
 if (!$ConfigPath) { $ConfigPath = Join-Path $projectRoot "config\local.psd1" }
 if (!$OutputRoot) { $OutputRoot = Join-Path $projectRoot "data\research" }
 if (!$ConfirmSingleDeviceAndSyncOff) {
     throw "Before handoff, show only this one phone in Xiaowei and turn group synchronization off, then pass -ConfirmSingleDeviceAndSyncOff."
 }
-if ($DeviceAlias -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "DeviceAlias is invalid" }
 if (!(Test-Path -LiteralPath $ConfigPath)) { throw "Local matrix config was not found" }
 
 $resolvedTask = (Resolve-Path -LiteralPath $TaskPath).Path
@@ -41,12 +44,15 @@ $resolvedCandidates = (Resolve-Path -LiteralPath $CandidatesPath).Path
 $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
 if (!$config.AdbPath -or !(Test-Path -LiteralPath $config.AdbPath)) { throw "Configured AdbPath does not exist" }
 if (!$config.Devices -or !$config.Groups -or !$config.Groups.ContainsKey($task.deviceGroup)) { throw "The task device group is not fully mapped" }
+$machineDirectory = @(Get-MachineDirectory -Config $config)
+$machineIdentity = Resolve-MachineIdentity -Directory $machineDirectory -MachineNumber $MachineNumber -MachineName $MachineName -DeviceAlias $DeviceAlias
+$DeviceAlias = [string]$machineIdentity.DeviceAlias
 
 $matchingSerials = @($config.Devices.Keys | Where-Object { [string]$config.Devices[$_] -eq $DeviceAlias })
-if ($matchingSerials.Count -ne 1) { throw "DeviceAlias must resolve to exactly one local device" }
+if ($matchingSerials.Count -ne 1) { throw "The selected machine must resolve to exactly one local device" }
 $serial = [string]$matchingSerials[0]
 if ($DeviceAlias -eq $serial) { throw "DeviceAlias must not expose the raw ADB identifier" }
-if (@($config.Groups[$task.deviceGroup]) -notcontains $serial) { throw "DeviceAlias is not a member of the task device group" }
+if (@($config.Groups[$task.deviceGroup]) -notcontains $serial) { throw "The selected machine is not a member of the task device group" }
 $deviceLockHandles = $null
 $ownsDeviceLock = $false
 $temporaryConfig = $null

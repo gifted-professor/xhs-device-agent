@@ -59,7 +59,23 @@
         }
     }
 
+    # Human-facing machine directory. Operators and reports use only the
+    # two-digit number and visible name. Names may repeat, so number is the
+    # primary selector; DeviceAlias remains an internal binding.
+    Machines = @{
+        "01" = @{
+            Name = "VISIBLE_NAME_01"
+            DeviceAlias = "device-01"
+        }
+        "02" = @{
+            Name = "VISIBLE_NAME_02"
+            DeviceAlias = "device-02"
+        }
+    }
+
     # Put real serials only in ignored config/local.psd1. Never commit them.
+    # These aliases are internal and must not be used in operator-facing docs,
+    # consultations, or status output.
     Devices = @{
         "ADB_SERIAL_01" = "device-01"
         "ADB_SERIAL_02" = "device-02"

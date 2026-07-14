@@ -2,7 +2,7 @@
 
 一个面向小红书多手机矩阵的低 Token、只读研究框架。效卫负责连接、投屏、设备分组和人工接管；ADB 负责逐台手机的确定性执行与后验验证；AI 只在主题扩展、未知页面恢复和结果分析等事件发生时介入。
 
-项目不会自动点赞、收藏、关注、评论、私信、发布或删除，也不实现随机停留、模拟真人或规避风控。研究完成后，脚本只生成候选和人工审核队列；需要互动时，由人工在效卫中单独接管一台手机完成。
+项目默认只读。点赞和收藏只允许在用户明确批准并全程盯着所选机器时，通过固定 `trusted-10` 模板各执行一次；关注、评论、私信、发布、删除和其他外部沟通仍保持人工最终操作。项目不实现随机停留、模拟真人或规避风控。
 
 ## 核心能力
 
@@ -33,11 +33,11 @@ Copy-Item config/matrix.example.psd1 config/local.psd1
 在被 Git 忽略的 `config/local.psd1` 中配置：
 
 - 有效的 `AdbPath`；
-- 每台手机的真实 ADB 序列号到公开别名/编号的映射；
+- 每台手机的两位机器编号、可见名称和内部设备绑定；真实 ADB 序列号与内部绑定都只保存在本地；
 - 任务要使用的设备分组，例如 `content`；
 - 如需自动输入中文，优先配置 `TextInput.NativeIme`，同时要求 `Enabled`、`HumanApproved` 为真，并把已逐机标定的别名加入 `ApprovedAliases`；设备端 Unicode 桥只作为另行批准的后备通道。
 
-真实编号或分组未完成时，只允许预检和干跑，不运行正式主题分配。PowerShell 包装器和 Node 正式入口都会独立清点 ADB 在线设备，要求全部在线设备有唯一别名和显式分组；直接调用 Node 也不能绕过这道门禁。不要把序列号、账号、截图或 UI XML 写入受版本控制的文件。
+机器目录或分组未完成时，只允许预检和干跑，不运行正式主题分配。PowerShell 包装器和 Node 正式入口都会独立清点 ADB 在线设备，要求全部在线设备有唯一机器编号、可见名称、内部绑定和显式分组；直接调用 Node 也不能绕过这道门禁。操作者只使用机器编号和名称，名称重复时以编号为准。不要把序列号、内部绑定、账号、截图或 UI XML 写入受版本控制的文件。
 
 先执行只读预检：
 
@@ -104,10 +104,11 @@ node scripts/sync-research-review.mjs `
 飞书只保存公开候选字段、AI 理由和审核状态，不应写入真实设备序列号。人工选中候选后，先在效卫中只显示一台手机并关闭群控同步，再执行只读交接：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandidate.ps1 `
-  -TaskPath data/my-research-task.json `
-  -CandidateId <candidateId> -DeviceAlias device-01 `
-  -ConfirmSingleDeviceAndSyncOff
+.\xhs.cmd handoff review `
+  --task data/my-research-task.json `
+  --candidate <candidateId> `
+  --machine 04 `
+  --confirm-single-device-and-sync-off
 ```
 
 交接脚本只搜索精确候选、验证笔记 ID 或标题并暂停。找不到、匹配多条或详情身份不一致时转人工，不会打开模糊匹配，也不会执行互动。
@@ -132,6 +133,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandi
 - `docs/ARCHITECTURE.md`：状态机、执行层和失败传播
 - `docs/SAFETY.md`：操作、数据和模型边界
 - `docs/XIAOWEI_MATRIX.md`：效卫矩阵接入和降级策略
+- `docs/MACHINE_IDENTITY.md`：面向操作者的机器编号/名称契约与本地映射
+- `docs/TAILSCALE_REMOTE_CONTROL.md`：通过 Tailscale + OpenSSH 远程执行 `xhs.cmd`
 - `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 操作规程
 - `scripts/Collect-PhoneAssets.ps1`：逐台读取硬件、系统、小红书公开主页和 UI 层级
 - `scripts/Run-Pipeline.ps1`：一键采集、生成标准 CSV、可选同步飞书

@@ -7,7 +7,10 @@ param(
     [ValidateRange(1, 50)]
     [int]$Count,
 
-    [Parameter(Mandatory = $true)]
+    [string]$MachineNumber,
+
+    [string]$MachineName,
+
     [string]$DeviceAlias,
 
     [ValidateRange(1, 50)]
@@ -38,9 +41,9 @@ $ErrorActionPreference = "Stop"
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "Import-Utf8PowerShellDataFile.ps1")
 . (Join-Path $PSScriptRoot "Device-Lock.ps1")
+. (Join-Path $PSScriptRoot "Machine-Identity.ps1")
 
 if ($TaskId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$') { throw "TaskId must contain 3-80 safe characters" }
-if ($DeviceAlias -notmatch '^[A-Za-z0-9._-]{1,64}$') { throw "DeviceAlias is invalid" }
 if ($LikeAt -and $LikeAt -gt $Count) { throw "LikeAt cannot exceed Count" }
 if ($FavoriteAt -and $FavoriteAt -gt $Count) { throw "FavoriteAt cannot exceed Count" }
 if ($LikeAt -and $FavoriteAt -and $LikeAt -eq $FavoriteAt) { throw "LikeAt and FavoriteAt must target different feed positions" }
@@ -53,16 +56,19 @@ if (!(Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { throw "Config not fo
 $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
 if (!$config.AdbPath -or !(Test-Path -LiteralPath $config.AdbPath -PathType Leaf)) { throw "Configured AdbPath does not exist" }
 if (!$config.Devices) { throw "No local device aliases are configured" }
+$machineDirectory = @(Get-MachineDirectory -Config $config)
+$machineIdentity = Resolve-MachineIdentity -Directory $machineDirectory -MachineNumber $MachineNumber -MachineName $MachineName -DeviceAlias $DeviceAlias
+$DeviceAlias = [string]$machineIdentity.DeviceAlias
 
 $matchingSerials = @($config.Devices.Keys | Where-Object { [string]$config.Devices[$_] -eq $DeviceAlias })
-if ($matchingSerials.Count -ne 1) { throw "DeviceAlias must resolve to exactly one local device" }
+if ($matchingSerials.Count -ne 1) { throw "The selected machine must resolve to exactly one local device" }
 $serial = [string]$matchingSerials[0]
 $online = @(
     & $config.AdbPath devices 2>$null | Select-Object -Skip 1 | ForEach-Object {
         if ($_ -match '^([^\s]+)\s+device$') { $matches[1] }
     }
 )
-if ($online -notcontains $serial) { throw "The selected device alias is not online" }
+if ($online -notcontains $serial) { throw "The selected machine is not online" }
 
 $allowed = if (
     $config.Xhs -and
@@ -74,8 +80,8 @@ $allowed = if (
 } else {
     @()
 }
-if ($LikeAt -and $allowed -notcontains "like") { throw "Like is not authorized for the selected device alias" }
-if ($FavoriteAt -and $allowed -notcontains "favorite") { throw "Favorite is not authorized for the selected device alias" }
+if ($LikeAt -and $allowed -notcontains "like") { throw "Like is not authorized for the selected machine" }
+if ($FavoriteAt -and $allowed -notcontains "favorite") { throw "Favorite is not authorized for the selected machine" }
 
 $node = (Get-Command node -ErrorAction Stop).Source
 $runner = Join-Path $PSScriptRoot "feed-device-runner.mjs"

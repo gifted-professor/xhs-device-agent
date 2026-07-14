@@ -40,7 +40,8 @@ Copy-Item config/matrix.example.psd1 config/local.psd1
 
 真实映射只写在被 Git 忽略的 `config/local.psd1`：
 
-- `Devices`：ADB 序列号到公开别名/编号；
+- `Machines`：两位机器编号到可见名称和内部绑定；名称可重复，编号唯一；
+- `Devices`：ADB 序列号到内部绑定，只供程序使用；
 - `Groups`：任务分组到真实序列号列表；
 - `AdbPath`：效卫内置或独立 ADB 的实际路径；
 - 可选 `TextInput.UnicodeIme`：只有 `Enabled = $true`、`HumanApproved = $true`，并且设备别名在 `ApprovedAliases` 中时才允许使用。
@@ -69,7 +70,7 @@ TextInput = @{
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Matrix-Preflight.ps1 -ProbeApi
 ```
 
-报告写入 `data/matrix/preflight.json`。控制台和对外结果应使用设备别名，不显示真实序列号。
+报告写入 `data/matrix/preflight.json`。控制台和对外结果只使用机器编号和可见名称，不显示内部绑定或真实序列号。
 
 ## 能力与权限
 
@@ -90,9 +91,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Matrix-Preflight
 只读盘点和诊断：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-MatrixAction.ps1 -Action Inventory
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-MatrixAction.ps1 -Action DumpUi -Group content
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-MatrixAction.ps1 -Action Screenshot -Group content
+.\xhs.cmd device list
+.\xhs.cmd device ui --machine 04
+.\xhs.cmd device screen --machine 04
 ```
 
 设备本地变更必须带本次人工确认、理由和回滚信息，例如熄屏：
@@ -119,13 +120,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Invoke-MatrixAct
 确认单机画面和同步关闭后，可以让脚本完成只读精确导航：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandidate.ps1 `
-  -TaskPath data/my-research-task.json `
-  -CandidateId <candidateId> -DeviceAlias device-01 `
-  -ConfirmSingleDeviceAndSyncOff
+.\xhs.cmd handoff review `
+  --task data/my-research-task.json `
+  --candidate <candidateId> `
+  --machine 04 `
+  --confirm-single-device-and-sync-off
 ```
 
-脚本要求别名只映射到一台在线设备，并且该设备属于任务分组。它只接受本地产物中的候选，必须在新搜索结果中精确匹配唯一卡片，并在打开后再次验证笔记 ID 或标题；任何歧义都停止。
+脚本要求机器编号只映射到一台在线设备，并且该设备属于任务分组。它只接受本地产物中的候选，必须在新搜索结果中精确匹配唯一卡片，并在打开后再次验证笔记 ID 或标题；任何歧义都停止。
 
 评论辅助 Agent 只能在人工主动请求后给出一条草稿。草稿不得自动粘贴、填写或发送。
 

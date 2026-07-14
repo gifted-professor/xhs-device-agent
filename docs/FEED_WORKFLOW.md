@@ -7,11 +7,11 @@
 ```powershell
 .\xhs.cmd feed run `
   --template trusted-10 `
-  --device device-01 `
+  --machine 04 `
   --task-id feed-001
 ```
 
-`trusted-10` 固定为浏览 10 条、第 5 条点赞、第 7 条收藏、视频停留 5 秒。模板参数不允许冲突覆盖，避免已验收规格发生静默漂移。`feed run` 只接受一个当前配置中存在且唯一映射的公开设备别名；文档中的 `device-01` 只是占位示例，正式运行前用 `xhs.cmd device list` 核对。
+`trusted-10` 固定为浏览 10 条、第 5 条点赞、第 7 条收藏、视频停留 5 秒。模板参数不允许冲突覆盖，避免已验收规格发生静默漂移。`feed run` 只接受一个当前配置中存在且唯一映射的机器编号或唯一名称；名称重复时必须使用两位编号。正式运行前用 `xhs.cmd device list` 核对。
 
 不使用模板时，`count` 必填；`like-at` 和 `favorite-at` 可省略，指定时必须位于 `1..count`，且不能指向同一个序号。
 
@@ -44,7 +44,7 @@
 
 ```powershell
 .\xhs.cmd feed run `
-  --device device-01 `
+  --machine 04 `
   --task-id feed-002 `
   --count 10 `
   --image-min-seconds 3 `

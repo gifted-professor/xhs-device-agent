@@ -52,10 +52,10 @@ Hermes 只负责定时投递 JSON 文件。任务应以 [research-task.schema.js
 ## 运行前检查
 
 1. 从 `config/matrix.example.psd1` 创建被忽略的 `config/local.psd1`。
-2. 配置有效 ADB 路径、所有目标手机的真实序列号到别名映射，以及任务使用的 `deviceGroup`。
+2. 配置有效 ADB 路径、所有目标手机的两位机器编号、可见名称、内部绑定，以及任务使用的 `deviceGroup`。名称可重复，编号必须唯一。
 3. 中文自动输入需要同时启用 `TextInput.UnicodeIme.Enabled` 和 `HumanApproved`，并把已标定别名加入 `ApprovedAliases`；否则保持关闭。
 4. 确认没有把真实标识写入模板或 Git。
-5. 运行 `Matrix-Preflight.ps1 -ProbeApi`。
+5. 运行 `xhs.cmd doctor`，并核对 `xhs.cmd device list` 只显示机器编号和名称。
 6. API 不可用时保持 ADB 为执行通道；不要绕过效卫会员限制。
 
 正式设备映射未完成时，只运行干跑：
@@ -171,10 +171,11 @@ node scripts/sync-research-review.mjs `
 完成第 3 步的单机确认后，使用：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandidate.ps1 `
-  -TaskPath data/my-research-task.json `
-  -CandidateId <candidateId> -DeviceAlias device-01 `
-  -ConfirmSingleDeviceAndSyncOff
+.\xhs.cmd handoff review `
+  --task data/my-research-task.json `
+  --candidate <candidateId> `
+  --machine 04 `
+  --confirm-single-device-and-sync-off
 ```
 
 交接只能使用本地 `candidates.jsonl` 中的候选。脚本会按精确笔记 ID 或标题寻找唯一卡片，并在详情页再次验证身份后返回 `pausedForHuman=true`；缺失、歧义或不一致都返回人工处理，不做互动。

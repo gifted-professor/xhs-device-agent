@@ -12,7 +12,7 @@ const BOOLEAN_OPTIONS = new Set([
   "generate-only",
   "sync-lark",
 ]);
-const REPEATABLE_OPTIONS = new Set(["device"]);
+const REPEATABLE_OPTIONS = new Set(["machine", "device"]);
 const FEED_TEMPLATES = Object.freeze({
   "trusted-10": Object.freeze({
     count: "10",
@@ -36,41 +36,43 @@ Shell 调用：
   .\\xhs.cmd host capture
   .\\xhs.cmd api catalog
   .\\xhs.cmd device list
-  .\\xhs.cmd device screen --device device-01
+  .\\xhs.cmd device screen --machine 04
+  .\\xhs.cmd device screen --machine-name VISIBLE_NAME
   .\\xhs.cmd device ui --group content
-  .\\xhs.cmd device open-xhs --device device-01
-  .\\xhs.cmd device open-profile --device device-01
-  .\\xhs.cmd device home --device device-01
-  .\\xhs.cmd device back --device device-01
-  .\\xhs.cmd device screen-off --device device-01 --confirm --reason "..." --rollback "重新亮屏"
-  .\\xhs.cmd device screen-on --device device-01 --confirm --reason "..." --rollback "恢复原熄屏状态"
-  .\\xhs.cmd device settings --device device-01 --confirm --reason "..." --rollback "返回原应用"
-  .\\xhs.cmd app list --device device-01
-  .\\xhs.cmd app open --device device-01 --package com.xingin.xhs
-  .\\xhs.cmd app stop --device device-01 --package com.example.app --confirm --reason "..." --rollback "重新打开应用"
-  .\\xhs.cmd like --device device-01
-  .\\xhs.cmd favorite --device device-01
-  .\\xhs.cmd follow --device device-01
-  .\\xhs.cmd comment --device device-01 --text "评论内容"
-  .\\xhs.cmd publish --device device-01 --text "发布内容"
-  .\\xhs.cmd delete --device device-01
-  .\\xhs.cmd feed run --template trusted-10 --device device-01 --task-id feed-001
+  .\\xhs.cmd device open-xhs --machine 04
+  .\\xhs.cmd device open-profile --machine 04
+  .\\xhs.cmd device home --machine 04
+  .\\xhs.cmd device back --machine 04
+  .\\xhs.cmd device screen-off --machine 04 --confirm --reason "..." --rollback "重新亮屏"
+  .\\xhs.cmd device screen-on --machine 04 --confirm --reason "..." --rollback "恢复原熄屏状态"
+  .\\xhs.cmd device settings --machine 04 --confirm --reason "..." --rollback "返回原应用"
+  .\\xhs.cmd app list --machine 04
+  .\\xhs.cmd app open --machine 04 --package com.xingin.xhs
+  .\\xhs.cmd app stop --machine 04 --package com.example.app --confirm --reason "..." --rollback "重新打开应用"
+  .\\xhs.cmd like --machine 04
+  .\\xhs.cmd favorite --machine 04
+  .\\xhs.cmd follow --machine 04
+  .\\xhs.cmd comment --machine 04 --text "评论内容"
+  .\\xhs.cmd publish --machine 04 --text "发布内容"
+  .\\xhs.cmd delete --machine 04
+  .\\xhs.cmd feed run --template trusted-10 --machine 04 --task-id feed-001
     优先可信模板：10 条、第 5 条点赞、第 7 条收藏、视频固定 5 秒
-  .\\xhs.cmd feed run --device device-01 --task-id feed-002 --count 10 --like-at 5 --favorite-at 7
+  .\\xhs.cmd feed run --machine 04 --task-id feed-002 --count 10 --like-at 5 --favorite-at 7
     默认停留：图文 3-6 秒，视频 10-20 秒；可用 --image-min-seconds 等四个区间选项覆盖
   .\\xhs.cmd research run --task data/task.json [--dry-run]
   .\\xhs.cmd research sync-review --review data/research/TASK/human-review.jsonl --confirm-external-sync
   .\\xhs.cmd ramp run --profile data/accounts/example/profile.json [--dry-run]
-  .\\xhs.cmd handoff review --task data/task.json --candidate ID --device device-01 --confirm-single-device-and-sync-off
+  .\\xhs.cmd handoff review --task data/task.json --candidate ID --machine 04 --confirm-single-device-and-sync-off
   .\\xhs.cmd handoff ramp --profile data/accounts/example/profile.json --candidate ID --confirm-single-device-and-sync-off
   .\\xhs.cmd inventory collect [--sync-lark]
 
 通用选项：
   --config PATH     使用指定的本地配置；默认 config/local.psd1
-  --device ALIAS    明确选择一台设备，可重复
-  --group NAME      选择已配置分组；不能和 --device 同时使用
+  --machine NUMBER  按两位机器编号选择，可重复；例如 04
+  --machine-name N  按机器显示名称选择；名称重复时必须改用编号
+  --group NAME      选择已配置分组；不能和机器选择同时使用
 
-普通设备动作必须明确指定 --device 或 --group。除上述显式语义命令外，通用互动、登录验证、支付和账号变更不在此入口中。
+普通设备动作必须明确指定 --machine、--machine-name 或 --group。内部设备绑定仅供程序兼容，不用于咨询和报告。除上述显式语义命令外，通用互动、登录验证、支付和账号变更不在此入口中。
 `;
 
 export function parseCliArgs(argv) {
@@ -171,11 +173,17 @@ function applyFeedTemplate(options) {
 }
 
 function appendTargets(args, options, { required = true } = {}) {
+  const machines = options.machine ?? [];
+  const machineName = options["machine-name"];
   const devices = options.device ?? [];
-  if (devices.length && options.group) throw new Error("Use --device or --group, not both");
-  if (required && !devices.length && !options.group) {
-    throw new Error("This command requires an explicit --device or --group target");
+  const modes = [machines.length > 0, machineName !== undefined, devices.length > 0, options.group !== undefined].filter(Boolean).length;
+  if (modes > 1) throw new Error("Use one of --machine, --machine-name, or --group");
+  if (required && modes === 0) {
+    throw new Error("This command requires an explicit --machine, --machine-name, or --group target");
   }
+  if (machines.length === 1) args.push("-MachineNumber", String(machines[0]));
+  if (machines.length > 1) args.push("-MachineNumbersCsv", machines.map(String).join(","));
+  if (machineName !== undefined) args.push("-MachineName", String(machineName));
   if (devices.length === 1) args.push("-DeviceAlias", String(devices[0]));
   if (devices.length > 1) args.push("-DeviceAliasesCsv", devices.map(String).join(","));
   if (options.group) args.push("-Group", String(options.group));
@@ -262,24 +270,24 @@ export function buildDispatch(parsed) {
     ]);
     const entry = actions.get(command);
     if (!entry) throw new Error(`Unknown device command: ${command || "(missing)"}`);
-    const allowed = ["config", "device", "group"];
+    const allowed = ["config", "machine", "machine-name", "device", "group"];
     if (entry[1].confirmation) allowed.push("confirm", "reason", "rollback");
     assertAllowedOptions(options, allowed, `device ${command}`);
     return matrixDispatch(entry[0], options, entry[1]);
   }
   if (area === "app") {
     if (command === "list") {
-      assertAllowedOptions(options, ["config", "device", "group"], "app list");
+      assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "group"], "app list");
       return matrixDispatch("ListApps", options);
     }
     if (command === "open") {
-      assertAllowedOptions(options, ["config", "device", "group", "package"], "app open");
+      assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "group", "package"], "app open");
       return matrixDispatch("StartApp", options, { packageRequired: true });
     }
     if (command === "stop") {
       assertAllowedOptions(
         options,
-        ["config", "device", "group", "package", "confirm", "reason", "rollback"],
+        ["config", "machine", "machine-name", "device", "group", "package", "confirm", "reason", "rollback"],
         "app stop",
       );
       return matrixDispatch("StopApp", options, { packageRequired: true, confirmation: true });
@@ -290,7 +298,7 @@ export function buildDispatch(parsed) {
     if (command) throw new Error(`${area} does not accept a positional subcommand`);
     const canonicalArea = area === "collect" ? "favorite" : area;
     const textRequired = canonicalArea === "comment" || canonicalArea === "publish";
-    const allowed = ["config", "device", "group", ...(textRequired ? ["text"] : [])];
+    const allowed = ["config", "machine", "machine-name", "device", "group", ...(textRequired ? ["text"] : [])];
     assertAllowedOptions(options, allowed, area);
     const action = `${canonicalArea[0].toUpperCase()}${canonicalArea.slice(1)}`;
     return interactionDispatch(action, options, { textRequired });
@@ -301,18 +309,24 @@ export function buildDispatch(parsed) {
       [
         "template", "task-id", "count", "like-at", "favorite-at",
         "image-min-seconds", "image-max-seconds", "video-min-seconds", "video-max-seconds",
-        "config", "output", "device", "group",
+        "config", "output", "machine", "machine-name", "device", "group",
       ],
       "feed run",
     );
     const feedOptions = applyFeedTemplate(options);
+    const machines = feedOptions.machine ?? [];
     const devices = feedOptions.device ?? [];
-    if (devices.length !== 1 || feedOptions.group) throw new Error("Feed run requires exactly one --device alias");
+    const selectionModes = [machines.length > 0, feedOptions["machine-name"] !== undefined, devices.length > 0].filter(Boolean).length;
+    if (selectionModes !== 1 || machines.length > 1 || devices.length > 1 || feedOptions.group) {
+      throw new Error("Feed run requires exactly one machine number or machine name");
+    }
     const args = [
       "-TaskId", String(requireOption(feedOptions, "task-id")),
       "-Count", String(requireOption(feedOptions, "count")),
-      "-DeviceAlias", String(devices[0]),
     ];
+    if (machines.length === 1) args.push("-MachineNumber", String(machines[0]));
+    if (feedOptions["machine-name"] !== undefined) args.push("-MachineName", String(feedOptions["machine-name"]));
+    if (devices.length === 1) args.push("-DeviceAlias", String(devices[0]));
     appendOption(args, feedOptions, "like-at", "-LikeAt");
     appendOption(args, feedOptions, "favorite-at", "-FavoriteAt");
     appendOption(args, feedOptions, "image-min-seconds", "-ImageMinSeconds");
@@ -367,20 +381,26 @@ export function buildDispatch(parsed) {
   if (area === "handoff" && command === "review") {
     assertAllowedOptions(
       options,
-      ["task", "candidate", "device", "group", "confirm-single-device-and-sync-off", "config", "output"],
+      ["task", "candidate", "machine", "machine-name", "device", "group", "confirm-single-device-and-sync-off", "config", "output"],
       "handoff review",
     );
     if (!options["confirm-single-device-and-sync-off"]) {
       throw new Error("Handoff requires --confirm-single-device-and-sync-off after showing one phone and disabling synchronization");
     }
+    const machines = options.machine ?? [];
     const devices = options.device ?? [];
-    if (devices.length !== 1 || options.group) throw new Error("Review handoff requires exactly one --device alias");
+    const selectionModes = [machines.length > 0, options["machine-name"] !== undefined, devices.length > 0].filter(Boolean).length;
+    if (selectionModes !== 1 || machines.length > 1 || devices.length > 1 || options.group) {
+      throw new Error("Review handoff requires exactly one machine number or machine name");
+    }
     const args = [
       "-TaskPath", String(requireOption(options, "task")),
       "-CandidateId", String(requireOption(options, "candidate")),
-      "-DeviceAlias", String(devices[0]),
       "-ConfirmSingleDeviceAndSyncOff",
     ];
+    if (machines.length === 1) args.push("-MachineNumber", String(machines[0]));
+    if (options["machine-name"] !== undefined) args.push("-MachineName", String(options["machine-name"]));
+    if (devices.length === 1) args.push("-DeviceAlias", String(devices[0]));
     appendOption(args, options, "config", "-ConfigPath");
     appendOption(args, options, "output", "-OutputRoot");
     return psScript("Open-ReviewCandidate.ps1", args);
