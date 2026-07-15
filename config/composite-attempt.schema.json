@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/composite-attempt.schema.json",
+  "title": "Composite execution attempt binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "attemptId",
+    "planHash",
+    "approvalHash",
+    "policyHash",
+    "capabilityProfileId",
+    "capabilityProfileHash",
+    "inventorySnapshotHash",
+    "capabilitySnapshotHash",
+    "runtimeInventoryHash",
+    "runtimeCapabilityHash",
+    "parentEpoch",
+    "selectedMachines",
+    "admittedMachines",
+    "skippedNotReadyMachines",
+    "status",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "xhs-composite-attempt/v1"
+    },
+    "attemptId": {
+      "type": "string",
+      "pattern": "^attempt-[a-f0-9]{16}$"
+    },
+    "planHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "approvalHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "policyHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "capabilityProfileId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+    },
+    "capabilityProfileHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "inventorySnapshotHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "capabilitySnapshotHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "runtimeInventoryHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "runtimeCapabilityHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "parentEpoch": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "selectedMachines": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{2}$"
+      }
+    },
+    "admittedMachines": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{2}$"
+      }
+    },
+    "skippedNotReadyMachines": {
+      "type": "array",
+      "minItems": 0,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[0-9]{2}$"
+      }
+    },
+    "status": {
+      "enum": [
+        "prepared",
+        "running",
+        "completed",
+        "partial",
+        "failed",
+        "stopped"
+      ]
+    },
+    "createdAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    }
+  }
+}

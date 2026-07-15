@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/cpa-request.schema.json",
+  "title": "Typed read-only CPA request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "role",
+    "execution",
+    "artifact"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "cpa-request/v1"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^[a-f0-9-]{36}$"
+    },
+    "role": {
+      "const": "comment_count"
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planHash",
+        "attemptId",
+        "stepId"
+      ],
+      "properties": {
+        "planHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "attemptId": {
+          "type": "string",
+          "pattern": "^attempt-[a-f0-9]{16}$"
+        },
+        "stepId": {
+          "type": "string",
+          "pattern": "^m[0-9]{2}\\.s[0-9]{3}$"
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "artifactId",
+        "mediaType",
+        "sha256",
+        "byteLength",
+        "width",
+        "height",
+        "regionKind",
+        "base64"
+      ],
+      "properties": {
+        "artifactId": {
+          "type": "string",
+          "pattern": "^artifact-[a-f0-9]{16}$"
+        },
+        "mediaType": {
+          "enum": [
+            "image/png",
+            "image/jpeg"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "byteLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12582912
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "regionKind": {
+          "const": "comment_counter"
+        },
+        "base64": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 16777216,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      }
+    }
+  }
+}

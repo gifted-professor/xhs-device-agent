@@ -1,0 +1,266 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/composite-policy.schema.json",
+  "title": "Supervised composite governance policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "policyProfileId",
+    "actionRegistryVersion",
+    "allowedActions",
+    "mandatoryStops",
+    "globalFuseClasses",
+    "localFailureClasses",
+    "conditionIds",
+    "recoveryStrategyIds",
+    "fallbackIds",
+    "commentPolicy",
+    "supervision"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "xhs-composite-policy/v1"
+    },
+    "policyProfileId": {
+      "const": "supervised-composite-v1"
+    },
+    "actionRegistryVersion": {
+      "const": "composite-actions/v1"
+    },
+    "allowedActions": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "feed.scroll",
+          "feed.open_visible",
+          "detail.inspect",
+          "image.scroll_content",
+          "video.advance",
+          "comments.observe_count",
+          "comments.open",
+          "comments.collect",
+          "comments.close",
+          "navigation.return_to_feed",
+          "wait.for_condition",
+          "recover.to_feed",
+          "engagement.ensure_liked",
+          "engagement.ensure_favorited"
+        ]
+      }
+    },
+    "mandatoryStops": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "captcha",
+          "risk_control",
+          "account_restriction",
+          "unexpected_auth",
+          "identity_verification",
+          "system_permission",
+          "payment",
+          "private_or_restricted",
+          "identity_drift",
+          "unverified_state_change"
+        ]
+      }
+    },
+    "globalFuseClasses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "ambiguous_account_state",
+          "sensitive_page",
+          "identity_drift",
+          "approval_mismatch",
+          "parent_lease_loss",
+          "budget_integrity",
+          "evidence_integrity",
+          "forbidden_action",
+          "human_interrupt",
+          "systemic_failure_quorum"
+        ]
+      }
+    },
+    "localFailureClasses": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "navigation_failure",
+          "target_unavailable",
+          "read_only_timeout",
+          "comment_unknown"
+        ]
+      }
+    },
+    "conditionIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "foreground_xhs",
+          "page_stable",
+          "feed_ready",
+          "detail_ready",
+          "comment_panel_open",
+          "valid_visit_target_not_met"
+        ]
+      }
+    },
+    "recoveryStrategyIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "back_once_then_verify",
+          "relaunch_once_then_verify"
+        ]
+      }
+    },
+    "fallbackIds": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "feed_scroll_once_then_skip",
+          "skip_target",
+          "comment_unknown_shallow"
+        ]
+      }
+    },
+    "commentPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "policyRef",
+        "unknownFallback",
+        "maxNoNewScrolls",
+        "bands"
+      ],
+      "properties": {
+        "policyRef": {
+          "const": "count-adaptive-v1"
+        },
+        "unknownFallback": {
+          "const": "comment_unknown_shallow"
+        },
+        "maxNoNewScrolls": {
+          "const": 2
+        },
+        "bands": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "band",
+              "maxScrolls",
+              "maxItems"
+            ],
+            "properties": {
+              "band": {
+                "enum": [
+                  "ZERO",
+                  "ONE_TO_FIVE",
+                  "SIX_TO_TWENTY",
+                  "TWENTY_ONE_TO_NINETY_NINE",
+                  "HUNDRED_PLUS",
+                  "UNKNOWN"
+                ]
+              },
+              "maxScrolls": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 8
+              },
+              "maxItems": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 50
+              }
+            }
+          }
+        }
+      }
+    },
+    "supervision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "foregroundOnly",
+        "humanInterrupt",
+        "intermediateConfirmation",
+        "confirmationMode",
+        "postApprovalExecution",
+        "readinessScope",
+        "terminalReportMode",
+        "otherOnlineDevicesBlock",
+        "deviceSubstitutionAfterApproval",
+        "accountStateActions"
+      ],
+      "properties": {
+        "foregroundOnly": {
+          "const": true
+        },
+        "humanInterrupt": {
+          "const": true
+        },
+        "intermediateConfirmation": {
+          "const": false
+        },
+        "confirmationMode": {
+          "const": "single_plan_approval"
+        },
+        "postApprovalExecution": {
+          "const": "continuous_within_approved_plan"
+        },
+        "readinessScope": {
+          "const": "required_capabilities_only"
+        },
+        "terminalReportMode": {
+          "const": "single_terminal_or_blocked"
+        },
+        "otherOnlineDevicesBlock": {
+          "const": false
+        },
+        "deviceSubstitutionAfterApproval": {
+          "const": false
+        },
+        "accountStateActions": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "engagement.ensure_liked",
+              "engagement.ensure_favorited"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/composite-capability.schema.json",
+  "title": "Versioned tested composite capability profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "capabilityProfileId",
+    "profileKind",
+    "actionRegistryVersion",
+    "allowedActions",
+    "maxDevices",
+    "maxParallel",
+    "maxStateChangesTotal",
+    "maxStateChangesPerMinute",
+    "cpaConcurrency",
+    "commentLiveCap",
+    "cpaLimits",
+    "runtimeProfile"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "xhs-composite-capability/v1"
+    },
+    "capabilityProfileId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+    },
+    "profileKind": {
+      "enum": [
+        "production_candidate",
+        "synthetic_test"
+      ]
+    },
+    "actionRegistryVersion": {
+      "const": "composite-actions/v1"
+    },
+    "allowedActions": {
+      "type": "array",
+      "minItems": 14,
+      "maxItems": 14,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "feed.scroll",
+          "feed.open_visible",
+          "detail.inspect",
+          "image.scroll_content",
+          "video.advance",
+          "comments.observe_count",
+          "comments.open",
+          "comments.collect",
+          "comments.close",
+          "navigation.return_to_feed",
+          "wait.for_condition",
+          "recover.to_feed",
+          "engagement.ensure_liked",
+          "engagement.ensure_favorited"
+        ]
+      }
+    },
+    "maxDevices": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "maxParallel": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    },
+    "maxStateChangesTotal": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1024
+    },
+    "maxStateChangesPerMinute": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1024
+    },
+    "cpaConcurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16
+    },
+    "commentLiveCap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maxScrolls",
+        "maxItems"
+      ],
+      "properties": {
+        "maxScrolls": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "maxItems": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        }
+      }
+    },
+    "cpaLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "providerHardTimeoutMs"
+      ],
+      "properties": {
+        "providerHardTimeoutMs": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 120000
+        }
+      }
+    },
+    "runtimeProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "validationMode",
+        "startPolicy",
+        "readyDeadlineMs",
+        "minReady",
+        "snapshotReuseMs",
+        "readOnlyFlushIntervalMs",
+        "readOnlyFlushMaxEvents",
+        "cpaWorkflowSoftTimeoutMs"
+      ],
+      "properties": {
+        "validationMode": {
+          "const": "startup_strict_runtime_light_account_state_strict"
+        },
+        "startPolicy": {
+          "enum": [
+            "all_ready",
+            "ready_subset_after_deadline"
+          ]
+        },
+        "readyDeadlineMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "minReady": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64
+        },
+        "snapshotReuseMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "readOnlyFlushIntervalMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "readOnlyFlushMaxEvents": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024
+        },
+        "cpaWorkflowSoftTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 119999
+        }
+      }
+    }
+  }
+}

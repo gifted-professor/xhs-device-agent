@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "xhs-composite-capability/v1",
+  "capabilityProfileId": "composite-capability-synthetic-8",
+  "profileKind": "synthetic_test",
+  "actionRegistryVersion": "composite-actions/v1",
+  "allowedActions": [
+    "feed.scroll",
+    "feed.open_visible",
+    "detail.inspect",
+    "image.scroll_content",
+    "video.advance",
+    "comments.observe_count",
+    "comments.open",
+    "comments.collect",
+    "comments.close",
+    "navigation.return_to_feed",
+    "wait.for_condition",
+    "recover.to_feed",
+    "engagement.ensure_liked",
+    "engagement.ensure_favorited"
+  ],
+  "maxDevices": 8,
+  "maxParallel": 8,
+  "maxStateChangesTotal": 16,
+  "maxStateChangesPerMinute": 16,
+  "cpaConcurrency": 8,
+  "commentLiveCap": {
+    "maxScrolls": 3,
+    "maxItems": 20
+  },
+  "cpaLimits": {
+    "providerHardTimeoutMs": 45000
+  },
+  "runtimeProfile": {
+    "validationMode": "startup_strict_runtime_light_account_state_strict",
+    "startPolicy": "ready_subset_after_deadline",
+    "readyDeadlineMs": 8000,
+    "minReady": 1,
+    "snapshotReuseMs": 1500,
+    "readOnlyFlushIntervalMs": 1000,
+    "readOnlyFlushMaxEvents": 32,
+    "cpaWorkflowSoftTimeoutMs": 8000
+  }
+}
