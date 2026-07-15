@@ -22,6 +22,13 @@ test("repo audit routes through the unified entry and supports JSON", () => {
   assert.equal(json.args.at(-1), "--json");
 });
 
+test("repo policy routes through the unified entry and supports JSON", () => {
+  const plain = buildDispatch(parseCliArgs(["repo", "policy"]));
+  assert.ok(plain.args.some((value) => value.endsWith("repo-policy-scan.mjs")));
+  const json = buildDispatch(parseCliArgs(["repo", "policy", "--json"]));
+  assert.equal(json.args.at(-1), "--json");
+});
+
 test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
   const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
   assert.equal(dispatch.executable, "powershell.exe");
@@ -205,31 +212,12 @@ test("research review sync uses the unified entry and explicit external confirma
   assert.equal(dispatch.args.some((value) => /token/iu.test(value)), false);
 });
 
-test("named XHS interaction commands route through the matrix executor", () => {
-  const simple = new Map([
-    ["like", "Like"],
-    ["favorite", "Favorite"],
-    ["collect", "Favorite"],
-    ["follow", "Follow"],
-    ["delete", "Delete"],
-  ]);
-  for (const [command, action] of simple) {
-    const dispatch = buildDispatch(parseCliArgs([command, "--device", "device-01"]));
-    assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
-    assert.deepEqual(dispatch.args.slice(-4), ["-Action", action, "-DeviceAlias", "device-01"]);
-  }
-
-  for (const [command, action] of [["comment", "Comment"], ["publish", "Publish"]]) {
+test("named XHS interaction commands are retired from the legacy matrix entry", () => {
+  for (const command of ["like", "favorite", "collect", "follow", "comment", "publish", "delete"]) {
     assert.throws(
       () => buildDispatch(parseCliArgs([command, "--device", "device-01"])),
-      /--text is required/u,
+      /retired as a direct command/u,
     );
-    const dispatch = buildDispatch(parseCliArgs([
-      command, "--device", "device-01", "--text", "测试内容",
-    ]));
-    assert.deepEqual(dispatch.args.slice(-6), [
-      "-Action", action, "-DeviceAlias", "device-01", "-Text", "测试内容",
-    ]);
   }
 });
 
@@ -284,7 +272,7 @@ test("feed run requires one machine and routes deterministic positions", () => {
   ]);
 });
 
-test("trusted-10 feed template pins the verified count, interactions, and video skip policy", () => {
+test("trusted-10 feed template supplies defaults without overriding explicit task values", () => {
   const dispatch = buildDispatch(parseCliArgs([
     "feed", "run",
     "--template", "trusted-10",
@@ -300,16 +288,14 @@ test("trusted-10 feed template pins the verified count, interactions, and video 
     "-VideoPolicy", "skip_and_count",
     "-VideoDwellMs", "0",
   ]);
-  assert.throws(
-    () => buildDispatch(parseCliArgs([
-      "feed", "run",
-      "--template", "trusted-10",
-      "--machine", "04",
-      "--task-id", "feed-trusted-002",
-      "--favorite-at", "8",
-    ])),
-    /fixes --favorite-at=7/u,
-  );
+  const overridden = buildDispatch(parseCliArgs([
+    "feed", "run",
+    "--template", "trusted-10",
+    "--machine", "04",
+    "--task-id", "feed-trusted-002",
+    "--favorite-at", "8",
+  ]));
+  assert.equal(overridden.args[overridden.args.indexOf("-FavoriteAt") + 1], "8");
   assert.throws(
     () => buildDispatch(parseCliArgs([
       "feed", "run",
@@ -361,6 +347,7 @@ test("help completes without spawning a child process", () => {
   assert.match(text, /--machine-name/u);
   assert.doesNotMatch(text, /--device\s+device-/u);
   for (const command of ["like", "favorite", "follow", "comment", "publish", "delete"]) {
-    assert.match(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
+    assert.doesNotMatch(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
   }
+  assert.match(text, /具名互动命令已从旧 Matrix 入口退役/u);
 });

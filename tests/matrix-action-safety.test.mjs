@@ -104,7 +104,7 @@ test("TapText interaction labels cannot be confirmed or grouped through", window
       "-ConfirmationReason", "test-only",
     ]);
     assert.notEqual(result.status, 0);
-    assert.match(`${result.stdout}${result.stderr}`, /permanently blocked/);
+    assert.match(`${result.stdout}${result.stderr}`, /generic external-interaction path/);
   }
 
   const groupedSafeLabel = runAction([
@@ -141,7 +141,7 @@ test("profile navigation is semantic-only and stable waits are bounded", async (
   assert.equal([...actionSource].some((character) => character.codePointAt(0) > 127), false);
 });
 
-test("named XHS interactions use a separate per-alias semantic authorization", async () => {
+test("legacy Matrix interactions are retired without a static per-alias business allowlist", async () => {
   const [source, configSource] = await Promise.all([
     readFile(actionScript, "utf8"),
     readFile(exampleConfig, "utf8"),
@@ -150,12 +150,13 @@ test("named XHS interactions use a separate per-alias semantic authorization", a
   for (const action of ["Like", "Favorite", "Follow", "Comment", "Publish", "Delete"]) {
     assert.match(source, new RegExp(`"${action}"`));
   }
-  assert.match(source, /\$xhsSemanticActions\s*=\s*@\("Like", "Favorite", "Follow", "Comment", "Publish", "Delete"\)/);
-  assert.match(source, /Xhs\.Interactions\.AllowedActionsByAlias/);
+  assert.match(source, /\$legacyDirectInteractionActions\s*=\s*@\("Like", "Favorite", "Follow", "Comment", "Publish", "Delete"\)/);
+  assert.match(source, /retired from the legacy Matrix wrapper/);
+  assert.doesNotMatch(source, /Xhs\.Interactions\.AllowedActionsByAlias/);
   assert.match(source, /function Get-XhsSemanticMatch/);
   assert.match(source, /function Invoke-XhsApprovedTextInput/);
-  assert.match(configSource, /Interactions\s*=\s*@\{/);
-  assert.match(configSource, /AllowedActionsByAlias\s*=\s*@\{/);
+  assert.doesNotMatch(configSource, /Interactions\s*=\s*@\{/);
+  assert.doesNotMatch(configSource, /AllowedActionsByAlias\s*=\s*@\{/);
   assert.doesNotMatch(configSource, /AcceptedActionsByAlias\s*=\s*@\{[^}]*\b(?:like|favorite|follow|comment|publish|delete)\b/is);
 });
 

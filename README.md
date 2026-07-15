@@ -2,7 +2,7 @@
 
 一个面向小红书多手机矩阵的低 Token、只读研究框架。效卫负责连接、投屏、设备分组和人工接管；ADB 负责逐台手机的确定性执行与后验验证；AI 只在主题扩展、未知页面恢复和结果分析等事件发生时介入。
 
-项目的研究流程默认只读。点赞、关注、评论、发布和删除只通过显式命名命令执行，并要求目标设备别名在本地配置中逐项授权；私信、随机停留、模拟真人和规避风控不在这些命令的范围内。
+项目的研究流程默认只读。自动设备操作只接受经过编译、完整展示并一次批准的有限任务计划；任务决定来源、设备、动作顺序、条件、次数和并发，模板只补默认值。验证码、登录验证、支付、系统权限、平台风控和无法验证的状态仍要求人工接管。
 
 ## 唯一操作入口
 
@@ -14,18 +14,7 @@
 .\xhs.cmd device list
 ```
 
-已授权设备可以使用以下语义命令；评论和发布必须提供单行文本：
-
-```powershell
-.\xhs.cmd like --device device-01
-.\xhs.cmd favorite --device device-01
-.\xhs.cmd follow --device device-01
-.\xhs.cmd comment --device device-01 --text "评论内容"
-.\xhs.cmd publish --device device-01 --text "发布内容"
-.\xhs.cmd delete --device device-01
-```
-
-这些名称是小红书页面语义动作，不是效卫 WebSocket 的底层 action。授权写在 `Xhs.Interactions.AllowedActionsByAlias`，不要把它们加入 `Xiaowei.Api.AcceptedActionsByAlias`；执行器会按当前页面的 UI 语义定位控件并校验结果。
+旧的 `like`、`favorite`、`follow`、`comment`、`publish`、`delete` 具名命令不再是公开执行入口，也不再使用每台设备的静态互动白名单。统一任务入口完成前，自动点赞/收藏只保留已验收的兼容工作流；关注、评论发送、发布和删除仍由人工在手机上完成。
 
 需要顺序浏览推荐流并在指定位置互动时，使用单设备 Feed 工作流：
 

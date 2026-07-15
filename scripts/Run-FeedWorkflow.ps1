@@ -4,7 +4,7 @@ param(
     [string]$TaskId,
 
     [Parameter(Mandatory = $true)]
-    [ValidateRange(1, 50)]
+    [ValidateRange(1, 2147483647)]
     [int]$Count,
 
     [string]$MachineNumber,
@@ -13,10 +13,10 @@ param(
 
     [string]$DeviceAlias,
 
-    [ValidateRange(1, 50)]
+    [ValidateRange(1, 2147483647)]
     [int]$LikeAt,
 
-    [ValidateRange(1, 50)]
+    [ValidateRange(1, 2147483647)]
     [int]$FavoriteAt,
 
     [ValidateRange(1, 60)]
@@ -57,7 +57,6 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if ($TaskId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$') { throw "TaskId must contain 3-80 safe characters" }
 if ($LikeAt -and $LikeAt -gt $Count) { throw "LikeAt cannot exceed Count" }
 if ($FavoriteAt -and $FavoriteAt -gt $Count) { throw "FavoriteAt cannot exceed Count" }
-if ($LikeAt -and $FavoriteAt -and $LikeAt -eq $FavoriteAt) { throw "LikeAt and FavoriteAt must target different feed positions" }
 if ($ImageMinSeconds -and $ImageMaxSeconds -and $ImageMinSeconds -gt $ImageMaxSeconds) { throw "ImageMinSeconds cannot exceed ImageMaxSeconds" }
 if ($VideoMinSeconds -and $VideoMaxSeconds -and $VideoMinSeconds -gt $VideoMaxSeconds) { throw "VideoMinSeconds cannot exceed VideoMaxSeconds" }
 $batchMode = [bool]$BatchRoot -or [bool]$BatchAttemptId
@@ -80,19 +79,6 @@ $DeviceAlias = [string]$machineIdentity.DeviceAlias
 $matchingSerials = @($config.Devices.Keys | Where-Object { [string]$config.Devices[$_] -eq $DeviceAlias })
 if ($matchingSerials.Count -ne 1) { throw "The selected machine must resolve to exactly one local device" }
 $serial = [string]$matchingSerials[0]
-$allowed = if (
-    $config.Xhs -and
-    $config.Xhs.Interactions -and
-    $config.Xhs.Interactions.AllowedActionsByAlias -and
-    $config.Xhs.Interactions.AllowedActionsByAlias.ContainsKey($DeviceAlias)
-) {
-    @($config.Xhs.Interactions.AllowedActionsByAlias[$DeviceAlias] | ForEach-Object { [string]$_ })
-} else {
-    @()
-}
-if ($LikeAt -and $allowed -notcontains "like") { throw "Like is not authorized for the selected machine" }
-if ($FavoriteAt -and $allowed -notcontains "favorite") { throw "Favorite is not authorized for the selected machine" }
-
 $node = (Get-Command node -ErrorAction Stop).Source
 $runner = Join-Path $PSScriptRoot "feed-device-runner.mjs"
 $rules = Join-Path $projectRoot "config\xhs-page-rules.json"

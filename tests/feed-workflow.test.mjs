@@ -391,13 +391,12 @@ test("a completed taskId returns a duplicate summary without touching the device
   assert.deepEqual(adapter.calls, []);
 });
 
-test("feed specification rejects out-of-range and conflicting positions", () => {
+test("feed specification rejects out-of-range values and accepts both actions at one position", () => {
   assert.throws(() => normalizeFeedSpec({ taskId: "feed-invalid-001", count: 0 }), /count/u);
   assert.throws(() => normalizeFeedSpec({ taskId: "feed-invalid-002", count: 10, likeAt: 11 }), /likeAt/u);
-  assert.throws(
-    () => normalizeFeedSpec({ taskId: "feed-invalid-003", count: 10, likeAt: 5, favoriteAt: 5 }),
-    /different feed positions/u,
-  );
+  const samePosition = normalizeFeedSpec({ taskId: "feed-same-position-001", count: 10, likeAt: 5, favoriteAt: 5 });
+  assert.equal(samePosition.likeAt, 5);
+  assert.equal(samePosition.favoriteAt, 5);
   assert.throws(
     () => normalizeFeedSpec({ taskId: "feed-invalid-004", count: 10, videoMinSeconds: 20, videoMaxSeconds: 10 }),
     /minimums/u,

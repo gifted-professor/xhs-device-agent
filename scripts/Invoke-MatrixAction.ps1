@@ -109,8 +109,12 @@ function Test-LocalSafeTapLabel {
 
 $readOnlyActions = @("OpenXhs", "OpenProfile", "Home", "Back", "DumpUi", "Screenshot", "Inventory", "ListApps", "StartApp")
 $deviceLocalActions = @("StopApp", "OpenSettings", "TapText", "ScreenOff", "ScreenOn", "PushFile", "InstallApk", "SetResolution", "SetDensity", "ResetDisplay")
-$xhsSemanticActions = @("Like", "Favorite", "Follow", "Comment", "Publish", "Delete")
+$legacyDirectInteractionActions = @("Like", "Favorite", "Follow", "Comment", "Publish", "Delete")
 $actionRiskClass = if ($readOnlyActions -contains $Action) { "read_only_navigation" } elseif ($deviceLocalActions -contains $Action) { "device_local_change" } else { "external_interaction" }
+
+if ($legacyDirectInteractionActions -contains $Action) {
+    throw "Direct XHS interaction actions are retired from the legacy Matrix wrapper; use an implemented approved workflow through xhs.cmd"
+}
 
 if (![string]::IsNullOrWhiteSpace($DeviceAliasesCsv)) {
     if ($DeviceAlias) { throw "Use DeviceAlias or DeviceAliasesCsv, not both" }
@@ -132,8 +136,8 @@ if (![string]::IsNullOrWhiteSpace($MachineNumbersCsv)) {
 if ($Action -eq "TapText" -and (Test-ExternalInteractionLabel $Text)) {
     $actionRiskClass = "external_interaction"
 }
-if ($actionRiskClass -eq "external_interaction" -and $xhsSemanticActions -notcontains $Action) {
-    throw "Action $Action is permanently blocked because it can create an external interaction. Confirmation cannot override this rule."
+if ($actionRiskClass -eq "external_interaction") {
+    throw "Action $Action cannot use a generic external-interaction path; use an implemented approved high-level workflow through xhs.cmd"
 }
 if ($Action -eq "TapText") {
     $explicitTapTargets = 0
@@ -225,21 +229,6 @@ if ($Group) {
 }
 $targets = @($targets | Where-Object { $online -contains $_ } | Select-Object -Unique)
 if (!$targets.Count) { throw "None of the selected devices are online" }
-
-if ($xhsSemanticActions -contains $Action) {
-    $allowedActionsByAlias = if ($config.Xhs -and $config.Xhs.Interactions -and $config.Xhs.Interactions.AllowedActionsByAlias) { $config.Xhs.Interactions.AllowedActionsByAlias } else { $null }
-    $semanticAction = $Action.ToLowerInvariant()
-    foreach ($targetSerial in $targets) {
-        $targetAlias = if ($config.Devices.ContainsKey($targetSerial)) { [string]$config.Devices[$targetSerial] } else { "" }
-        $allowedForAlias = if ($allowedActionsByAlias -and $allowedActionsByAlias.ContainsKey($targetAlias)) { @($allowedActionsByAlias[$targetAlias] | ForEach-Object { [string]$_ } | Select-Object -Unique) } else { @() }
-        if ($allowedForAlias -notcontains $semanticAction) {
-            throw "XHS semantic action '$semanticAction' is not authorized for every selected device alias"
-        }
-    }
-    if ($Action -in @("Comment", "Publish") -and ([string]::IsNullOrWhiteSpace($Text) -or $Text.Length -gt 2000 -or $Text -match '[\u0000\r\n]')) {
-        throw "$Action requires a non-empty single-line -Text value of at most 2000 characters"
-    }
-}
 
 $lockAliases = @()
 foreach ($targetSerial in $targets) {

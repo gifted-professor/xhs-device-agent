@@ -73,13 +73,6 @@
 
     Xhs = @{
         PackageName = "com.xingin.xhs"
-        # XHS semantic actions are local operator capabilities, not Xiaowei
-        # WebSocket action names. Keep them in this separate per-alias map.
-        Interactions = @{
-            AllowedActionsByAlias = @{
-                "device-01" = @()
-            }
-        }
     }
 
     # Chinese search input prefers a native IME that has been approved and

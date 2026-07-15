@@ -2,6 +2,13 @@
   "schemaVersion": "xhs-composite-policy/v1",
   "policyProfileId": "supervised-composite-v1",
   "actionRegistryVersion": "composite-actions/v1",
+  "businessAuthority": {
+    "source": "approved_task_spec",
+    "templateBehavior": "defaults_only",
+    "explicitTaskValuesWin": true,
+    "validationScope": "selected_devices_and_required_capabilities",
+    "midRunBusinessConfirmation": false
+  },
   "allowedActions": [
     "feed.scroll",
     "feed.open_visible",
@@ -69,6 +76,8 @@
     "policyRef": "count-adaptive-v1",
     "unknownFallback": "comment_unknown_shallow",
     "maxNoNewScrolls": 2,
+    "budgetSource": "compiled_plan_within_capability_profile",
+    "bandsAreDefaults": true,
     "bands": [
       {
         "band": "ZERO",
@@ -112,7 +121,7 @@
     "terminalReportMode": "single_terminal_or_blocked",
     "otherOnlineDevicesBlock": false,
     "deviceSubstitutionAfterApproval": false,
-    "accountStateActions": [
+    "strongVerificationActions": [
       "engagement.ensure_liked",
       "engagement.ensure_favorited"
     ]

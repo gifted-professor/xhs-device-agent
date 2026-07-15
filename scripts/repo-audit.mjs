@@ -22,7 +22,7 @@ const PRIVATE_RUNTIME_PATTERNS = Object.freeze([
 
 const INTEGRATION_PATTERNS = Object.freeze([
   /^(?:xhs\.cmd|xhs\.ps1|package\.json)$/u,
-  /^scripts\/(?:xhs-agent|Run-Feed|feed-|Run-TopicResearch|run-topic-research|research-core|research-session|adb-research-provider|composite-)/u,
+  /^scripts\/(?:xhs-agent|repo-policy-scan|Run-Feed|feed-|Run-TopicResearch|run-topic-research|research-core|research-session|adb-research-provider|composite-)/u,
   /^config\/composite-/u,
   /^tests\/(?:xhs-agent|xhs-entry|feed-|research-|run-topic-research|composite-)/u,
   /^(?:AGENTS\.md|README\.md|skills\/xhs-device-operator\/SKILL\.md)$/u,

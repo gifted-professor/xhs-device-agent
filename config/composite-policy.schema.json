@@ -8,6 +8,7 @@
     "schemaVersion",
     "policyProfileId",
     "actionRegistryVersion",
+    "businessAuthority",
     "allowedActions",
     "mandatoryStops",
     "globalFuseClasses",
@@ -27,6 +28,34 @@
     },
     "actionRegistryVersion": {
       "const": "composite-actions/v1"
+    },
+    "businessAuthority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "templateBehavior",
+        "explicitTaskValuesWin",
+        "validationScope",
+        "midRunBusinessConfirmation"
+      ],
+      "properties": {
+        "source": {
+          "const": "approved_task_spec"
+        },
+        "templateBehavior": {
+          "const": "defaults_only"
+        },
+        "explicitTaskValuesWin": {
+          "const": true
+        },
+        "validationScope": {
+          "const": "selected_devices_and_required_capabilities"
+        },
+        "midRunBusinessConfirmation": {
+          "const": false
+        }
+      }
     },
     "allowedActions": {
       "type": "array",
@@ -154,6 +183,8 @@
         "policyRef",
         "unknownFallback",
         "maxNoNewScrolls",
+        "budgetSource",
+        "bandsAreDefaults",
         "bands"
       ],
       "properties": {
@@ -165,6 +196,12 @@
         },
         "maxNoNewScrolls": {
           "const": 2
+        },
+        "budgetSource": {
+          "const": "compiled_plan_within_capability_profile"
+        },
+        "bandsAreDefaults": {
+          "const": true
         },
         "bands": {
           "type": "array",
@@ -218,7 +255,7 @@
         "terminalReportMode",
         "otherOnlineDevicesBlock",
         "deviceSubstitutionAfterApproval",
-        "accountStateActions"
+        "strongVerificationActions"
       ],
       "properties": {
         "foregroundOnly": {
@@ -248,7 +285,7 @@
         "deviceSubstitutionAfterApproval": {
           "const": false
         },
-        "accountStateActions": {
+        "strongVerificationActions": {
           "type": "array",
           "minItems": 2,
           "maxItems": 2,

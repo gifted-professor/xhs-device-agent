@@ -35,12 +35,9 @@ export function normalizeFeedSpec(input = {}) {
   if (!SAFE_TASK_ID.test(taskId)) {
     throw new FeedWorkflowError("INVALID_SPEC", "taskId must be 3-80 safe characters");
   }
-  const count = asBoundedInteger(input.count, "count", 1, 50);
+  const count = asBoundedInteger(input.count, "count", 1, Number.MAX_SAFE_INTEGER);
   const likeAt = asBoundedInteger(input.likeAt, "likeAt", 1, count, { optional: true });
   const favoriteAt = asBoundedInteger(input.favoriteAt, "favoriteAt", 1, count, { optional: true });
-  if (likeAt !== null && favoriteAt !== null && likeAt === favoriteAt) {
-    throw new FeedWorkflowError("INVALID_SPEC", "likeAt and favoriteAt must target different feed positions");
-  }
   const imageMinSeconds = asBoundedInteger(
     input.imageMinSeconds ?? DEFAULT_DWELL.imageMinSeconds,
     "imageMinSeconds",

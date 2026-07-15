@@ -9,6 +9,8 @@ description: Safely compile, review, and execute supervised composable Xiaohongs
 
 Use `xhs.cmd` as the sole entry point for every phone operation. Hermes may describe a goal and request a candidate plan, but only the deterministic compiler, an exact human-approved `planHash`, and the local executor may determine what is sent to a phone.
 
+Within the implemented high-level registry, treat the exact approved task as the sole business-intent source for content source, selected machines, ordered actions, conditions, counts, finite budgets, content, and requested concurrency. Templates add defaults only and explicit task values take precedence. Capability evidence may reject an unimplemented or untested request, but no wrapper may silently narrow, reorder, or replace it.
+
 Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify that current `xhs.cmd` help exposes `plan capability accept`, `plan prepare`, `plan compile`, `plan show`, `plan approve`, `plan execute`, `plan status`, and `plan stop`; verify the corresponding contract tests pass and preflight reports every required capability. If any part is absent, retain the existing read-only or single-machine legacy path and report the missing capability.
 
 ## Common preflight
@@ -26,10 +28,10 @@ Do not infer that a planned command exists. Before using `supervised_composite_v
 Choose exactly one of three formal modes and preserve its boundary:
 
 - `research_read_only`: public-content research only. Continue to require `interactionPolicy=human_final` and reject state-changing fields.
-- `feed_read_only`: existing V1.1 foreground batch for one or two explicit machines. It remains strictly read-only.
-- `supervised_composite_v1`: the new primary customization lane, after its full capability is implemented and enabled. It accepts an explicit finite machine list and a compiled, reviewed, approved high-level action plan. Its active device/concurrency ceiling comes from the current tested capability profile; the first profile may be two machines, but this is not a permanent governance limit.
+- `feed_read_only`: existing V1.1 foreground batch. It remains strictly read-only while reachable; its historical device/count limits are legacy implementation details, not governance rules.
+- `supervised_composite_v1`: the new primary customization lane, after its full capability is implemented and enabled. It accepts an explicit finite machine list and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested capability evidence; the repository has no permanent numeric ceiling.
 
-`trusted-10` is a legacy single-machine compatibility template, not a fourth formal mode. Until the composite runtime is accepted, it remains the current implementation path for exactly one like at item 5 and one favorite at item 7.
+`trusted-10` is a legacy compatibility template, not a fourth formal mode. Until the composite runtime is accepted, its existing executor remains the current automated like/favorite acceptance path. In the unified lifecycle it supplies defaults only and cannot override explicit task values.
 
 Never use `feed_read_only` to execute interactions. Never silently translate an unsupported composite request into generic taps, raw swipes, or the legacy template.
 
@@ -45,7 +47,7 @@ Never use `feed_read_only` to execute interactions. Never silently translate an 
 
 - Run a dedicated read-only `xhs.cmd` preparation operation for the exact finite machine list.
 - If the user requests an idle test phone instead of naming one, select deterministically from currently online, unlocked, idle machines using the configured preference order, then freeze that exact machine in the candidate plan. Do not treat other online machines as a conflict and do not substitute another machine after approval.
-- Perform fresh unique-online inventory and only the capability checks required by the requested actions. Read per-device like/favorite authorization only when the plan contains the corresponding account-state action. Write the accepted profile ID/hash, `inventorySnapshotHash`, `capabilitySnapshotHash`, creation/expiry, and required per-device versions into the snapshot.
+- Perform fresh unique-online inventory and only the capability checks required by the requested actions. Derive account-state readiness from the accepted capability profile, selected-device snapshot, and exact approved action; do not require a separate static per-device business-action allowlist. Write the accepted profile ID/hash, `inventorySnapshotHash`, `capabilitySnapshotHash`, creation/expiry, and required per-device versions into the snapshot.
 - Do not navigate the App, create workers, or send App/UI actions during preparation. The compiler consumes the snapshot file and never loads a device adapter.
 
 ### 3. Compile
@@ -84,7 +86,7 @@ Do not hide conditional branches behind a summary. The human approves the full p
 - After the one-shot exact approval is valid, run the entire finite approved plan autonomously without asking for confirmation between ordinary steps. Pause only for a mandatory stop, explicit human interrupt, invalidated approval, or an action that the policy classifies as human-final.
 - Recompute the canonical hash before creating workers. Any mismatch means zero device operations.
 - Execute only actions and runtime branches already represented in the approved plan.
-- Apply `startup_strict -> runtime_light -> account_state_strict`. Before App navigation, fully validate and bind the accepted profile/snapshots, plan/policy/approval, inventory/device identity/capabilities, per-device interaction authorization, locks, parent epoch, worker ticket, and execution slot into one immutable in-memory worker context.
+- Apply `startup_strict -> runtime_light -> account_state_strict`. Before App navigation, fully validate and bind the accepted profile/snapshots, plan/policy/approval, inventory/device identity/task-required capabilities, locks, parent epoch, worker ticket, and execution slot into one immutable in-memory worker context.
 - GO opens scheduling only. A worker may navigate or call CPA/device operations only while it holds both a current parent-issued authorization ticket and a current execution-slot lease. The ticket binds attempt/worker/machine/task, plan/approval/policy hashes, accepted profile/snapshot hashes, allowed step/operation IDs, expiry, and nonce; the lease binds parent epoch, worker, ticket, slot, issuance/expiry, and state.
 - After startup, authorize ordinary read-only sends with an O(1) in-memory fast gate over attempt/worker identity, current parent epoch, fuse, active slot, and allowed step. Do not reread/re-hash immutable files, repeat device/provider preflight, call CPA, or synchronously flush complete evidence merely to authorize a read-only send.
 - Repeat full startup validation only after restart/resume, parent epoch/lease replacement, ticket/slot renewal, device identity/capability drift, immutable artifact change, or a new worker context. Immediately before/after like or favorite, always refresh UI, rebind the exact target, durably reserve intent, send once, and persist the verified or ambiguous after-state.
@@ -144,7 +146,7 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
   4. `unknown` shallow fallback.
 
 - Freeze the comment budget after the first valid observation. A later observation may reduce confidence or stop the step but may not enlarge the budget.
-- Final policy bands may represent `0 -> 0/0`, `1–5 -> 1/5`, `6–20 -> 3/20`, `21–99 -> 5/30`, `100+ -> 8/50`, and `unknown -> 1/5` as `max scrolls / max saved snippets`. Keep the first live capability profile capped at `3/20` until both image and video comment containers pass supervised acceptance.
+- Default policy bands may represent `0 -> 0/0`, `1–5 -> 1/5`, `6–20 -> 3/20`, `21–99 -> 5/30`, `100+ -> 8/50`, and `unknown -> 1/5` as `max scrolls / max saved snippets`. They are defaults only; the compiled task freezes its finite budget within the accepted capability profile.
 - Stop comment collection after two consecutive scrolls with no new deidentified snippet, an end marker, identity loss, the frozen cap, or a mandatory-stop page.
 
 ## CPA boundary
@@ -159,7 +161,7 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
 
 ## Capability-bounded multi-machine foreground execution
 
-1. Require an explicit finite list of unique, online machine numbers. Other online machines are not blockers. `maxParallel` is positive, does not exceed the selected count, and does not exceed the current tested capability profile. The initial implementation may prove only two concurrent machines; future accepted profiles may increase it without changing this rule.
+1. Require an explicit finite list of unique, online machine numbers. Other online machines are not blockers. `maxParallel` is positive, comes from the approved task, does not exceed the selected count, and must fit the current tested capability profile.
 2. Use one foreground parent. Each machine gets one serial worker, unique task ID, device/task locks, checkpoint, event log, and evidence scope.
 3. Admit workers through the plan's closed startup policy: `all_ready`, or `ready_subset_after_deadline` with finite `readyDeadlineMs` and `minReady`. Every admitted worker must pass lock-ready and capability-ready before GO; an unready worker is terminal `skipped_not_ready`, cannot join later, and transfers no work or budget. Below `minReady`, perform zero App/UI operations. GO opens deterministic scheduling only; it is not device authority.
 4. Maintain a current parent lease/epoch, monotonic global fuse, one shared atomic state-change ledger, and at most `maxParallel` lease-backed execution slots. Require a current parent-issued worker ticket plus a current execution-slot lease before any navigation or CPA/device call; bind both artifacts to the exact attempt, worker, machine/task, hashes, expiry, and nonce/slot state so neither can cross workers.
@@ -167,7 +169,7 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
 6. Do not discover, reassign, substitute, or fail over devices. Do not move an unfinished target to another worker, and never transfer an unused/no-op/skipped `operationId` or `budgetSlotId`.
 7. A worker-local read-only navigation failure may stop only that worker. An ambiguous engagement, sensitive/identity page, plan or approval mismatch, parent lease loss, evidence/budget corruption, human interrupt, forbidden action, or the policy's systemic-failure quorum opens the global fuse for all workers.
 8. Ctrl-C opens the fuse first, revokes every execution slot, prevents new issuance, and terminates the entire process tree. A stale ticket, execution-slot lease, or parent lease makes every worker stop before its next sent action.
-9. The plan declares one finite batch-wide account-state budget, shown in the human review and enforced atomically through unique non-transferable operation slots. There is no permanent repository-wide numeric ceiling; the approved value must fit the current capability profile. The trusted compatibility template remains one like and one favorite per selected machine unless a new template version is explicitly reviewed and approved.
+9. The plan declares one finite batch-wide account-state budget, shown in the human review and enforced atomically through unique non-transferable operation slots. There is no permanent repository-wide numeric ceiling; the approved value must fit the current capability profile. Compatibility templates provide defaults only and never override explicit task values.
 
 ## Existing read-only and legacy lanes
 
@@ -177,7 +179,7 @@ Continue to run the strict research task contract and `Run-TopicResearch` path o
 
 ### `feed_read_only` V1.1
 
-Run `xhs.cmd feed batch --spec <path> --dry-run` before the foreground execution. The spec names one or two exact machine numbers and unique task IDs. Preserve both readiness barriers, current parent lease, locks, global fuse, committed-item accounting, and interaction-field rejection.
+Run `xhs.cmd feed batch --spec <path> --dry-run` before the foreground execution. The legacy spec names exact machine numbers and unique task IDs. Preserve its readiness barriers, current parent lease, locks, global fuse, committed-item accounting, and interaction-field rejection until this command becomes a unified-task compatibility converter.
 
 This lane remains read-only even after composite execution is implemented.
 
@@ -187,7 +189,7 @@ Until `supervised_composite_v1` is implemented and enabled, run only:
 
 `xhs.cmd feed run --template trusted-10 --machine <two-digit-number> --task-id <new-task-id>`
 
-It remains single-machine, foreground-only, explicitly approved, and limited to one like at item 5 and one favorite at item 7. On SSH disconnect, inspect the existing checkpoint/summary/events before any continuation; do not create a replacement task to replay work.
+Its current executor remains foreground-only and explicitly approved. Treat its historical count and action positions as compatibility defaults, not permission rules. On SSH disconnect, inspect the existing checkpoint/summary/events before any continuation; do not create a replacement task to replay work.
 
 After composite capability is accepted, multi-machine trusted-10 becomes a compatibility template compiled through the new plan lifecycle. Its selected device count must fit the active capability profile. It must not be implemented by weakening `feed batch`.
 

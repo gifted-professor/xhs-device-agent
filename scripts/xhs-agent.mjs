@@ -34,6 +34,7 @@ Shell 调用：
   .\\xhs.cmd doctor
   .\\xhs.cmd repo status [--json]
   .\\xhs.cmd repo audit [--json]
+  .\\xhs.cmd repo policy [--json]
   .\\xhs.cmd host status
   .\\xhs.cmd host start
   .\\xhs.cmd host capture
@@ -52,14 +53,8 @@ Shell 调用：
   .\\xhs.cmd app list --machine 04
   .\\xhs.cmd app open --machine 04 --package com.xingin.xhs
   .\\xhs.cmd app stop --machine 04 --package com.example.app --confirm --reason "..." --rollback "重新打开应用"
-  .\\xhs.cmd like --machine 04
-  .\\xhs.cmd favorite --machine 04
-  .\\xhs.cmd follow --machine 04
-  .\\xhs.cmd comment --machine 04 --text "评论内容"
-  .\\xhs.cmd publish --machine 04 --text "发布内容"
-  .\\xhs.cmd delete --machine 04
   .\\xhs.cmd feed run --template trusted-10 --machine 04 --task-id feed-001
-    优先可信模板：10 条、第 5 条点赞、第 7 条收藏、视频进入后立即计数
+    兼容模板默认值：10 条、第 5 条点赞、第 7 条收藏、视频进入后立即计数
   .\\xhs.cmd feed run --machine 04 --task-id feed-002 --count 10 --like-at 5 --favorite-at 7
     默认停留：图文 3-6 秒，视频 10-20 秒；视频也可用 --video-policy 和 --video-dwell-ms 配置
   .\\xhs.cmd feed batch --spec data/feed-batch.example.json --dry-run
@@ -77,7 +72,7 @@ Shell 调用：
   --machine-name N  按机器显示名称选择；名称重复时必须改用编号
   --group NAME      选择已配置分组；不能和机器选择同时使用
 
-普通设备动作必须明确指定 --machine、--machine-name 或 --group。内部设备绑定仅供程序兼容，不用于咨询和报告。除上述显式语义命令外，通用互动、登录验证、支付和账号变更不在此入口中。
+普通设备动作必须明确指定 --machine、--machine-name 或 --group。内部设备绑定仅供程序兼容，不用于咨询和报告。具名互动命令已从旧 Matrix 入口退役；现阶段自动点赞/收藏只走已批准工作流，新的业务参数将由统一任务计划承载。登录验证、支付和账号变更不在自动入口中。
 `;
 
 export function parseCliArgs(argv) {
@@ -173,10 +168,7 @@ function applyFeedTemplate(options) {
   }
   const effective = { ...options };
   for (const [option, expected] of Object.entries(template)) {
-    if (options[option] !== undefined && String(options[option]) !== expected) {
-      throw new Error(`Feed template ${name} fixes --${option}=${expected}; remove the conflicting override`);
-    }
-    effective[option] = expected;
+    if (options[option] === undefined) effective[option] = expected;
   }
   return effective;
 }
@@ -217,14 +209,6 @@ function matrixDispatch(action, options, { targetRequired = true, packageRequire
   return psScript("Invoke-MatrixAction.ps1", args);
 }
 
-function interactionDispatch(action, options, { textRequired = false } = {}) {
-  const args = ["-Action", action];
-  appendOption(args, options, "config", "-ConfigPath");
-  appendTargets(args, options);
-  if (textRequired) args.push("-Text", String(requireOption(options, "text")));
-  return psScript("Invoke-MatrixAction.ps1", args);
-}
-
 export function buildDispatch(parsed) {
   const { positional, options } = parsed;
   const [area = "help", command = ""] = positional;
@@ -247,6 +231,10 @@ export function buildDispatch(parsed) {
   if (area === "repo" && command === "audit") {
     assertAllowedOptions(options, ["json"], "repo audit");
     return nodeScript("repo-audit.mjs", options.json ? ["--json"] : []);
+  }
+  if (area === "repo" && command === "policy") {
+    assertAllowedOptions(options, ["json"], "repo policy");
+    return nodeScript("repo-policy-scan.mjs", options.json ? ["--json"] : []);
   }
   if (area === "host" && (command === "status" || command === "start")) {
     assertAllowedOptions(options, ["config"], `host ${command}`);
@@ -312,13 +300,7 @@ export function buildDispatch(parsed) {
     throw new Error(`Unknown app command: ${command || "(missing)"}`);
   }
   if (["like", "favorite", "collect", "follow", "comment", "publish", "delete"].includes(area)) {
-    if (command) throw new Error(`${area} does not accept a positional subcommand`);
-    const canonicalArea = area === "collect" ? "favorite" : area;
-    const textRequired = canonicalArea === "comment" || canonicalArea === "publish";
-    const allowed = ["config", "machine", "machine-name", "device", "group", ...(textRequired ? ["text"] : [])];
-    assertAllowedOptions(options, allowed, area);
-    const action = `${canonicalArea[0].toUpperCase()}${canonicalArea.slice(1)}`;
-    return interactionDispatch(action, options, { textRequired });
+    throw new Error(`${area} is retired as a direct command; use an implemented approved workflow through xhs.cmd`);
   }
   if (area === "feed" && command === "run") {
     assertAllowedOptions(

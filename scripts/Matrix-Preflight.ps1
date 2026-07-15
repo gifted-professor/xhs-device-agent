@@ -179,20 +179,6 @@ if (!$config.Devices -or !$config.Devices.Count) {
 if (@($online | Where-Object { !$config.Devices -or !$config.Devices.ContainsKey($_) }).Count) {
     $configurationBlockers.Add("one or more online devices have no local alias")
 }
-$xhsInteractionActions = @("like", "favorite", "follow", "comment", "publish", "delete")
-$xhsAllowedActionsByAlias = if ($config.Xhs -and $config.Xhs.Interactions -and $config.Xhs.Interactions.AllowedActionsByAlias) { $config.Xhs.Interactions.AllowedActionsByAlias } else { $null }
-if ($xhsAllowedActionsByAlias) {
-    foreach ($aliasKey in $xhsAllowedActionsByAlias.Keys) {
-        $alias = [string]$aliasKey
-        $actions = @($xhsAllowedActionsByAlias[$aliasKey] | ForEach-Object { [string]$_ } | Select-Object -Unique)
-        if ($mappedAliases -notcontains $alias) {
-            $configurationBlockers.Add("XHS interaction authorization references an unknown device alias")
-        }
-        if (@($actions | Where-Object { $xhsInteractionActions -notcontains $_ }).Count) {
-            $configurationBlockers.Add("XHS interaction authorization contains an unknown semantic action")
-        }
-    }
-}
 if (!$config.Groups -or !$config.Groups.Count) {
     $configurationBlockers.Add("no explicit device groups are configured")
 } else {

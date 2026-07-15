@@ -229,6 +229,13 @@ test("policy, profile, acceptance, ticket, and attempt examples validate with ca
     json(configUrl, "composite-attempt.schema.json"),
   ]);
   assert.deepEqual(errors("policy", policySchema, policy), []);
+  assert.equal(policy.businessAuthority.source, "approved_task_spec");
+  assert.equal(policy.businessAuthority.templateBehavior, "defaults_only");
+  assert.equal(policy.businessAuthority.explicitTaskValuesWin, true);
+  assert.equal(policy.businessAuthority.validationScope, "selected_devices_and_required_capabilities");
+  assert.equal(policy.businessAuthority.midRunBusinessConfirmation, false);
+  assert.equal(policy.commentPolicy.budgetSource, "compiled_plan_within_capability_profile");
+  assert.equal(policy.commentPolicy.bandsAreDefaults, true);
   assert.equal(policy.supervision.confirmationMode, "single_plan_approval");
   assert.equal(policy.supervision.postApprovalExecution, "continuous_within_approved_plan");
   assert.equal(policy.supervision.readinessScope, "required_capabilities_only");
