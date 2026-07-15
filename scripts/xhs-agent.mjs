@@ -10,6 +10,7 @@ const BOOLEAN_OPTIONS = new Set([
   "confirm-single-device-and-sync-off",
   "dry-run",
   "generate-only",
+  "json",
   "sync-lark",
 ]);
 const REPEATABLE_OPTIONS = new Set(["machine", "device"]);
@@ -31,6 +32,8 @@ Shell 调用：
 
 常用命令：
   .\\xhs.cmd doctor
+  .\\xhs.cmd repo status [--json]
+  .\\xhs.cmd repo audit [--json]
   .\\xhs.cmd host status
   .\\xhs.cmd host start
   .\\xhs.cmd host capture
@@ -83,6 +86,10 @@ export function parseCliArgs(argv) {
   let optionParsingStarted = false;
   for (let index = 0; index < argv.length; index += 1) {
     const token = String(argv[index]);
+    if (token === "--help" && positional.length === 0 && !optionParsingStarted) {
+      positional.push(token);
+      continue;
+    }
     if (!token.startsWith("--")) {
       if (optionParsingStarted) {
         throw new Error(
@@ -232,6 +239,14 @@ export function buildDispatch(parsed) {
     const args = ["-ProbeApi"];
     appendOption(args, options, "config", "-ConfigPath");
     return psScript("Matrix-Preflight.ps1", args);
+  }
+  if (area === "repo" && command === "status") {
+    assertAllowedOptions(options, ["json"], "repo status");
+    return nodeScript("repo-status.mjs", options.json ? ["--json"] : []);
+  }
+  if (area === "repo" && command === "audit") {
+    assertAllowedOptions(options, ["json"], "repo audit");
+    return nodeScript("repo-audit.mjs", options.json ? ["--json"] : []);
   }
   if (area === "host" && (command === "status" || command === "start")) {
     assertAllowedOptions(options, ["config"], `host ${command}`);

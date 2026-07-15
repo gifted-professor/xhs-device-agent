@@ -3,6 +3,25 @@ import test from "node:test";
 
 import { buildDispatch, parseCliArgs, runCli } from "../scripts/xhs-agent.mjs";
 
+test("long help flag remains a positional help command", () => {
+  assert.deepEqual(parseCliArgs(["--help"]), { positional: ["--help"], options: Object.create(null) });
+  assert.equal(buildDispatch(parseCliArgs(["--help"])).type, "help");
+});
+
+test("repo status routes through the unified entry and supports JSON", () => {
+  const plain = buildDispatch(parseCliArgs(["repo", "status"]));
+  assert.ok(plain.args.some((value) => value.endsWith("repo-status.mjs")));
+  const json = buildDispatch(parseCliArgs(["repo", "status", "--json"]));
+  assert.equal(json.args.at(-1), "--json");
+});
+
+test("repo audit routes through the unified entry and supports JSON", () => {
+  const plain = buildDispatch(parseCliArgs(["repo", "audit"]));
+  assert.ok(plain.args.some((value) => value.endsWith("repo-audit.mjs")));
+  const json = buildDispatch(parseCliArgs(["repo", "audit", "--json"]));
+  assert.equal(json.args.at(-1), "--json");
+});
+
 test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
   const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
   assert.equal(dispatch.executable, "powershell.exe");
