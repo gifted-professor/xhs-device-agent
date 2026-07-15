@@ -11,7 +11,7 @@ import {
 test("repository classification covers keep, integration, deletion and temporary files", () => {
   assert.equal(classifyRepositoryPath("scripts/xhs-page-engine.mjs"), CLASSIFICATIONS.FORMAL_KEEP);
   assert.equal(classifyRepositoryPath("scripts/composite-workflow.mjs"), CLASSIFICATIONS.INTEGRATE);
-  assert.equal(classifyRepositoryPath("docs/SAFETY.md"), CLASSIFICATIONS.PENDING_DELETE);
+  assert.equal(classifyRepositoryPath("docs/FEED_WORKFLOW.md"), CLASSIFICATIONS.PENDING_DELETE);
   assert.equal(classifyRepositoryPath("tmp-ocr.mjs"), CLASSIFICATIONS.TEMPORARY);
   assert.equal(classifyRepositoryPath("data/private/evidence.xml"), CLASSIFICATIONS.PRIVATE_RUNTIME);
   assert.equal(classifyRepositoryPath(".env.example"), CLASSIFICATIONS.FORMAL_KEEP);
@@ -21,7 +21,7 @@ test("repository audit classifies every Git-visible file without enumerating ign
   const visible = [
     "scripts/xhs-page-engine.mjs",
     "scripts/composite-workflow.mjs",
-    "docs/SAFETY.md",
+    "docs/FEED_WORKFLOW.md",
     "tmp-ocr.mjs",
     "data/private/evidence.xml",
   ];

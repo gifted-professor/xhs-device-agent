@@ -30,7 +30,7 @@ const INTEGRATION_PATTERNS = Object.freeze([
 ]);
 
 const PENDING_DELETE_PATTERNS = Object.freeze([
-  /^docs\/(?:SAFETY|XIAOWEI_MATRIX|HERMES_CAPABILITY_ACCEPTANCE)\.md$/u,
+  /^docs\/HERMES_CAPABILITY_ACCEPTANCE\.md$/u,
   /^docs\/plans\//u,
   /^docs\/trusted-runs\//u,
   /^docs\/FEED_WORKFLOW\.md$/u,
