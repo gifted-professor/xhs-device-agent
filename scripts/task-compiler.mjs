@@ -59,9 +59,10 @@ function operationId(prefix, ...parts) {
   return `${prefix}-${digest}`;
 }
 
-function taskSource(source) {
+function taskSource(source, sourceCountsByMachine) {
   if (source.type === "feed") return {
     type: "feed", count: source.count, candidateCap: source.candidateCap, maxScrollsPerItem: source.maxScrollsPerItem,
+    ...(sourceCountsByMachine?.length ? { countsByMachine: sourceCountsByMachine.map((entry) => ({ ...entry })) } : {}),
   };
   if (source.type === "search_results") return { type: "search_results", queryRef: "query-001", query: source.query, count: source.count };
   return {
@@ -85,9 +86,9 @@ export function resolveTaskMachines(task, inventory) {
 
 export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
   plain(input, "task spec");
-  exactKeys(input, ["schemaVersion", "taskId", "capabilityProfileId", "seed", "deviceSelection", "maxParallel", "source", "actions", "maxWallClockMs"], "task spec");
+  exactKeys(input, ["schemaVersion", "taskId", "capabilityProfileId", "seed", "deviceSelection", "maxParallel", "sourceCountsByMachine", "taskIdsByMachine", "source", "actions", "maxWallClockMs"], "task spec");
   invariant(input.schemaVersion === "xhs-task-spec/v1", "unsupported task schemaVersion");
-  invariant(typeof input.taskId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,69}$/u.test(input.taskId), "taskId is invalid");
+  invariant(typeof input.taskId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u.test(input.taskId), "taskId is invalid");
   invariant(typeof input.capabilityProfileId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u.test(input.capabilityProfileId), "capabilityProfileId is invalid");
   invariant(typeof input.seed === "string" && input.seed.length >= 24 && input.seed.length <= 128 && /^[A-Za-z0-9+/=_-]+$/u.test(input.seed), "seed is invalid");
 
@@ -128,6 +129,39 @@ export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
     invariant(source.type === "url_list" && Array.isArray(source.urls) && source.urls.length > 0 && source.urls.length <= 10000, "URL list is invalid");
     normalizedSource = { type: "url_list", urls: source.urls.map(safeXhsUrl) };
     invariant(new Set(normalizedSource.urls).size === normalizedSource.urls.length, "URL list contains duplicates");
+  }
+
+  let sourceCountsByMachine;
+  if (input.sourceCountsByMachine !== undefined) {
+    invariant(normalizedSource.type === "feed", "sourceCountsByMachine currently applies only to Feed sources");
+    invariant(Array.isArray(input.sourceCountsByMachine) && input.sourceCountsByMachine.length > 0 && input.sourceCountsByMachine.length <= machines.length, "sourceCountsByMachine must be a finite selected-machine list");
+    const seenMachines = new Set();
+    const byMachine = new Map();
+    for (const [index, entry] of input.sourceCountsByMachine.entries()) {
+      plain(entry, `sourceCountsByMachine[${index}]`);
+      exactKeys(entry, ["machine", "count"], `sourceCountsByMachine[${index}]`);
+      invariant(machines.includes(entry.machine) && !seenMachines.has(entry.machine), "sourceCountsByMachine must reference each selected machine at most once");
+      seenMachines.add(entry.machine);
+      byMachine.set(entry.machine, integer(entry.count, `sourceCountsByMachine[${index}].count`, 1, normalizedSource.count));
+    }
+    sourceCountsByMachine = machines.filter((machine) => byMachine.has(machine)).map((machine) => ({ machine, count: byMachine.get(machine) }));
+  }
+  let taskIdsByMachine;
+  if (input.taskIdsByMachine !== undefined) {
+    invariant(Array.isArray(input.taskIdsByMachine) && input.taskIdsByMachine.length > 0 && input.taskIdsByMachine.length <= machines.length, "taskIdsByMachine must be a finite selected-machine list");
+    const seenMachines = new Set();
+    const seenTaskIds = new Set();
+    const byMachine = new Map();
+    for (const [index, entry] of input.taskIdsByMachine.entries()) {
+      plain(entry, `taskIdsByMachine[${index}]`);
+      exactKeys(entry, ["machine", "taskId"], `taskIdsByMachine[${index}]`);
+      invariant(machines.includes(entry.machine) && !seenMachines.has(entry.machine), "taskIdsByMachine must reference each selected machine at most once");
+      invariant(typeof entry.taskId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u.test(entry.taskId) && !seenTaskIds.has(entry.taskId), "taskIdsByMachine contains an invalid or duplicate taskId");
+      seenMachines.add(entry.machine);
+      seenTaskIds.add(entry.taskId);
+      byMachine.set(entry.machine, entry.taskId);
+    }
+    taskIdsByMachine = machines.filter((machine) => byMachine.has(machine)).map((machine) => ({ machine, taskId: byMachine.get(machine) }));
   }
 
   invariant(Array.isArray(input.actions) && input.actions.length <= 10000, "actions must be a finite ordered array");
@@ -171,7 +205,15 @@ export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
     }
   }
   const maxWallClockMs = input.maxWallClockMs === undefined ? 1800000 : integer(input.maxWallClockMs, "maxWallClockMs", 1000, 86400000);
-  return Object.freeze({ ...input, deviceSelection: { mode: "explicit", machines: [...machines] }, source: normalizedSource, actions, maxWallClockMs });
+  return Object.freeze({
+    ...input,
+    deviceSelection: { mode: "explicit", machines: [...machines] },
+    ...(sourceCountsByMachine ? { sourceCountsByMachine } : {}),
+    ...(taskIdsByMachine ? { taskIdsByMachine } : {}),
+    source: normalizedSource,
+    actions,
+    maxWallClockMs,
+  });
 }
 
 function requiredActions(task) {
@@ -185,7 +227,7 @@ function requiredActions(task) {
   return [...actions];
 }
 
-function compileWorker(task, machine, titleRules, visibleName) {
+function compileWorker(task, machine, titleRules, visibleName, count, taskId) {
   const steps = [];
   let sequence = 0;
   const add = (action, params = {}, when, accountState = false, ordinal = 0) => {
@@ -204,7 +246,6 @@ function compileWorker(task, machine, titleRules, visibleName) {
     strategyId: "bounded_home_entry_v1", maxBackAttemptsPerPhase: 4, maxLaunchAttempts: 2,
   });
   if (task.source.type === "search_results") add("search.open_results", { queryRef: "query-001" });
-  const count = sourceCount(task.source);
   for (let ordinal = 1; ordinal <= count; ordinal += 1) {
     if (task.source.type === "feed") add("feed.open_visible", {
       visibleRank: 1, candidateCap: task.source.candidateCap, maxScrolls: task.source.maxScrollsPerItem,
@@ -235,7 +276,7 @@ function compileWorker(task, machine, titleRules, visibleName) {
     if (task.source.type === "feed") add("navigation.return_to_feed", {});
     if (task.source.type === "search_results") add("navigation.return_to_source", { sourceType: "search_results" });
   }
-  return { machine, ...(visibleName ? { visibleName } : {}), taskId: `${task.taskId}-${machine}`, steps };
+  return { machine, ...(visibleName ? { visibleName } : {}), taskId, sourceCount: count, steps };
 }
 
 export function compileUnifiedTaskPlan(input, context) {
@@ -259,12 +300,24 @@ export function compileUnifiedTaskPlan(input, context) {
   invariant(titleValues.length <= 10000, "too many title rules");
   const titleRules = titleValues.map((value, index) => ({ ruleRef: `title-rule-${String(index + 1).padStart(3, "0")}`, operator: "normalized_contains", value }));
   const preparedByMachine = new Map(context.preparationSnapshot.devices.map((entry) => [entry.machine, entry]));
-  const devices = machines.map((machine) => compileWorker(task, machine, titleRules, preparedByMachine.get(machine)?.visibleName));
+  const sourceCountOverrides = new Map((task.sourceCountsByMachine ?? []).map((entry) => [entry.machine, entry.count]));
+  const taskIdOverrides = new Map((task.taskIdsByMachine ?? []).map((entry) => [entry.machine, entry.taskId]));
+  const deviceSourceCount = (machine) => sourceCountOverrides.get(machine) ?? sourceCount(task.source);
+  const devices = machines.map((machine) => compileWorker(
+    task,
+    machine,
+    titleRules,
+    preparedByMachine.get(machine)?.visibleName,
+    deviceSourceCount(machine),
+    taskIdOverrides.get(machine) ?? `${task.taskId}-${machine}`,
+  ));
   const stateChanges = devices.flatMap((device) => device.steps).filter((step) => ACTION_REGISTRY[step.action].risk === "account_state").length;
   const commentConditionTargets = new Set();
-  for (let ordinal = 1; ordinal <= sourceCount(task.source); ordinal += 1) {
-    if (task.actions.some((entry) => (entry.target.mode === "each" || entry.target.ordinal === ordinal) && entry.when?.type === "comment_band")) {
-      commentConditionTargets.add(ordinal);
+  for (const machine of machines) {
+    for (let ordinal = 1; ordinal <= deviceSourceCount(machine); ordinal += 1) {
+      if (task.actions.some((entry) => (entry.target.mode === "each" || entry.target.ordinal === ordinal) && entry.when?.type === "comment_band")) {
+        commentConditionTargets.add(`${machine}:${ordinal}`);
+      }
     }
   }
   invariant(stateChanges <= capability.maxStateChangesTotal, "task state changes exceed capability");
@@ -272,7 +325,7 @@ export function compileUnifiedTaskPlan(input, context) {
     maxParallel: task.maxParallel,
     maxStateChangesTotal: stateChanges,
     maxReadStepsTotal: devices.flatMap((device) => device.steps).length - stateChanges,
-    maxVisionCallsTotal: machines.length * commentConditionTargets.size,
+    maxVisionCallsTotal: commentConditionTargets.size,
     maxWallClockMs: task.maxWallClockMs,
   };
   validateCompiledSteps(devices.flatMap((device) => device.steps), limits);
@@ -285,7 +338,7 @@ export function compileUnifiedTaskPlan(input, context) {
     capabilityProfileHash: context.capabilityProfileHash,
     compilerVersion: context.compilerVersion ?? "2.0.0",
     rng: { algorithm: "hmac-sha256-counter-v1", seed: task.seed },
-    taskSource: taskSource(task.source),
+    taskSource: taskSource(task.source, task.sourceCountsByMachine),
     titleRules,
     inventorySnapshotHash: context.preparationSnapshot.inventorySnapshotHash,
     capabilitySnapshotHash: context.preparationSnapshot.capabilitySnapshotHash,
@@ -303,6 +356,21 @@ export function compileUnifiedTaskPlan(input, context) {
       ensureLikedPerDevice: task.actions.filter((entry) => entry.action === "engagement.ensure_liked").reduce((sum, entry) => sum + (entry.target.mode === "each" ? count : 1), 0),
       ensureFavoritedPerDevice: task.actions.filter((entry) => entry.action === "engagement.ensure_favorited").reduce((sum, entry) => sum + (entry.target.mode === "each" ? count : 1), 0),
       eligibleVisitOrdinals: { min: 1, max: count },
+      perDevice: machines.map((machine) => {
+        const deviceCount = deviceSourceCount(machine);
+        const scheduledCount = (action) => task.actions
+          .filter((entry) => entry.action === action)
+          .reduce((sum, entry) => sum + (entry.target.mode === "each" ? deviceCount : Number(entry.target.ordinal <= deviceCount)), 0);
+        return {
+          machine,
+          targetValidVisits: deviceCount,
+          maxVisitAttempts: deviceCount * 2,
+          maxSkippedTargets: deviceCount,
+          maxFeedScrollsTotal: task.source.type === "feed" ? deviceCount * task.source.maxScrollsPerItem : 0,
+          ensureLiked: scheduledCount("engagement.ensure_liked"),
+          ensureFavorited: scheduledCount("engagement.ensure_favorited"),
+        };
+      }),
     },
     devices,
     limits,

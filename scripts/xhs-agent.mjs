@@ -15,68 +15,48 @@ const BOOLEAN_OPTIONS = new Set([
   "sync-lark",
 ]);
 const REPEATABLE_OPTIONS = new Set(["machine", "device"]);
-const FEED_TEMPLATES = Object.freeze({
-  "trusted-10": Object.freeze({
-    count: "10",
-    "like-at": "5",
-    "favorite-at": "7",
-    "video-policy": "skip_and_count",
-    "video-dwell-ms": "0",
-  }),
-});
 
 const HELP = `XHS Device Agent 统一入口
 
-Shell 调用：
+调用：
   PowerShell / cmd.exe:  .\\xhs.cmd <command>
   Git Bash / MSYS:       bash ./xhs.cmd <command>
 
-常用命令：
-  .\\xhs.cmd doctor
+统一任务：
+  .\\xhs.cmd task run --spec data/task.json --dry-run
+  .\\xhs.cmd task run --spec data/task.json
+  .\\xhs.cmd task run --spec data/task.json --confirm-plan-hash <64位哈希>
+  .\\xhs.cmd capability status [--json]
+  .\\xhs.cmd capability accept --profile <文件> --evidence <文件> --confirm-profile-hash <哈希> --confirm-evidence-hash <哈希> --confirm-human
+
+兼容转换（最终都进入统一任务链）：
+  .\\xhs.cmd feed run --machine 02 --task-id feed-001 --count 11 --like-at 2 --favorite-at 7 --dry-run
+  .\\xhs.cmd feed batch --spec data/legacy-batch.json --dry-run
+  .\\xhs.cmd research run --task data/research-task.json --dry-run
+
+仓库：
   .\\xhs.cmd repo status [--json]
   .\\xhs.cmd repo audit [--json]
   .\\xhs.cmd repo policy [--json]
-  .\\xhs.cmd capability status [--json]
-  .\\xhs.cmd capability accept --profile config/profile.json --evidence data/evidence.json --confirm-profile-hash HASH --confirm-evidence-hash HASH --confirm-human
-  .\\xhs.cmd task run --spec data/task.json --dry-run
+
+只读与设备本地操作：
+  .\\xhs.cmd doctor
   .\\xhs.cmd host status
   .\\xhs.cmd host start
-  .\\xhs.cmd host capture
-  .\\xhs.cmd api catalog
   .\\xhs.cmd device list
-  .\\xhs.cmd device screen --machine 04
-  .\\xhs.cmd device screen --machine-name VISIBLE_NAME
-  .\\xhs.cmd device ui --group content
-  .\\xhs.cmd device open-xhs --machine 04
-  .\\xhs.cmd device open-profile --machine 04
-  .\\xhs.cmd device home --machine 04
-  .\\xhs.cmd device back --machine 04
-  .\\xhs.cmd device screen-off --machine 04 --confirm --reason "..." --rollback "重新亮屏"
-  .\\xhs.cmd device screen-on --machine 04 --confirm --reason "..." --rollback "恢复原熄屏状态"
-  .\\xhs.cmd device settings --machine 04 --confirm --reason "..." --rollback "返回原应用"
-  .\\xhs.cmd app list --machine 04
-  .\\xhs.cmd app open --machine 04 --package com.xingin.xhs
-  .\\xhs.cmd app stop --machine 04 --package com.example.app --confirm --reason "..." --rollback "重新打开应用"
-  .\\xhs.cmd feed run --template trusted-10 --machine 04 --task-id feed-001
-    兼容模板默认值：10 条、第 5 条点赞、第 7 条收藏、视频进入后立即计数
-  .\\xhs.cmd feed run --machine 04 --task-id feed-002 --count 10 --like-at 5 --favorite-at 7
-    默认停留：图文 3-6 秒，视频 10-20 秒；视频也可用 --video-policy 和 --video-dwell-ms 配置
-  .\\xhs.cmd feed batch --spec data/feed-batch.example.json --dry-run
-    V1.1 只读批次：显式指定 1-2 台机器；两台必须同时通过锁定和预检才开始
-  .\\xhs.cmd research run --task data/task.json [--dry-run]
-  .\\xhs.cmd research sync-review --review data/research/TASK/human-review.jsonl --confirm-external-sync
-  .\\xhs.cmd ramp run --profile data/accounts/example/profile.json [--dry-run]
-  .\\xhs.cmd handoff review --task data/task.json --candidate ID --machine 04 --confirm-single-device-and-sync-off
-  .\\xhs.cmd handoff ramp --profile data/accounts/example/profile.json --candidate ID --confirm-single-device-and-sync-off
-  .\\xhs.cmd inventory collect [--sync-lark]
+  .\\xhs.cmd device screen --machine 02
+  .\\xhs.cmd device ui --machine 02
+  .\\xhs.cmd device open-xhs --machine 02
+  .\\xhs.cmd app list --machine 02
 
-通用选项：
-  --config PATH     使用指定的本地配置；默认 config/local.psd1
-  --machine NUMBER  按两位机器编号选择，可重复；例如 04
-  --machine-name N  按机器显示名称选择；名称重复时必须改用编号
-  --group NAME      选择已配置分组；不能和机器选择同时使用
+选择器：
+  --machine NUMBER    两位机器号，可重复
+  --machine-name NAME 唯一可见名称
+  --group NAME        本地配置组
+  --config PATH       本地配置路径
 
-普通设备动作必须明确指定 --machine、--machine-name 或 --group。内部设备绑定仅供程序兼容，不用于咨询和报告。具名互动命令已从旧 Matrix 入口退役；现阶段自动点赞/收藏只走已批准工作流，新的业务参数将由统一任务计划承载。登录验证、支付和账号变更不在自动入口中。
+设备动作只允许从 xhs.cmd 进入。统一任务先完整审阅一次，再用完全相同的 planHash 确认一次。
+验证码、登录/身份验证、支付、系统权限、平台风控、目标漂移和无法验证的状态会停止任务。
 `;
 
 export function parseCliArgs(argv) {
@@ -161,20 +141,6 @@ function nodeScript(name, args = []) {
 
 function appendOption(args, options, option, parameter) {
   if (options[option] !== undefined) args.push(parameter, String(options[option]));
-}
-
-function applyFeedTemplate(options) {
-  if (options.template === undefined) return options;
-  const name = String(options.template);
-  const template = FEED_TEMPLATES[name];
-  if (!template) {
-    throw new Error(`Unknown feed template: ${name}; supported templates: ${Object.keys(FEED_TEMPLATES).join(", ")}`);
-  }
-  const effective = { ...options };
-  for (const [option, expected] of Object.entries(template)) {
-    if (options[option] === undefined) effective[option] = expected;
-  }
-  return effective;
 }
 
 function appendTargets(args, options, { required = true } = {}) {
@@ -353,46 +319,51 @@ export function buildDispatch(parsed) {
     assertAllowedOptions(
       options,
       [
-        "template", "task-id", "count", "like-at", "favorite-at",
-        "image-min-seconds", "image-max-seconds", "video-min-seconds", "video-max-seconds",
-        "video-policy", "video-dwell-ms",
+        "task-id", "count", "like-at", "favorite-at", "max-parallel",
+        "capability-profile", "acceptance-root", "confirm-plan-hash", "dry-run", "json",
         "config", "output", "machine", "machine-name", "device", "group",
       ],
       "feed run",
     );
-    const feedOptions = applyFeedTemplate(options);
+    const feedOptions = options;
     const machines = feedOptions.machine ?? [];
     const devices = feedOptions.device ?? [];
-    const selectionModes = [machines.length > 0, feedOptions["machine-name"] !== undefined, devices.length > 0].filter(Boolean).length;
-    if (selectionModes !== 1 || machines.length > 1 || devices.length > 1 || feedOptions.group) {
-      throw new Error("Feed run requires exactly one machine number or machine name");
-    }
+    const selectionModes = [machines.length > 0, feedOptions["machine-name"] !== undefined, devices.length > 0, feedOptions.group !== undefined].filter(Boolean).length;
+    if (selectionModes !== 1) throw new Error("Feed run requires exactly one machine selector mode");
     const args = [
+      "-Kind", "Feed",
       "-TaskId", String(requireOption(feedOptions, "task-id")),
       "-Count", String(requireOption(feedOptions, "count")),
     ];
-    if (machines.length === 1) args.push("-MachineNumber", String(machines[0]));
+    if (machines.length) args.push("-MachineNumbersCsv", machines.map(String).join(","));
     if (feedOptions["machine-name"] !== undefined) args.push("-MachineName", String(feedOptions["machine-name"]));
-    if (devices.length === 1) args.push("-DeviceAlias", String(devices[0]));
+    if (devices.length) args.push("-DeviceAliasesCsv", devices.map(String).join(","));
+    if (feedOptions.group !== undefined) args.push("-Group", String(feedOptions.group));
     appendOption(args, feedOptions, "like-at", "-LikeAt");
     appendOption(args, feedOptions, "favorite-at", "-FavoriteAt");
-    appendOption(args, feedOptions, "image-min-seconds", "-ImageMinSeconds");
-    appendOption(args, feedOptions, "image-max-seconds", "-ImageMaxSeconds");
-    appendOption(args, feedOptions, "video-min-seconds", "-VideoMinSeconds");
-    appendOption(args, feedOptions, "video-max-seconds", "-VideoMaxSeconds");
-    appendOption(args, feedOptions, "video-policy", "-VideoPolicy");
-    appendOption(args, feedOptions, "video-dwell-ms", "-VideoDwellMs");
+    appendOption(args, feedOptions, "max-parallel", "-MaxParallel");
+    appendOption(args, feedOptions, "capability-profile", "-CapabilityProfileId");
+    appendOption(args, feedOptions, "acceptance-root", "-AcceptanceRoot");
+    appendOption(args, feedOptions, "confirm-plan-hash", "-ConfirmPlanHash");
     appendOption(args, feedOptions, "config", "-ConfigPath");
     appendOption(args, feedOptions, "output", "-OutputRoot");
-    return psScript("Run-FeedWorkflow.ps1", args);
+    if (feedOptions["dry-run"]) args.push("-DryRun");
+    if (feedOptions.json) args.push("-Json");
+    return psScript("Run-TaskCompatibility.ps1", args);
   }
   if (area === "feed" && command === "batch") {
-    assertAllowedOptions(options, ["spec", "config", "output", "dry-run"], "feed batch");
-    const args = ["-SpecPath", String(requireOption(options, "spec"))];
+    assertAllowedOptions(options, [
+      "spec", "config", "output", "capability-profile", "acceptance-root", "confirm-plan-hash", "dry-run", "json",
+    ], "feed batch");
+    const args = ["-Kind", "Batch", "-LegacySpecPath", String(requireOption(options, "spec"))];
     appendOption(args, options, "config", "-ConfigPath");
     appendOption(args, options, "output", "-OutputRoot");
+    appendOption(args, options, "capability-profile", "-CapabilityProfileId");
+    appendOption(args, options, "acceptance-root", "-AcceptanceRoot");
+    appendOption(args, options, "confirm-plan-hash", "-ConfirmPlanHash");
     if (options["dry-run"]) args.push("-DryRun");
-    return psScript("Run-FeedBatch.ps1", args);
+    if (options.json) args.push("-Json");
+    return psScript("Run-TaskCompatibility.ps1", args);
   }
   if (area === "research" && command === "run") {
     assertAllowedOptions(options, ["task", "config", "output", "group", "device", "dry-run"], "research run");

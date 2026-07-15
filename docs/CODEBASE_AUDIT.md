@@ -1,6 +1,6 @@
-# 代码库审查与整合边界
+# 代码库审查与整合状态
 
-本审查以 Windows 工作区为当前权威源。`xhs.cmd repo audit` 对所有 Git 已跟踪及未忽略文件执行机械分类；私有运行数据只计数、不输出路径，被 `.gitignore` 排除的私有数据也不会被枚举。
+Windows 工作区是当前权威源。`xhs.cmd repo status --json` 显示电脑、仓库路径、分支、commit 和未提交文件数；`xhs.cmd repo audit --json` 分类全部 Git 可见文件；`xhs.cmd repo policy --json` 检查私有文件、远端可达历史、旧硬限制和必需权限契约。
 
 ## 当前真实调用链
 
@@ -8,63 +8,43 @@
 xhs.cmd
 → xhs.ps1
 → scripts/xhs-agent.mjs
-├─ doctor / api status → Matrix-Preflight.ps1
-├─ device / app / 旧具名动作 → Invoke-MatrixAction.ps1
-├─ feed run → Run-FeedWorkflow.ps1 → feed-device-runner.mjs → feed-workflow.mjs
-├─ feed batch → Run-FeedBatch.ps1 → feed-batch-runner.mjs
-│  └─ 每台机器重新进入 Run-FeedWorkflow.ps1 → 旧 Feed 执行链
-└─ research run → Run-TopicResearch.ps1 → run-topic-research.mjs
-   └─ research-session.mjs → adb-research-provider.mjs
+├─ task run
+│  ├─ --dry-run → task-runner.mjs
+│  └─ live → Run-TaskWorkflow.ps1 → task-live-runner.mjs
+│     → composite execution coordinator
+│     → composite workflow / operation ledger
+│     → composite device adapter
+│     → feed-device-runner.mjs（语义设备适配库）
+├─ feed run / feed batch
+│  → Run-TaskCompatibility.ps1
+│  → legacy-task-converter.mjs
+│  → 与 task run 相同的审阅、确认和执行链
+├─ research run → Run-TopicResearch.ps1 → run-topic-research.mjs
+└─ device / app → Invoke-MatrixAction.ps1（只读或设备本地动作）
 ```
 
-`composite-*` 当前只有 schema、纯编译器、审批、账本、适配器和单 worker 测试库，没有从 `xhs-agent.mjs` 可达的 `plan`/`task` 命令，也没有完整生产父调度器。因此“文件存在、测试通过”不等于 Hermes 已在使用 Composite。
+旧 Feed 包装器、批次父进程、旧屏障、重复 Feed 工作流和固定模板已删除。Matrix 中不可达的点赞、收藏、关注、评论、发布和删除实现也已删除。
 
-## 分类规则
+## 文件分类
 
-### 正式保留
+- 正式保留：页面语义识别、设备锁和任务锁、机器身份解析、状态前后验证、操作账本、计划哈希、一次性批准、执行槽、单调熔断、断点恢复和证据清单。
+- 兼容转换：`feed run` 与 `feed batch` 只翻译旧参数，不拥有设备上限、动作政策、确认流程或执行器。
+- 等待整合：旧只读 Research 仍有独立入口；完成统一搜索/研究适配后再删除旧研究编排器。
+- 已删除：临时 OCR/分类脚本、固定模板、重复 Feed/Batch 调度器、不可达 Matrix 外部互动实现和过期测试。
+- 私有运行数据：`data/`（除 `.gitkeep`）、截图、UI XML、本地配置、账号/令牌/会话材料保持忽略，不因代码清理而删除用户数据。
 
-页面语义识别、设备/任务锁、机器身份解析、前后状态验证、确保态操作、操作账本、审批哈希、隐私门、CPA 严格 schema、恢复检查点及其测试。远程访问和 Windows 主机维护脚本也保留，但不是设备动作入口。
+## 权限与限制结论
 
-### 需要整合
+- 精确的用户任务是已实现高层动作范围内唯一的业务意图来源。模板只能补默认值；当前固定模板已删除。
+- 设备数、并发、浏览数、动作数和状态变化预算来自任务，并只与当前人工接受的能力档案比较。
+- 只检查选中机器和本次实际使用的能力；其他机器离线或未使用能力异常不是阻断条件。
+- 一次完整审阅、一次精确 `planHash` 确认。确认后按有限计划连续执行，不逐步重复询问。
+- 验证码、登录/身份验证、支付、系统权限、平台风控、目标/身份漂移和状态无法验证仍是强制停止。
 
-公开入口、旧 Feed/Batch/Research 包装器、Composite 候选实现、相关 schema/测试和运行手册。目标是让 `xhs.cmd task ...` 成为唯一计划生命周期入口；旧命令只做闭合转换，不直接拥有另一套互动执行策略。
+## 隐私历史
 
-### 等待删除或重写
+相关远端分支已改写，远端可达对象中 `data/` 只剩 `.gitkeep`，策略扫描的远端私有对象计数为 0。GitHub 若仍按已知旧 SHA 返回缓存对象，需要仓库所有者按 GitHub 官方敏感数据清理流程联系 Support 清除缓存和不可修改引用。
 
-固定 `trusted-10` 说明和真机历史记录等待统一入口通过无真机验收后删除。未提交的 V1/V1.1 设计稿及与当前强制停止、语义动作和状态验证原则冲突的文档已经删除；当前 `SAFETY.md` 与 `XIAOWEI_MATRIX.md` 已重写为生产边界。
+## 当前验收边界
 
-### 临时文件
-
-`tmp-classify.mjs` 与 `tmp-ocr.mjs` 曾含本地运行痕迹，现已删除且从未提交。文件名和 SHA-256 保留在仓库外备份清单，内容因隐私边界未进入恢复包。
-
-### 私有运行数据
-
-`data/`（除占位文件）、`.env*`、`config/local.psd1`、输入法本地配置、截图、UI XML、CSV、日志、账号/令牌/会话/凭据材料。它们保持忽略，不提交、不在审查命令中枚举，也不因代码清理而删除用户数据。
-
-审查发现基础 commit 曾历史性跟踪一批 `data/`、截图和 UI XML。`codex/hermes-ime-integration` 与 `codex/unified-task-cleanup` 已改写并原子更新远端；当前所有远端分支可达对象中，`data/` 只剩 `.gitkeep`。本机运行文件继续保留且由 `.gitignore` 接管；任何报告只显示数量，不显示私有路径。GitHub 仍能按已知旧 SHA 返回缓存对象，平台端彻底清除需要由仓库所有者向 GitHub Support 提交敏感数据清除请求。
-
-## 命令权限原则
-
-- 在已实现的高层动作注册表内，经过完整展示并批准的任务是唯一业务意图来源：来源、设备、动作顺序、条件、次数、有限预算、内容和并发均来自任务。
-- 模板只补缺省值，显式任务值优先。兼容包装器不得覆盖参数、移动动作目标或增加第二次业务确认。
-- 能力档案只回答“当前实现是否经过验收并能安全执行”，不能替用户改写任务。准备阶段只检查选中设备和任务实际需要的能力，不再读取每台设备的静态业务动作白名单。
-- 以上原则不扩大动作注册表，也不绕过验证码、登录/身份验证、支付、系统权限、平台风控、目标/状态无法确认等人工介入边界。
-
-## 限制审查结论
-
-- 已删除：Feed 的 `1–50`、同序号点赞/收藏禁止、`trusted-10` 覆盖显式参数、每台设备静态互动白名单。
-- 待迁移到兼容转换层：旧 Feed 的单值动作参数，以及旧 Batch 的设备数、浏览数和只读执行器限制。统一任务验收前不把旧 Batch 宽化为互动执行器。
-- 动态判断：设备数、并发数、状态变化预算、评论预算和候选数由已人工接受的 capability profile 限制；只检查本次选中设备和本次动作所需能力。
-- 保留：验证码、登录/身份验证、支付、系统权限、平台风控、私密页面、设备/账号/目标漂移、状态无法确认、审批/哈希/nonce/锁/账本失效，以及不明确状态禁止重发。
-- Human-final：关注、评论/回复发送、私信、分享、发布、删除、账号/隐私/安全变更。它们不进入自动设备动作注册表；任务计划只能显示为人工最终步骤。
-
-## 版本对齐
-
-执行任务前运行：
-
-```powershell
-.\xhs.cmd repo status --json
-.\xhs.cmd repo audit --json
-```
-
-Hermes 应把电脑、仓库路径、分支、commit 和未提交文件数写入本次任务证据。Mac/GPFS 只有在显示与 Windows 相同 commit 后才可作为同一代码源运行。
+Feed、Batch 和统一任务编译/审阅/批准/协调/账本已通过无真机测试。搜索结果与 URL 任务可编译，但只有在相应能力档案和真机适配器验收后才允许执行；缺少能力时必须在设备导航前失败。Research 兼容转换、Mac/GPFS commit 对齐和 Hermes 02 号机真机验收仍未完成。

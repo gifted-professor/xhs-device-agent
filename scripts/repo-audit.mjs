@@ -22,18 +22,17 @@ const PRIVATE_RUNTIME_PATTERNS = Object.freeze([
 
 const INTEGRATION_PATTERNS = Object.freeze([
   /^(?:xhs\.cmd|xhs\.ps1|package\.json)$/u,
-  /^scripts\/(?:xhs-agent|repo-policy-scan|Run-Feed|feed-|Run-TopicResearch|run-topic-research|research-core|research-session|adb-research-provider|composite-)/u,
-  /^config\/composite-/u,
-  /^tests\/(?:xhs-agent|xhs-entry|feed-|research-|run-topic-research|composite-)/u,
+  /^scripts\/(?:xhs-agent|repo-policy-scan|Run-Task|task-|legacy-task-converter|feed-device-runner|Run-TopicResearch|run-topic-research|research-core|research-session|adb-research-provider|composite-)/u,
+  /^config\/(?:composite-|task-spec)/u,
+  /^tests\/(?:xhs-agent|xhs-entry|task-|legacy-task-converter|feed-device-runner|research-|run-topic-research|composite-)/u,
   /^(?:AGENTS\.md|README\.md|skills\/xhs-device-operator\/SKILL\.md)$/u,
-  /^docs\/(?:ARCHITECTURE|FEED_RUNBOOK|RESEARCH_AUTOMATION|HERMES_RUN_CONTRACT|XIAOWEI_DEVICE_OPERATOR_GUIDE)\.md$/u,
+  /^docs\/(?:ARCHITECTURE|CODEBASE_AUDIT|FEED_RUNBOOK|FEED_WORKFLOW|RESEARCH_AUTOMATION|HERMES_RUN_CONTRACT|XIAOWEI_DEVICE_OPERATOR_GUIDE)\.md$/u,
 ]);
 
 const PENDING_DELETE_PATTERNS = Object.freeze([
   /^docs\/HERMES_CAPABILITY_ACCEPTANCE\.md$/u,
   /^docs\/plans\//u,
   /^docs\/trusted-runs\//u,
-  /^docs\/FEED_WORKFLOW\.md$/u,
 ]);
 
 function normalize(value) {

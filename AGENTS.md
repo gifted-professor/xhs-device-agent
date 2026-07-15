@@ -12,11 +12,12 @@
 
 ## 2. Supported operating modes
 
-The project has three distinct modes. Do not silently broaden one mode into another.
+The project has two distinct modes. Do not silently broaden one mode into another.
 
 1. `research_read_only`: deterministic public-content research with no account-state changes.
-2. `feed_read_only`: the existing V1.1 foreground batch lane; while it remains reachable it continues to reject every interaction field. Its historical device/count limits are legacy implementation details, not task-governance limits.
-3. `supervised_composite_v1`: a foreground, human-supervised, compiled action plan for an explicit finite machine list. `maxParallel` is bounded by the current tested capability profile, not by a permanent repository-wide device ceiling.
+2. `supervised_composite_v1`: a foreground, human-supervised, compiled action plan for an explicit finite machine list. `maxParallel` is bounded by the current tested capability profile, not by a permanent repository-wide device ceiling.
+
+Historical `feed run` and `feed batch` commands are compatibility converters only. They produce the same unified task specification and enter the same preparation, review, approval, coordinator, ledger, and executor path; no separate Feed executor remains.
 
 `supervised_composite_v1` is the primary customization lane. Use `xhs.cmd task run --spec <file> --dry-run` for an offline candidate, then `xhs.cmd task run --spec <file>` for fresh read-only preparation and the complete review. Execution starts only when the exact rendered hash is resubmitted with `--confirm-plan-hash`. Device count and concurrency come from the exact task and must fit the currently active human-accepted capability evidence; the repository has no permanent numeric ceiling. A registry action that lacks a current accepted device adapter remains unavailable and must fail before approval or device navigation.
 
@@ -104,7 +105,7 @@ The registry is versioned and extensible. A new high-level action may be added a
 - Never auto-discover, reassign, substitute, or fail over to another phone. A failed worker's remaining actions stay unexecuted.
 - A normal read-only navigation failure may stop only that worker while independent workers continue. An ambiguous like/favorite, sensitive page, identity drift, plan/approval mismatch, parent lease loss, budget/evidence integrity failure, forbidden action, human interrupt, or a systemic-failure quorum defined by the approved policy opens the global fuse.
 - Ctrl-C, parent termination, or a global-fuse cause must write/open the fuse first, revoke every execution slot, prevent new slot issuance, and terminate the complete worker process tree. A worker must also self-stop before its next sent operation when its ticket, execution-slot lease, or parent lease expires.
-- The existing `feed batch` V1.1 remains read-only until it is replaced by a compatibility converter. Do not use its legacy executor for state-changing actions.
+- `feed run` and `feed batch` may translate legacy parameters, but they must call the unified task path and may not own an executor, device ceiling, interaction policy, or confirmation cycle of their own.
 
 ## 7. Observation, UI, and CPA boundary
 

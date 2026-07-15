@@ -57,21 +57,20 @@ test("task locks reject concurrent reuse of one taskId", () => {
   }
 });
 
-test("feed workers lock device and task before fresh inventory and use both batch barriers", () => {
-  const source = readFileSync(path.join(root, "scripts", "Run-FeedWorkflow.ps1"), "utf8");
+test("unified task wrapper holds task and selected-device locks before the execution inventory", () => {
+  const source = readFileSync(path.join(root, "scripts", "Run-TaskWorkflow.ps1"), "utf8");
   const deviceLock = source.indexOf("Enter-DeviceLocks");
   const taskLock = source.indexOf("Enter-TaskLocks");
-  const inventory = source.indexOf("$config.AdbPath devices");
-  assert.ok(deviceLock >= 0 && taskLock > deviceLock && inventory > taskLock);
-  assert.match(source, /Write-FeedBatchReady[\s\S]*?-Stage "lock"[\s\S]*?Wait-FeedBatchBarrier[\s\S]*?-Stage "preflight"/u);
-  assert.match(source, /Write-FeedBatchReady[\s\S]*?-Stage "preflight"[\s\S]*?Wait-FeedBatchBarrier[\s\S]*?-Stage "start"/u);
+  const lockedInventoryComment = source.indexOf("Re-read selected-device presence");
+  const executionInventory = source.indexOf("$config.AdbPath devices", lockedInventoryComment);
+  assert.ok(taskLock >= 0 && deviceLock > taskLock && executionInventory > deviceLock);
 });
 
 test("all multi-step device entry scripts release shared locks in finally blocks", () => {
   for (const file of [
     "Invoke-MatrixAction.ps1",
     "Run-TopicResearch.ps1",
-    "Run-FeedWorkflow.ps1",
+    "Run-TaskWorkflow.ps1",
     "Open-ReviewCandidate.ps1",
     "Open-AccountRampCandidate.ps1",
     "Run-Pipeline.ps1",

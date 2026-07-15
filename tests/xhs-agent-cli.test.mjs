@@ -252,98 +252,52 @@ test("named XHS interaction commands are retired from the legacy matrix entry", 
   }
 });
 
-test("feed run requires one machine and routes deterministic positions", () => {
+test("feed run converts positions and any explicit machine list through the unified task wrapper", () => {
   assert.throws(
     () => buildDispatch(parseCliArgs(["feed", "run", "--task-id", "feed-001", "--count", "10"])),
-    /exactly one machine number or machine name/u,
-  );
-  assert.throws(
-    () => buildDispatch(parseCliArgs([
-      "feed", "run", "--device", "device-01", "--device", "device-02",
-      "--task-id", "feed-001", "--count", "10",
-    ])),
-    /exactly one machine number or machine name/u,
+    /exactly one machine selector mode/u,
   );
   const dispatch = buildDispatch(parseCliArgs([
     "feed", "run",
+    "--machine", "02",
     "--machine", "04",
     "--task-id", "feed-001",
     "--count", "10",
     "--like-at", "5",
     "--favorite-at", "10",
+    "--max-parallel", "2",
+    "--dry-run",
   ]));
-  assert.ok(dispatch.args.some((value) => value.endsWith("Run-FeedWorkflow.ps1")));
-  assert.deepEqual(dispatch.args.slice(-10), [
-    "-TaskId", "feed-001",
+  assert.ok(dispatch.args.some((value) => value.endsWith("Run-TaskCompatibility.ps1")));
+  assert.deepEqual(dispatch.args.slice(-15), [
+    "-Kind", "Feed", "-TaskId", "feed-001",
     "-Count", "10",
-    "-MachineNumber", "04",
+    "-MachineNumbersCsv", "02,04",
     "-LikeAt", "5",
     "-FavoriteAt", "10",
+    "-MaxParallel", "2",
+    "-DryRun",
   ]);
 
-  const customized = buildDispatch(parseCliArgs([
+  const confirmed = buildDispatch(parseCliArgs([
     "feed", "run",
     "--machine-name", "UNIQUE_VISIBLE_NAME",
     "--task-id", "feed-002",
     "--count", "10",
-    "--image-min-seconds", "2",
-    "--image-max-seconds", "4",
-    "--video-min-seconds", "8",
-    "--video-max-seconds", "15",
-    "--video-policy", "normal",
-    "--video-dwell-ms", "1250",
+    "--confirm-plan-hash", "a".repeat(64),
   ]));
-  assert.deepEqual(customized.args.slice(-12), [
-    "-ImageMinSeconds", "2",
-    "-ImageMaxSeconds", "4",
-    "-VideoMinSeconds", "8",
-    "-VideoMaxSeconds", "15",
-    "-VideoPolicy", "normal",
-    "-VideoDwellMs", "1250",
-  ]);
-});
-
-test("trusted-10 feed template supplies defaults without overriding explicit task values", () => {
-  const dispatch = buildDispatch(parseCliArgs([
-    "feed", "run",
-    "--template", "trusted-10",
-    "--machine", "04",
-    "--task-id", "feed-trusted-001",
-  ]));
-  assert.deepEqual(dispatch.args.slice(-14), [
-    "-TaskId", "feed-trusted-001",
-    "-Count", "10",
-    "-MachineNumber", "04",
-    "-LikeAt", "5",
-    "-FavoriteAt", "7",
-    "-VideoPolicy", "skip_and_count",
-    "-VideoDwellMs", "0",
-  ]);
-  const overridden = buildDispatch(parseCliArgs([
-    "feed", "run",
-    "--template", "trusted-10",
-    "--machine", "04",
-    "--task-id", "feed-trusted-002",
-    "--favorite-at", "8",
-  ]));
-  assert.equal(overridden.args[overridden.args.indexOf("-FavoriteAt") + 1], "8");
-  assert.throws(
-    () => buildDispatch(parseCliArgs([
-      "feed", "run",
-      "--template", "missing",
-      "--machine", "04",
-      "--task-id", "feed-trusted-003",
-    ])),
-    /Unknown feed template/u,
-  );
+  assert.equal(confirmed.args[confirmed.args.indexOf("-ConfirmPlanHash") + 1], "a".repeat(64));
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "feed", "run", "--machine", "02", "--task-id", "feed-003", "--count", "10", "--video-policy", "normal",
+  ])), /does not support option/u);
 });
 
 test("feed batch accepts only a strict spec and optional dry-run controls", () => {
   const dispatch = buildDispatch(parseCliArgs([
     "feed", "batch", "--spec", "data/feed-batch-001.json", "--dry-run",
   ]));
-  assert.ok(dispatch.args.some((value) => value.endsWith("Run-FeedBatch.ps1")));
-  assert.deepEqual(dispatch.args.slice(-3), ["-SpecPath", "data/feed-batch-001.json", "-DryRun"]);
+  assert.ok(dispatch.args.some((value) => value.endsWith("Run-TaskCompatibility.ps1")));
+  assert.deepEqual(dispatch.args.slice(-5), ["-Kind", "Batch", "-LegacySpecPath", "data/feed-batch-001.json", "-DryRun"]);
   assert.throws(
     () => buildDispatch(parseCliArgs([
       "feed", "batch", "--spec", "batch.json", "--machine", "04",
@@ -374,11 +328,11 @@ test("help completes without spawning a child process", () => {
   assert.equal(status, 0);
   assert.equal(spawned, false);
   assert.match(text, /统一入口/u);
-  assert.match(text, /--machine 04/u);
+  assert.match(text, /--machine 02/u);
   assert.match(text, /--machine-name/u);
   assert.doesNotMatch(text, /--device\s+device-/u);
   for (const command of ["like", "favorite", "follow", "comment", "publish", "delete"]) {
     assert.doesNotMatch(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
   }
-  assert.match(text, /具名互动命令已从旧 Matrix 入口退役/u);
+  assert.match(text, /设备动作只允许从 xhs\.cmd 进入/u);
 });

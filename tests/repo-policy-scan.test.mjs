@@ -32,16 +32,21 @@ const required = Object.freeze({
   }),
 });
 
-test("policy scan passes clean authority contracts while reporting explicit legacy debt", () => {
+test("policy scan passes a clean repository with zero legacy debt", () => {
+  const scan = scanRepositoryPolicy(runtime({ ...required, "data/.gitkeep": "" }));
+  assert.equal(scan.status, "passed");
+  assert.equal(scan.violationCount, 0);
+  assert.equal(scan.legacyDebt.length, 0);
+  assert.match(formatRepositoryPolicyScan(scan), /Explicit legacy debt: 0/u);
+});
+
+test("policy scan makes removed legacy limits and executors hard failures", () => {
   const scan = scanRepositoryPolicy(runtime({
     ...required,
-    "data/.gitkeep": "",
-    "scripts/feed-batch-core.mjs": "runs must contain one or two explicit machines",
+    "scripts/old-batch.mjs": "runs must contain one or two explicit machines",
   }));
-  assert.equal(scan.status, "pass_with_legacy_debt");
-  assert.equal(scan.violationCount, 0);
-  assert.equal(scan.legacyDebt.length, 1);
-  assert.match(formatRepositoryPolicyScan(scan), /Explicit legacy debt: 1/u);
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), ["legacy-batch-device-cap"]);
 });
 
 test("policy scan fails closed on stale limits and redacts private paths", () => {
@@ -73,4 +78,16 @@ test("policy scan rejects reintroduced per-device static interaction authorizati
   }));
   assert.equal(scan.status, "failed");
   assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), ["static-device-interaction-authorization"]);
+});
+
+test("policy scan rejects retired Feed executors and fixed templates", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale.md": "Run-FeedWorkflow.ps1 and trusted-10",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), [
+    "retired-feed-executor-reference",
+    "retired-fixed-feed-template",
+  ]);
 });

@@ -32,7 +32,7 @@ Machines = @{
 .\xhs.cmd device list
 .\xhs.cmd device screen --machine 04
 .\xhs.cmd device screen --machine-name <唯一显示名称>
-.\xhs.cmd feed run --template trusted-10 --machine 04 --task-id <新任务ID>
+.\xhs.cmd feed run --machine 04 --task-id <新任务ID> --count 11 --like-at 2 --favorite-at 7 --dry-run
 ```
 
 旧的内部绑定参数只为现有自动化兼容保留，不属于操作者接口。

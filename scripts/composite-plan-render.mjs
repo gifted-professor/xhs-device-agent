@@ -35,7 +35,7 @@ export function renderCompositePlan(plan) {
     "",
   ];
   for (const device of plan.devices) {
-    lines.push(`### Machine ${lineValue(device.machine)}${device.visibleName ? ` — ${lineValue(device.visibleName)}` : ""} — ${lineValue(device.taskId)}`, "");
+    lines.push(`### Machine ${lineValue(device.machine)}${device.visibleName ? ` — ${lineValue(device.visibleName)}` : ""} — ${lineValue(device.taskId)} — sourceCount=${lineValue(device.sourceCount ?? "legacy")}`, "");
     for (const step of device.steps) {
       const risk = ACTION_REGISTRY[step.action].risk;
       lines.push(`1. ${lineValue(step.stepId)} — ${lineValue(step.action)} — risk=${lineValue(risk)}`);

@@ -153,6 +153,30 @@ test("multi-device plans preserve selected order and user concurrency", () => {
   assert.equal(plan.limits.maxStateChangesTotal, 3);
 });
 
+test("per-machine Feed counts compile to exact finite worker lengths", () => {
+  const taskSpec = spec({
+    deviceSelection: { mode: "explicit", machines: ["02", "04", "05"] },
+    maxParallel: 3,
+    source: { type: "feed", count: 11, candidateCap: 4 },
+    sourceCountsByMachine: [
+      { machine: "02", count: 11 },
+      { machine: "04", count: 3 },
+      { machine: "05", count: 7 },
+    ],
+    taskIdsByMachine: [
+      { machine: "02", taskId: "batch-worker-a" },
+      { machine: "04", taskId: "batch-worker-b" },
+      { machine: "05", taskId: "batch-worker-c" },
+    ],
+  });
+  const plan = compile(taskSpec);
+  assert.deepEqual(plan.devices.map((entry) => [entry.machine, entry.sourceCount]), [["02", 11], ["04", 3], ["05", 7]]);
+  assert.deepEqual(plan.devices.map((entry) => entry.steps.filter((step) => step.action === "detail.inspect").length), [11, 3, 7]);
+  assert.deepEqual(plan.taskSource.countsByMachine, taskSpec.sourceCountsByMachine);
+  assert.deepEqual(plan.devices.map((entry) => entry.taskId), ["batch-worker-a", "batch-worker-b", "batch-worker-c"]);
+  assert.deepEqual(plan.visitPolicy.perDevice.map((entry) => [entry.machine, entry.targetValidVisits]), [["02", 11], ["04", 3], ["05", 7]]);
+});
+
 test("auto-idle selection is deterministic and unrelated devices do not block explicit 02", () => {
   const auto = spec({ deviceSelection: { mode: "auto_idle", count: 1 } });
   const inventory = [

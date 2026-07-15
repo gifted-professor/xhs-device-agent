@@ -141,20 +141,19 @@ test("profile navigation is semantic-only and stable waits are bounded", async (
   assert.equal([...actionSource].some((character) => character.codePointAt(0) > 127), false);
 });
 
-test("legacy Matrix interactions are retired without a static per-alias business allowlist", async () => {
+test("legacy Matrix interaction implementations and static per-alias allowlists are absent", async () => {
   const [source, configSource] = await Promise.all([
     readFile(actionScript, "utf8"),
     readFile(exampleConfig, "utf8"),
   ]);
 
   for (const action of ["Like", "Favorite", "Follow", "Comment", "Publish", "Delete"]) {
-    assert.match(source, new RegExp(`"${action}"`));
+    assert.doesNotMatch(source, new RegExp(`"${action}"`));
   }
-  assert.match(source, /\$legacyDirectInteractionActions\s*=\s*@\("Like", "Favorite", "Follow", "Comment", "Publish", "Delete"\)/);
-  assert.match(source, /retired from the legacy Matrix wrapper/);
+  assert.doesNotMatch(source, /legacyDirectInteractionActions/);
   assert.doesNotMatch(source, /Xhs\.Interactions\.AllowedActionsByAlias/);
-  assert.match(source, /function Get-XhsSemanticMatch/);
-  assert.match(source, /function Invoke-XhsApprovedTextInput/);
+  assert.doesNotMatch(source, /function Get-XhsSemanticMatch/);
+  assert.doesNotMatch(source, /function Invoke-XhsApprovedTextInput/);
   assert.doesNotMatch(configSource, /Interactions\s*=\s*@\{/);
   assert.doesNotMatch(configSource, /AllowedActionsByAlias\s*=\s*@\{/);
   assert.doesNotMatch(configSource, /AcceptedActionsByAlias\s*=\s*@\{[^}]*\b(?:like|favorite|follow|comment|publish|delete)\b/is);

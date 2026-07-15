@@ -86,7 +86,7 @@ ssh `
 
 这是当前 Windows 账号的完整 PowerShell，不是受限的设备命令网关。不要把私钥放到不受信任的设备；同时应在 Tailscale 管理后台把目标端口 `2222` 的访问范围限制到自己的控制设备或身份。
 
-## 执行小红书“基操”runbook
+## 审核统一 Feed 任务
 
 进入远程 Shell 后先核对当前机器编号、显示名称和在线状态。名称可能重复，任务选择以两位编号为准：
 
@@ -95,18 +95,21 @@ Set-Location -LiteralPath '<WINDOWS_PROJECT_ROOT>'
 .\xhs.cmd device list
 ```
 
-随后执行已经通过验收的 10 条 Feed 模板。`04` 仅在它仍是当前配置中唯一映射且在线的机器编号时使用：
+下面的命令只编译并显示候选计划，不操作手机。`04` 仅在它仍是当前配置中唯一映射的机器编号时使用：
 
 ```powershell
-$taskId = 'remote-feed-trusted-10-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$taskId = 'remote-feed-review-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 
 .\xhs.cmd feed run `
-  --template trusted-10 `
   --machine 04 `
-  --task-id $taskId
+  --task-id $taskId `
+  --count 11 `
+  --like-at 2 `
+  --favorite-at 7 `
+  --dry-run
 ```
 
-该模板保持已验收规格：浏览 10 条，第 5 条点赞，第 7 条收藏，视频按固定停留规格执行，并生成本地结果和证据目录。
+`feed run` 只是兼容参数转换器，生成的任务进入与 `task run --spec` 相同的编译、审核、精确哈希批准、锁、账本和执行链。正式执行必须使用本次候选计划显示的精确 `planHash`，不能复用旧确认值。
 
 如果 SSH 在任务执行中断线，不要立刻换一个新 task ID 重跑。先用原 task ID 检查任务目录里的 `checkpoint.json`、`summary.json` 和 `events.jsonl`，确认设备是否仍在执行或动作是否已经完成，避免重复点赞、收藏或浏览。
 
@@ -123,9 +126,12 @@ $InvokeXhs = Join-Path (Get-Location) 'scripts/Invoke-XhsOverTailscale.ps1'
   -ProjectRoot '<WINDOWS_PROJECT_ROOT>' `
   -XhsArguments @(
     'feed', 'run',
-    '--template', 'trusted-10',
     '--machine', '04',
-    '--task-id', ('remote-feed-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    '--task-id', ('remote-feed-' + (Get-Date -Format 'yyyyMMdd-HHmmss')),
+    '--count', '11',
+    '--like-at', '2',
+    '--favorite-at', '7',
+    '--dry-run'
   )
 ```
 

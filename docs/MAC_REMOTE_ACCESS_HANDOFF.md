@@ -56,18 +56,23 @@ Set-Location -LiteralPath '<WINDOWS_PROJECT_ROOT>'
 `xhs.cmd` 是设备操作的唯一入口。不要直接调用内部脚本、原始 ADB 或效卫 WebSocket。
 机器身份的显示与选择规则见 [机器编号与名称](MACHINE_IDENTITY.md)。
 
-## 运行已验收的 Feed 基操
+## 审核 Feed 兼容任务
 
-先以 `xhs.cmd device list` 的实时结果确认机器编号、显示名称和在线状态。机器名称可能重复，因此远程任务优先使用两位编号；只有 `04` 仍然唯一映射且在线时才使用下面的命令：
+先以 `xhs.cmd device list` 的实时结果确认机器编号、显示名称和在线状态。机器名称可能重复，因此远程任务优先使用两位编号。下面仅生成统一任务候选并显示计划，不操作手机：
 
 ```powershell
-$taskId = 'mac-feed-trusted-10-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
+$taskId = 'mac-feed-review-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
 
 .\xhs.cmd feed run `
-  --template trusted-10 `
   --machine 04 `
-  --task-id $taskId
+  --task-id $taskId `
+  --count 11 `
+  --like-at 2 `
+  --favorite-at 7 `
+  --dry-run
 ```
+
+正式执行必须使用候选计划显示的精确 `planHash` 再提交一次，并由当前能力档案、目标设备预检和锁共同放行。不要在远程文档中保存通用确认值。
 
 SSH 中断后不要直接用新 task ID 重跑。先检查原任务目录的 `checkpoint.json`、`summary.json` 和 `events.jsonl`，确认是否仍在执行或是否已经完成。
 

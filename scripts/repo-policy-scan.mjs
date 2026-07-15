@@ -26,7 +26,14 @@ export const STALE_RESTRICTION_RULES = Object.freeze([
   Object.freeze({ id: "static-device-interaction-authorization", pattern: /readInteractionAuthorization\s*\(|interactionAuthorization\s*:/u }),
   Object.freeze({ id: "feed-count-1-to-50", pattern: /ValidateRange\(1,\s*50\)|asBoundedInteger\(input\.count,\s*["']count["'],\s*1,\s*50\)/u }),
   Object.freeze({ id: "same-position-action-ban", pattern: /likeAt and favoriteAt must target different feed positions|LikeAt and FavoriteAt must target different feed positions/iu }),
+  Object.freeze({ id: "legacy-feed-single-device-entry", pattern: /Feed run requires exactly one machine number or machine name/iu }),
+  Object.freeze({ id: "legacy-feed-single-action-slots", pattern: /\[int\]\$LikeAt[\s\S]*\[int\]\$FavoriteAt/u }),
+  Object.freeze({ id: "legacy-batch-device-cap", pattern: /runs must contain one or two explicit machines/iu }),
+  Object.freeze({ id: "legacy-batch-read-only-executor", pattern: /Feed batch V1 is read-only and rejects interactions/iu }),
+  Object.freeze({ id: "legacy-matrix-interaction-implementation", pattern: /"Follow"\s*\{|"Comment"\s*\{|"Publish"\s*\{|"Delete"\s*\{/u }),
   Object.freeze({ id: "template-overrides-explicit-value", pattern: /Feed template .* fixes --|模板参数不允许冲突覆盖|拒绝冲突覆盖/iu }),
+  Object.freeze({ id: "retired-feed-executor-reference", pattern: /Run-FeedWorkflow\.ps1|Run-FeedBatch\.ps1|feed-batch-(?:core|control|runner)\.mjs|feed-workflow\.mjs/iu }),
+  Object.freeze({ id: "retired-fixed-feed-template", pattern: /trusted-10/iu }),
 ]);
 
 const REQUIRED_CONTRACTS = Object.freeze([
@@ -57,14 +64,6 @@ const REQUIRED_CONTRACTS = Object.freeze([
   }),
 ]);
 
-const LEGACY_DEBT_RULES = Object.freeze([
-  Object.freeze({ id: "legacy-feed-single-device-entry", file: "scripts/xhs-agent.mjs", pattern: /Feed run requires exactly one machine number or machine name/u }),
-  Object.freeze({ id: "legacy-feed-single-action-slots", file: "scripts/Run-FeedWorkflow.ps1", pattern: /\[int\]\$LikeAt[\s\S]*\[int\]\$FavoriteAt/u }),
-  Object.freeze({ id: "legacy-batch-device-cap", file: "scripts/feed-batch-core.mjs", pattern: /runs must contain one or two explicit machines/u }),
-  Object.freeze({ id: "legacy-batch-read-only-executor", file: "scripts/Run-FeedWorkflow.ps1", pattern: /Feed batch V1 is read-only and rejects interactions/u }),
-  Object.freeze({ id: "legacy-matrix-interaction-implementation", file: "scripts/Invoke-MatrixAction.ps1", pattern: /"Follow"\s*\{|"Comment"\s*\{|"Publish"\s*\{|"Delete"\s*\{/u }),
-]);
-
 function normalize(value) {
   return String(value).replaceAll("\\", "/");
 }
@@ -85,7 +84,11 @@ function readTrackedSources(runtime, trackedFiles) {
   const values = new Map();
   for (const file of trackedFiles) {
     if (isPrivatePath(file) || !SOURCE_EXTENSIONS.test(file)) continue;
-    values.set(file, runtime.readFileSync(path.join(runtime.projectRoot, file), "utf8"));
+    try {
+      values.set(file, runtime.readFileSync(path.join(runtime.projectRoot, file), "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
   }
   return values;
 }
@@ -134,15 +137,11 @@ export function scanRepositoryPolicy(runtime = {}) {
     if (!source || !contract.pattern.test(source)) missingContracts.push(Object.freeze({ ruleId: contract.id, file: contract.file }));
   }
   const legacyDebt = [];
-  for (const debt of LEGACY_DEBT_RULES) {
-    const source = sources.get(debt.file);
-    if (source && debt.pattern.test(source)) legacyDebt.push(Object.freeze({ ruleId: debt.id, file: debt.file }));
-  }
   const remotePrivate = listRemotePrivateObjects(effective);
   const violationCount = trackedPrivateCount + remotePrivate.count + staleRestrictions.length + missingContracts.length;
   return Object.freeze({
     schemaVersion: "xhs-repository-policy-scan/v1",
-    status: violationCount === 0 ? (legacyDebt.length ? "pass_with_legacy_debt" : "passed") : "failed",
+    status: violationCount === 0 ? "passed" : "failed",
     trackedFileCount: trackedFiles.length,
     trackedPrivateRuntimeCount: trackedPrivateCount,
     remoteHistoryScanAvailable: remotePrivate.available,

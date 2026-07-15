@@ -73,16 +73,11 @@ if (!(Test-Path -LiteralPath $SpecPath -PathType Leaf)) { throw "Task spec not f
 if (!(Test-Path -LiteralPath $ConfigPath -PathType Leaf)) { throw "Local config not found" }
 $spec = Get-Content -LiteralPath $SpecPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($spec.schemaVersion -cne "xhs-task-spec/v1") { throw "Task spec schemaVersion is invalid" }
-if ([string]$spec.taskId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,69}$') { throw "TaskId is invalid" }
+if ([string]$spec.taskId -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$') { throw "TaskId is invalid" }
 if ($spec.deviceSelection.mode -notin @("explicit", "auto_idle")) { throw "Task device selection mode is invalid" }
 $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
 if (!$config.AdbPath -or !(Test-Path -LiteralPath $config.AdbPath -PathType Leaf)) { throw "Configured AdbPath does not exist" }
 $machineDirectory = @(Get-MachineDirectory -Config $config)
-$onlineSerials = @(
-    & $config.AdbPath devices 2>$null | Select-Object -Skip 1 | ForEach-Object {
-        if ($_ -match '^([^\s]+)\s+device$') { $matches[1] }
-    }
-)
 
 $locks = @()
 $runtimePath = $null
@@ -98,6 +93,11 @@ try {
         }
         $locks += @(Enter-DeviceLocks -ProjectRoot $projectRoot -DeviceAliases @($selected.DeviceAlias))
     } else {
+        $onlineSerials = @(
+            & $config.AdbPath devices 2>$null | Select-Object -Skip 1 | ForEach-Object {
+                if ($_ -match '^([^\s]+)\s+device$') { $matches[1] }
+            }
+        )
         $requiredCount = [int]$spec.deviceSelection.count
         if ($requiredCount -lt 1 -or $requiredCount -gt 64) { throw "Auto-idle device count is invalid" }
         $candidates = @($machineDirectory | Sort-Object @{ Expression = {
@@ -119,6 +119,14 @@ try {
         }
         if ($selected.Count -ne $requiredCount) { throw "Not enough online, unlocked, idle machines are available" }
     }
+
+    # Re-read selected-device presence only after the exact task and device locks
+    # are held. The earlier auto-idle inventory is selection evidence only.
+    $onlineSerials = @(
+        & $config.AdbPath devices 2>$null | Select-Object -Skip 1 | ForEach-Object {
+            if ($_ -match '^([^\s]+)\s+device$') { $matches[1] }
+        }
+    )
 
     $runtimeDevices = @()
     $rank = 0

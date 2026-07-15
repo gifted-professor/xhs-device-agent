@@ -1,10 +1,8 @@
 import test from "node:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 import {
   AdbFeedAdapter,
@@ -22,7 +20,6 @@ import {
   transientOverlayKind,
   visibleFeedCards,
 } from "../scripts/feed-device-runner.mjs";
-import { initializeBatchControl } from "../scripts/feed-batch-control.mjs";
 import { parseUiAutomatorXml } from "../scripts/xhs-page-engine.mjs";
 
 function documentOf(body) {
@@ -264,52 +261,6 @@ test("foreground verification ignores stale non-focused XHS windows", () => {
   assert.equal(isPackageFocused(xhsFocused), true);
   assert.equal(isPackageFocused(activityFocused), true);
   assert.equal(isPackageFocused("mCurrentFocus=null\nmFocusedApp=null"), false);
-});
-
-test("batch workers reject every sent device command when the parent lease is absent", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "xhs-feed-batch-gate-"));
-  try {
-    const adapter = new AdbFeedAdapter({
-      adbPath: "this-command-must-never-run",
-      serial: "redacted",
-      deviceAlias: "device-01",
-      rules: {},
-      runDir: root,
-      batchControl: { paths: initializeBatchControl(root, "attempt-001"), attemptId: "attempt-001" },
-    });
-    assert.throws(
-      () => adapter.adb(["shell", "input", "tap", "1", "1"], { sent: true }),
-      (error) => error.code === "BATCH_PARENT_LOST",
-    );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("direct batch worker invocation rejects interactions before any device command", () => {
-  const root = mkdtempSync(path.join(tmpdir(), "xhs-feed-batch-read-only-"));
-  try {
-    const runner = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "feed-device-runner.mjs");
-    const result = spawnSync(process.execPath, [
-      runner,
-      "--adb-path", path.join(root, "must-not-run-adb"),
-      "--serial", "redacted",
-      "--device-alias", "device-01",
-      "--task-id", "batch-read-only-001",
-      "--count", "2",
-      "--like-at", "1",
-      "--video-policy", "skip_and_count",
-      "--video-dwell-ms", "0",
-      "--output-root", path.join(root, "feed"),
-      "--batch-root", path.join(root, "batch"),
-      "--batch-attempt-id", "attempt-001",
-    ], { encoding: "utf8" });
-    assert.equal(result.status, 2);
-    assert.match(result.stderr, /read-only and rejects interactions/u);
-    assert.equal(existsSync(path.join(root, "feed")), false);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
 });
 
 test("foreground probing uses the full window dump supported by the current ROM", () => {

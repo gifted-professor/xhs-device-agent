@@ -78,9 +78,10 @@ function planningCapability(task, machines) {
 }
 
 function dryRunPreparation(task, machines, profileHash) {
+  const taskIdsByMachine = new Map((task.taskIdsByMachine ?? []).map((entry) => [entry.machine, entry.taskId]));
   const devices = machines.map((machine) => ({
     machine,
-    taskId: `${task.taskId}-${machine}`,
+    taskId: taskIdsByMachine.get(machine) ?? `${task.taskId}-${machine}`,
     visibleName: `DRY-RUN-${machine}`,
     identityHash: sha256({ machine, scope: "dry_run_only" }),
     appVersion: "dry-run",

@@ -1,70 +1,29 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import {
-  appendFile,
-  mkdir,
-  readFile,
-  rename,
-  writeFile,
-} from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   classifyPage,
   createNormalizedFingerprint,
-  loadRules,
   normalizeDynamicText,
   parseUiAutomatorXml,
 } from "./xhs-page-engine.mjs";
-import {
-  FeedWorkflowError,
-  normalizeFeedSpec,
-  runFeedWorkflow,
-} from "./feed-workflow.mjs";
-import {
-  assertBatchControlActiveSync,
-  batchControlPaths,
-  tripBatchFuse,
-} from "./feed-batch-control.mjs";
-import { classifyFeedBatchFailure } from "./feed-batch-core.mjs";
 
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
-const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const XHS_PACKAGE = "com.xingin.xhs";
 const DETAIL_STATES = new Set(["IMAGE_NOTE", "VIDEO_NOTE"]);
 const STARTUP_BACK_ATTEMPTS = 4;
 const STARTUP_LAUNCH_ATTEMPTS = 2;
 const DETAIL_TRANSITION_ATTEMPTS = 5;
-const SAFE_ALIAS = /^[A-Za-z0-9._-]{1,64}$/u;
 const CHROME_TEXT = new Set(["首页", "发现", "关注", "消息", "我", "搜索", "推荐", "购物", "发布", "直播"]);
 
-class FeedDeviceError extends FeedWorkflowError {
+class FeedDeviceError extends Error {
   constructor(code, message, details = {}) {
-    super(code, message, details);
+    super(message);
     this.name = "FeedDeviceError";
+    this.code = code;
+    Object.assign(this, details);
   }
 }
-
-function parseCli(argv) {
-  const options = Object.create(null);
-  for (let index = 0; index < argv.length; index += 2) {
-    const name = String(argv[index] ?? "");
-    const value = argv[index + 1];
-    if (!name.startsWith("--") || value === undefined) throw new Error("Feed runner requires named option/value pairs");
-    const key = name.slice(2);
-    if (Object.hasOwn(options, key)) throw new Error("--" + key + " may be provided only once");
-    options[key] = String(value);
-  }
-  return options;
-}
-
-function requireOption(options, name) {
-  const value = String(options[name] ?? "").trim();
-  if (!value) throw new Error("--" + name + " is required");
-  return value;
-}
-
 function parseBounds(value) {
   const match = /^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$/u.exec(String(value ?? ""));
   if (!match) return null;
@@ -463,7 +422,7 @@ export function probePackageFocus(runAdb, packageName = XHS_PACKAGE) {
 }
 
 export class AdbFeedAdapter {
-  constructor({ adbPath, serial, deviceAlias, rules, runDir, batchControl = null, sendGate = () => {} }) {
+  constructor({ adbPath, serial, deviceAlias, rules, runDir, sendGate = () => {} }) {
     this.adbPath = adbPath;
     this.serial = serial;
     this.deviceAlias = deviceAlias;
@@ -472,7 +431,6 @@ export class AdbFeedAdapter {
     this.captureSequence = 0;
     this.context = { deviceAlias, xhsVersion: "", androidSdk: "", resolution: "", dpi: "" };
     this.currentDetailSnapshot = null;
-    this.batchControl = batchControl;
     if (typeof sendGate !== "function") throw new Error("sendGate must be a function");
     this.sendGate = sendGate;
   }
@@ -482,7 +440,6 @@ export class AdbFeedAdapter {
   }
 
   adb(args, { binary = false, sent = false, timeout = 30000, allowFailureWithOutput = false } = {}) {
-    if (sent) this.assertBatchActive();
     this.sendGate({ sent });
     const result = spawnSync(this.adbPath, ["-s", this.serial, ...args], {
       encoding: binary ? null : "utf8",
@@ -496,14 +453,6 @@ export class AdbFeedAdapter {
       throw new FeedDeviceError("ADB_COMMAND_FAILED", this.sanitize(detail).trim(), { sent });
     }
     return result.stdout;
-  }
-
-  assertBatchActive() {
-    if (!this.batchControl) return;
-    assertBatchControlActiveSync(this.batchControl.paths, {
-      attemptId: this.batchControl.attemptId,
-      requireStart: true,
-    });
   }
 
   async initializeContext() {
@@ -957,7 +906,6 @@ export class AdbFeedAdapter {
     while (performance.now() < deadline) {
       const remaining = deadline - performance.now();
       await new Promise((resolve) => setTimeout(resolve, Math.min(1000, Math.max(1, remaining))));
-      this.assertBatchActive();
       const focus = probePackageFocus((args) => this.adb(args));
       if (!focus.focused) {
         throw new FeedDeviceError("APP_LEFT_FOREGROUND", "XHS left the foreground during the dwell interval");
@@ -1037,125 +985,4 @@ export class AdbFeedAdapter {
       },
     };
   }
-}
-
-async function writeJsonAtomic(filePath, value) {
-  const temporary = filePath + "." + process.pid + ".tmp";
-  await writeFile(temporary, JSON.stringify(value, null, 2) + "\n", "utf8");
-  await rename(temporary, filePath);
-}
-
-async function runCli(argv) {
-  const options = parseCli(argv);
-  const deviceAlias = requireOption(options, "device-alias");
-  if (!SAFE_ALIAS.test(deviceAlias)) throw new Error("device-alias is invalid");
-  const spec = normalizeFeedSpec({
-    taskId: requireOption(options, "task-id"),
-    count: requireOption(options, "count"),
-    likeAt: options["like-at"],
-    favoriteAt: options["favorite-at"],
-    imageMinSeconds: options["image-min-seconds"],
-    imageMaxSeconds: options["image-max-seconds"],
-    videoMinSeconds: options["video-min-seconds"],
-    videoMaxSeconds: options["video-max-seconds"],
-    videoPolicy: options["video-policy"],
-    videoDwellMs: options["video-dwell-ms"],
-  });
-  const adbPath = path.resolve(requireOption(options, "adb-path"));
-  const serial = requireOption(options, "serial");
-  const outputRoot = path.resolve(options["output-root"] || path.join(PROJECT_ROOT, "data", "feed"));
-  const rulesPath = path.resolve(options.rules || path.join(PROJECT_ROOT, "config", "xhs-page-rules.json"));
-  const batchRootOption = options["batch-root"];
-  const batchAttemptId = options["batch-attempt-id"];
-  if (Boolean(batchRootOption) !== Boolean(batchAttemptId)) {
-    throw new Error("--batch-root and --batch-attempt-id must be supplied together");
-  }
-  const batchControl = batchRootOption
-    ? { paths: batchControlPaths(path.resolve(batchRootOption), batchAttemptId), attemptId: batchAttemptId }
-    : null;
-  if (batchControl && (spec.likeAt || spec.favoriteAt)) {
-    throw new Error("Feed batch V1 is read-only and rejects interactions");
-  }
-  if (batchControl && (spec.count > 10 || spec.videoPolicy !== "skip_and_count" || spec.videoDwellMs !== 0)) {
-    throw new Error("Feed batch V1 requires count<=10 and zero-dwell video skip policy");
-  }
-  const runDir = path.resolve(outputRoot, spec.taskId);
-  if (path.dirname(runDir) !== outputRoot) throw new Error("task-id escaped the feed output root");
-  await mkdir(path.join(runDir, "evidence"), { recursive: true });
-
-  const checkpointPath = path.join(runDir, "checkpoint.json");
-  const summaryPath = path.join(runDir, "summary.json");
-  const eventsPath = path.join(runDir, "events.jsonl");
-  const checkpoint = existsSync(checkpointPath)
-    ? JSON.parse(await readFile(checkpointPath, "utf8"))
-    : null;
-  const rules = await loadRules(rulesPath);
-  const adapter = new AdbFeedAdapter({ adbPath, serial, deviceAlias, rules, runDir, batchControl });
-  let eventSequence = 0;
-  const emit = async (event) => {
-    await appendFile(eventsPath, JSON.stringify({ seq: ++eventSequence, at: new Date().toISOString(), ...event }) + "\n", "utf8");
-  };
-
-  try {
-    const summary = await runFeedWorkflow({
-      spec,
-      deviceAlias,
-      adapter,
-      checkpoint,
-      saveCheckpoint: (value) => writeJsonAtomic(checkpointPath, value),
-      emit,
-    });
-    await writeJsonAtomic(summaryPath, summary);
-    process.stdout.write(JSON.stringify({
-      taskId: summary.taskId,
-      status: summary.status,
-      duplicate: summary.duplicate,
-      viewedCount: summary.viewedCount,
-      skippedCount: summary.skippedCount,
-      summaryPath,
-      checkpointPath,
-      eventsPath,
-    }, null, 2) + "\n");
-  } catch (error) {
-    if (batchControl) {
-      const code = String(error?.code ?? "FEED_WORKER_FAILED").toUpperCase();
-      const category = classifyFeedBatchFailure(code);
-      if (category === "global_safety" || category === "batch_integrity") {
-        tripBatchFuse(batchControl.paths, {
-          attemptId: batchAttemptId,
-          category,
-          code,
-          taskId: spec.taskId,
-        });
-      }
-    }
-    const failureScreenshot = await adapter.captureFailure();
-    const persisted = existsSync(checkpointPath)
-      ? JSON.parse(await readFile(checkpointPath, "utf8"))
-      : null;
-    const failure = {
-      schemaVersion: 1,
-      taskId: spec.taskId,
-      deviceAlias,
-      status: persisted?.status ?? "failed",
-      viewedCount: persisted?.items?.length ?? 0,
-      skippedCount: persisted?.skipped?.length ?? 0,
-      failureSignature: persisted?.failureSignature ?? "feed:startup",
-      message: adapter.sanitize(error?.message ?? error),
-      failureScreenshot,
-      checkpointPath,
-      eventsPath,
-    };
-    await writeJsonAtomic(summaryPath, failure);
-    process.stderr.write(JSON.stringify(failure, null, 2) + "\n");
-    process.exitCode = 2;
-  }
-}
-
-const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) {
-  runCli(process.argv.slice(2)).catch((error) => {
-    process.stderr.write(JSON.stringify({ status: "failed", message: String(error?.message ?? error) }) + "\n");
-    process.exitCode = 2;
-  });
 }

@@ -25,15 +25,14 @@ Do not infer that a planned command exists. Before using `supervised_composite_v
 
 ## Mode routing
 
-Choose exactly one of three formal modes and preserve its boundary:
+Choose exactly one of two formal modes and preserve its boundary:
 
 - `research_read_only`: public-content research only. Continue to require `interactionPolicy=human_final` and reject state-changing fields.
-- `feed_read_only`: existing V1.1 foreground batch. It remains strictly read-only while reachable; its historical device/count limits are legacy implementation details, not governance rules.
 - `supervised_composite_v1`: the primary customization lane. It accepts an explicit finite machine list or deterministic idle-machine selection and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested, human-accepted capability evidence; the repository has no permanent numeric ceiling.
 
-`trusted-10` is a deprecated compatibility template, not a fourth formal mode. New work uses `task run`. Until the compatibility conversion is deleted, its defaults cannot override explicit task values and it must never be used to evade a unified-task capability rejection.
+Historical `feed run` and `feed batch` commands are converters, not formal modes. They translate legacy fields into a unified task and enter the same preparation, review, exact-hash approval, coordinator, ledger, and executor. Fixed Feed templates and separate legacy Feed executors are removed.
 
-Never use `feed_read_only` to execute interactions. Never silently translate an unsupported composite request into generic taps, raw swipes, or the legacy template.
+Never silently translate an unsupported composite request into generic taps, raw swipes, or a removed legacy executor.
 
 ## Supervised composite plan lifecycle
 
@@ -182,19 +181,15 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
 
 Continue to run the strict research task contract and `Run-TopicResearch` path only through `xhs.cmd`. Keep AI event-driven, privacy-gated, and bounded. Comments are public observation only; no interaction controls enter the research target set.
 
-### `feed_read_only` V1.1
+### Feed compatibility converters
 
-Run `xhs.cmd feed batch --spec <path> --dry-run` before the foreground execution. The legacy spec names exact machine numbers and unique task IDs. Preserve its readiness barriers, current parent lease, locks, global fuse, committed-item accounting, and interaction-field rejection until this command becomes a unified-task compatibility converter.
+Run `xhs.cmd feed run ... --dry-run` or `xhs.cmd feed batch --spec <path> --dry-run` to inspect the exact converted task. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs, and requested concurrency are preserved in the compiled plan and checked only against the active capability.
 
-This lane remains read-only even after composite execution is implemented.
-
-### Legacy single-machine `trusted-10`
-
-Do not select `trusted-10` for new work. While the compatibility command remains reachable, treat its count and positions as defaults only, preserve its existing checkpoint protections, and never use it after a unified task is rejected. Its removal is gated on compatibility-converter and no-device acceptance completion.
+Never invoke a removed Feed script or reinterpret a compatibility failure through a different executor.
 
 ## Human-final and mandatory stops
 
-Automated engagement is limited to ensure-like and ensure-favorite inside an approved composite plan or the current legacy trusted-10 template.
+Automated engagement is limited to ensure-like and ensure-favorite inside an approved composite plan.
 
 Sending comments/replies, private messages, shares, follows, profile/account/privacy/security changes, publishing, editing or deleting public content, login/recovery/identity verification, granting system permissions, and payments remain human-final or prohibited. They do not exist in the composite action registry.
 

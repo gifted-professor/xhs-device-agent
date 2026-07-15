@@ -95,8 +95,9 @@ export async function prepareLiveTask({
   const resolvedMachines = resolveTaskMachines(spec, runtimeContext.devices);
   const machines = spec.deviceSelection.mode === "explicit" ? [...spec.deviceSelection.machines] : resolvedMachines;
   invariant(spec.capabilityProfileId === activeCapability?.profile?.capabilityProfileId, "task capability profile is not the active human-accepted profile");
+  const taskIdsByMachine = new Map((spec.taskIdsByMachine ?? []).map((entry) => [entry.machine, entry.taskId]));
   const request = {
-    devices: machines.map((machine) => ({ machine, taskId: `${spec.taskId}-${machine}` })),
+    devices: machines.map((machine) => ({ machine, taskId: taskIdsByMachine.get(machine) ?? `${spec.taskId}-${machine}` })),
   };
   const provider = {
     async listDevices() {
