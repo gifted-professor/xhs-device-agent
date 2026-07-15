@@ -64,7 +64,7 @@ draft
 状态说明：
 
 - `draft`：账号尚未完成本地建档。
-- `device_ready`：设备别名、分组、版本和只读能力已通过预检。
+- `device_ready`：设备别名、分组、版本和只读能力已通过预检，并且该设备已独立通过 Hermes 只读能力验收。
 - `profile_ready`：人工确认账号归属、登录状态和基础资料，无自动化资料修改。
 - `topic_learning`：按垂直主题执行只读研究，建立主题词和候选内容缓存。
 - `content_preparation`：AI 与人工根据研究结果准备原创选题和素材清单。
@@ -83,7 +83,7 @@ draft
 - 不使用 Root、解锁或经过不明修改的设备执行正式任务。
 - 每台设备独立标定小红书版本、分辨率、DPI 和页面覆盖规则；不共享主控坐标。
 - 设备别名和账号别名只保存在被 Git 忽略的本地配置或 `data/` 中。
-- 一台设备连续两次导航失败后立即隔离，不把任务扩散到其他设备。
+- 正式研究工作单元中，一台设备连续两次设备失败后立即隔离，不把任务扩散到其他设备；主题发现阶段单独记录失败。
 
 “8+128G”可以作为采购和维护参考，但不是本流程的技术硬门槛；实际门槛是预检、页面稳定检测和监督式验收能否通过。
 
@@ -96,7 +96,7 @@ draft
 
 ### 6.3 本地账号档案
 
-建议在被忽略的 `data/accounts/<accountAlias>/profile.json` 中保存以下状态；这是后续扩展建议，当前研究任务 Schema 不直接读取该文件：
+在被忽略的 `data/accounts/<accountAlias>/profile.json` 中保存以下状态。`.\xhs.cmd ramp run` 会读取并严格校验该档案，再生成普通只读研究任务：
 
 ```json
 {
@@ -104,14 +104,17 @@ draft
   "accountAlias": "account-01",
   "deviceAlias": "device-01",
   "deviceGroup": "account-01-research",
-  "phase": "draft",
+  "phase": "topic_learning",
   "primaryTopic": "夏季通勤穿搭",
   "topicPool": ["夏季通勤穿搭", "通勤鞋", "办公室穿搭"],
   "automationPolicy": "research_read_only",
   "interactionPolicy": "human_final",
   "paused": false,
-  "lastTaskId": null,
-  "lastHumanReviewAt": null
+  "phaseApproval": {
+    "phase": "topic_learning",
+    "approved": true,
+    "approvedAt": "2026-07-14T00:00:00+08:00"
+  }
 }
 ```
 
@@ -120,6 +123,8 @@ draft
 ## 7. 分阶段流程
 
 日期只是运营观察窗口，不是风控技巧；是否进入下一阶段取决于验收结果和人工批准。
+
+首次正式投递前，先按 [Hermes 小红书只读能力验收流程](HERMES_CAPABILITY_ACCEPTANCE.md) 在一台人工批准的设备上完成最小预算验收。验收覆盖所有允许的只读动作；点赞、收藏、关注、评论发送、私信和发布只验证安全门会拒绝，不实际操作。
 
 ### 阶段 A：第 1 天，建档与人工初始化
 
@@ -147,6 +152,7 @@ draft
 - 候选笔记：最多 5 条。
 - 结果滚动：每个查询最多 2 次。
 - 评论模式：`none`。
+- 前 3 天不采集评论元数据，以降低页面转场和操作复杂度，先验证主题搜索链路本身稳定。
 - AI：主题有缓存时 0 次；无缓存时主题策划最多 1 次。
 
 自动化产物：真实搜索建议、候选标题、公开作者、媒体类型、主题词缓存和设备事件日志。
@@ -207,6 +213,16 @@ Hermes 到达计划窗口
   -> 结束，不执行互动或发布
 ```
 
+Hermes 的唯一账号级入口是：
+
+```powershell
+.\xhs.cmd ramp run `
+  --profile data/accounts/<accountAlias>/profile.json `
+  --sequence 1
+```
+
+完整调用和阻断规则见 [Hermes 账号冷启动研究执行手册](HERMES_ACCOUNT_RAMP.md)。
+
 调度规则：
 
 - 使用明确的运营窗口和研究预算，不使用随机停留或随机互动。
@@ -215,6 +231,7 @@ Hermes 到达计划窗口
 - 多设备之间可以并行研究，但每台设备内部严格串行。
 - 账号处于 `human_required`、`paused` 或 `retired` 时不得继续投递。
 - Hermes 不直接接收真实账号、手机号或设备序列号。
+- 每日任务 ID 使用 `ramp-<accountAlias>-YYYYMMDD-NN`；`accountAlias` 只使用本地不透明别名，`NN` 为当日从 `01` 开始的两位序号。
 
 ## 9. 研究任务模板
 
@@ -279,8 +296,8 @@ Hermes 到达计划窗口
 
 ## 12. 失败与熔断
 
-- 单台设备连续两次转场失败：隔离该设备并保留本地截图和 UI 层级路径。
-- 两台设备出现相同失败签名：全局熔断，停止向其他设备扩散。
+- 正式研究工作单元中，单台设备连续两次设备失败：隔离该设备，并保留实际生成的本地截图和 UI 层级路径。
+- 正式研究工作单元中，两台设备出现相同失败签名：全局熔断，停止向其他设备扩散；主题发现不继承该计数。
 - 登录、验证码、风险提示、支付、私信、联系人或权限挑战：立即停止全部相关动作。
 - 设备离线：未开始的工作单元最多重新分配一次；账号级单机任务直接转人工或暂停。
 - 来源入口不存在：只跳过该来源，不判定账号或设备失败。
@@ -314,14 +331,19 @@ Hermes 到达计划窗口
 
 - 任务与结果协议：`config/research-task.schema.json`、`config/research-result.schema.json`
 - 任务示例：`config/research-task.example.json`
-- 正式入口：`scripts/Run-TopicResearch.ps1`
+- Hermes 上线前验收：`docs/HERMES_CAPABILITY_ACCEPTANCE.md`、`config/hermes-capability-acceptance.example.json`
+- 唯一操作者入口：`xhs.cmd`
+- 主题研究命令：`.\xhs.cmd research run`
+- 账号级研究命令：`.\xhs.cmd ramp run`
+- 账号档案协议：`config/account-ramp-profile.schema.json`
+- Hermes 账号执行手册：`docs/HERMES_ACCOUNT_RAMP.md`
 - 研究会话：`scripts/research-session.mjs`
-- 单机人工交接：`scripts/Open-ReviewCandidate.ps1`
+- 单机人工交接：`.\xhs.cmd handoff review`
 - 设备与动作安全：`docs/SAFETY.md`
 - 只读研究说明：`docs/RESEARCH_AUTOMATION.md`
 - 效卫接入说明：`docs/XIAOWEI_MATRIX.md`
 
-当前代码已经具备只读研究、AI 预算、幂等、断点恢复、熔断和人工审核队列。本文件新增的是账号阶段、单账号调度和人工升级规则；账号档案读取、阶段调度器和阶段报表仍属于后续实现范围。
+当前代码已经具备只读研究、AI 预算、幂等、断点恢复、熔断、人工审核队列，以及账号档案读取、阶段预算生成、账号级执行入口和运行状态报表。阶段升级仍只由人工修改档案并重新批准，脚本不会自动升级阶段。
 
 ## 16. 实际效果实验设计
 
@@ -343,7 +365,7 @@ Hermes 到达计划窗口
 
 ### 16.2 三设备七天对照实验
 
-完成稳定别名和账号映射后，把三台设备分成三个固定组。每组只有一台设备和一个账号，不在实验中交换设备。
+完成稳定别名和账号映射后，把三台设备分成三个固定组。每组只有一台设备和一个账号，不在实验中交换设备。三台设备必须分别独立通过 Hermes 只读能力验收，不能以其中一台的结果代替其他设备。
 
 | 组别 | 每日自动部分 | 人工部分 | 评论 |
 | --- | --- | --- | --- |
@@ -354,6 +376,7 @@ Hermes 到达计划窗口
 实验约束：
 
 - 所有组使用同一个目标主题、相同的查询预算和相同观察时间。
+- 实验前优先把三台设备统一到同一已验证的小红书版本；如果客观上无法统一，必须把 App 版本记录为混杂变量，报告按版本分层，不直接把跨版本差异归因于实验条件。
 - 点赞或收藏前必须完整进入候选详情、核对笔记身份，并由人工判断内容确实值得该动作。
 - 不使用随机时间、批量点击、相同内容复制评论或跨设备同步互动。
 - 每天只运行一个实验窗口；同一候选不得跨天或跨组重复计入。
@@ -418,3 +441,4 @@ Hermes 到达计划窗口
 2. 分别为 9.36.2、9.35.1 和 9.26.1 验证“我”页面规则与稳定等待条件。
 3. 重新采集 D0，确认三台设备都能读取关注、粉丝、获赞与收藏等公开主页指标。
 4. D0 成功后才开始七天对照实验；此前不把任何互动记录解释为效果。
+5. 实验前优先统一三台设备的 App 版本；无法统一时在 D0、D7 和效果报告中保留版本字段，并按版本分层判读。

@@ -55,14 +55,13 @@ Hermes 只负责定时投递 JSON 文件。任务应以 [research-task.schema.js
 2. 配置有效 ADB 路径、所有目标手机的真实序列号到别名映射，以及任务使用的 `deviceGroup`。
 3. 中文自动输入需要同时启用 `TextInput.UnicodeIme.Enabled` 和 `HumanApproved`，并把已标定别名加入 `ApprovedAliases`；否则保持关闭。
 4. 确认没有把真实标识写入模板或 Git。
-5. 运行 `Matrix-Preflight.ps1 -ProbeApi`。
+5. 运行 `.\xhs.cmd doctor`。
 6. API 不可用时保持 ADB 为执行通道；不要绕过效卫会员限制。
 
 正式设备映射未完成时，只运行干跑：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearch.ps1 `
-  -TaskPath config/research-task.example.json -DryRun
+.\xhs.cmd research run --task config/research-task.example.json --dry-run
 ```
 
 正式运行使用同一任务入口；执行器必须先验证任务中的分组已映射且设备健康。
@@ -74,7 +73,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearc
 3. 使用主题进入搜索框，先采集真实搜索建议。
 4. 只读采集当前热词，合并种子词、建议词、热词和 30 天主题缓存；配置允许时调用一次主题规划 Agent。
 5. 将 `(来源, 关键词)` 按稳定哈希分配到设备。
-6. 最多三台设备并行；单台设备中的工作单元严格串行。
+6. 最多四台设备并行；单台设备中的工作单元严格串行。
 7. 按来源采集搜索、建议、热搜和推荐；入口不存在时只跳过该来源。
 8. 对搜索/推荐工作单元的首个可解析候选做保守详情抽样，区分图文和视频；视频页不通过主画面滑动切换下一条。
 9. 按评论模式和预算，从该详情只读采集公开评论计数或少量脱敏片段。
@@ -87,8 +86,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearc
 普通 ADB 文本输入只用于 ASCII。中文关键词按以下顺序处理：
 
 1. 已完成逐机验收的效卫文本 API；
-2. 经人工批准并按设备别名标定的 Unicode 输入法；
-3. 效卫桌面人工粘贴。
+2. 经人工批准并按设备别名标定的原生中文输入法；
+3. 经人工批准并按设备别名标定的 Unicode 输入法；
+4. 效卫桌面人工粘贴。
 
 输入能力按设备别名独立探测：某台手机需要人工输入时，会继续探测下一台健康设备；只短路该别名上的搜索/建议工作单元，不把整组标记成故障。输入后必须从新的 UI 层级读取搜索框，确认回显与原关键词完全一致。未配置、输入失败或回显不一致时返回 `human_required`；不会提交乱码，也不会尝试其他未知输入法。
 
@@ -136,8 +136,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearc
 
 熔断规则：
 
-- 单台手机连续两次转场失败：隔离该设备；
-- 两台手机出现相同失败签名：全局熔断；
+- 正式工作单元中，单台手机连续两次设备失败：隔离该设备；中性跳过不清零计数；
+- 正式工作单元中，两台手机出现相同失败签名：全局熔断；前置主题发现单独记录失败，不继承这组计数；
 - 登录、验证码、风险、支付、私信或权限挑战：立即停止；
 - 设备离线：未开始工作最多重分配一次；
 - 来源入口不存在：仅跳过来源。
@@ -149,11 +149,14 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearc
 飞书仍是审核镜像，本地 `human-review.jsonl` 是真相源。每次同步会分页拉取全部飞书审核行，再按 `reviewId` 回读 `Review status` 后执行写入；若分页结果不能证明完整，整次同步会在上传前安全停止。旧表中没有 `Review ID` 时，仅在 `candidateKey` 唯一且无歧义时兼容匹配。飞书已由人工改成非待审核状态、而本地仍为待审核时，该状态会先原子回写本地，因此重跑不会把人工决定覆盖成 `pending_review`。若本地与飞书存在两个不同的非待审核状态，同步会安全停止并要求人工解决冲突。所有审核行都携带 `taskId` 和主题。
 
 ```powershell
-node scripts/sync-research-review.mjs `
+$env:LARK_RESEARCH_BASE_TOKEN = "已批准的 Base Token"
+$env:LARK_RESEARCH_TABLE_ID = "已批准的 Table ID"
+.\xhs.cmd research sync-review `
   --review data/research/<taskId>/human-review.jsonl `
-  --base-token $env:LARK_RESEARCH_BASE_TOKEN `
-  --table-id $env:LARK_RESEARCH_TABLE_ID
+  --confirm-external-sync
 ```
+
+同步边界只接受该精确研究产物路径，并在外部请求前核对任务目录、闭合字段、本地批准别名和敏感值。不同任务使用隔离临时负载；同一审核队列不能并发同步。
 
 审核行按 `reviewId` 更新，`candidateKey` 仅用于关联候选和兼容旧表。镜像字段只包含审核 ID、候选键、主题、来源、关键词、标题、公开作者、媒体类型、AI 理由、审核状态、设备别名和采集时间。
 
@@ -171,10 +174,10 @@ node scripts/sync-research-review.mjs `
 完成第 3 步的单机确认后，使用：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandidate.ps1 `
-  -TaskPath data/my-research-task.json `
-  -CandidateId <candidateId> -DeviceAlias device-01 `
-  -ConfirmSingleDeviceAndSyncOff
+.\xhs.cmd handoff review `
+  --task data/my-research-task.json `
+  --candidate <candidateId> --device device-01 `
+  --confirm-single-device-and-sync-off
 ```
 
 交接只能使用本地 `candidates.jsonl` 中的候选。脚本会按精确笔记 ID 或标题寻找唯一卡片，并在详情页再次验证身份后返回 `pausedForHuman=true`；缺失、歧义或不一致都返回人工处理，不做互动。

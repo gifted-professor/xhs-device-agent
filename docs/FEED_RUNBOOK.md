@@ -2,6 +2,41 @@
 
 本手册用于小红书推荐流顺序浏览、指定序号点赞/收藏，以及运行异常时的恢复和验收。协议字段与计数规则见 [FEED_WORKFLOW.md](FEED_WORKFLOW.md)。
 
+## 0. V1.1 多机只读批次
+
+`feed batch` 与下方 `trusted-10` 是两条独立通道。批次通道只允许推荐流浏览，拒绝点赞、收藏、关注、评论、私信、分享、发布和任何其他互动字段。
+
+```json
+{
+  "schemaVersion": 1,
+  "batchId": "feed-batch-20260715-001",
+  "mode": "feed_read_only",
+  "maxParallel": 2,
+  "runs": [
+    { "machine": "04", "taskId": "feed-batch-20260715-001-04", "count": 3 },
+    { "machine": "05", "taskId": "feed-batch-20260715-001-05", "count": 3 }
+  ]
+}
+```
+
+先做不连接手机的校验：
+
+```powershell
+.\xhs.cmd feed batch --spec data/feed-batch-20260715-001.json --dry-run
+```
+
+获得本次明确授权并保持父命令在前台后，才可移除 `--dry-run`。V1.1 规则如下：
+
+- 必须显式给出 1–2 个两位机器编号和互不重复的 task ID；不做动态发现、补位或故障转移。
+- 单机时 `maxParallel=1`；双机时必须 `maxParallel=2`。不接受含糊的“双机配置、单机并发”。
+- 每台先持有独立设备锁和 task ID 锁。全部锁定后才释放只读预检屏障；全部在线并完成能力快照后才释放统一 GO。
+- 父进程维持 attempt-scoped lease。每个 tap、swipe、BACK 或重新拉起前都必须确认 lease 新鲜、GO 已发布且熔断未触发。
+- 任一登录、挑战、风险控制、权限、支付、私密页或身份漂移触发全局熔断；两台出现同一失败签名按系统性故障停止。
+- checkpoint 是计数真相源：只有 `opened → dwell_verified → actions_verified → returned_verified → committed` 完整闭环才计入 `items`。中断中的条目不计数，也不会在恢复时伪装成完成。
+- 批次结果位于 `data/feed-batches/<batch-id>/`；单机 checkpoint 和证据仍位于 `data/feed/<task-id>/`。事件日志带单调 `seq`，原始设备标识不进入公开批次摘要。
+
+`trusted-10` 仍是单机、现场监督、窄范围互动验收，不能放进批次 spec。
+
 ## 1. 标准运行
 
 优先可信模板：
@@ -32,13 +67,13 @@
 
 ## 2. 完整执行链路
 
-1. 读取或创建 `checkpoint.json`，核对任务 ID、规格哈希和设备别名。
+1. 读取或创建 `checkpoint.json`，核对任务 ID、规格哈希和设备别名；未完成条目保存在 `inFlightItem`，不计入完成数量。
 2. `ensureFeed` 检查是否在小红书首页：先多次 BACK，再尝试语义“首页”Tab，仍失败才重新拉起小红书。
 3. 连续读取 UI hierarchy；首页以“相同卡片身份和边界”判断语义稳定，详情以“相同页面类型和作者/笔记身份”判断语义稳定。
 4. 从当前 Feed 容器中寻找未浏览的卡片，点击后验证为 `IMAGE_NOTE` 或 `VIDEO_NOTE`，并核对卡片与详情身份。
 5. 按详情类型停留，每秒验证小红书仍在前台；结束后再次读取详情页。
 6. 到指定互动序号时，先读取当前状态：已激活则不点击；未激活则先写入 `send_intent`，只点击一次，再验证选中状态或计数增加。
-7. 返回首页并验证 Feed，写入 `item_completed`。
+7. 返回首页并验证 Feed，将条目标记为 `committed` 后才写入 `item_completed`。
 8. 达到目标数量后写入 `completed` 和 `summary.json`。
 
 ## 3. 自动恢复边界

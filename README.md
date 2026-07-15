@@ -2,14 +2,49 @@
 
 一个面向小红书多手机矩阵的低 Token、只读研究框架。效卫负责连接、投屏、设备分组和人工接管；ADB 负责逐台手机的确定性执行与后验验证；AI 只在主题扩展、未知页面恢复和结果分析等事件发生时介入。
 
-项目不会自动点赞、收藏、关注、评论、私信、发布或删除，也不实现随机停留、模拟真人或规避风控。研究完成后，脚本只生成候选和人工审核队列；需要互动时，由人工在效卫中单独接管一台手机完成。
+项目的研究流程默认只读。点赞、关注、评论、发布和删除只通过显式命名命令执行，并要求目标设备别名在本地配置中逐项授权；私信、随机停留、模拟真人和规避风控不在这些命令的范围内。
+
+## 唯一操作入口
+
+日常操作只使用项目根目录的统一入口：
+
+```powershell
+.\xhs.cmd help
+.\xhs.cmd doctor
+.\xhs.cmd device list
+```
+
+已授权设备可以使用以下语义命令；评论和发布必须提供单行文本：
+
+```powershell
+.\xhs.cmd like --device device-01
+.\xhs.cmd favorite --device device-01
+.\xhs.cmd follow --device device-01
+.\xhs.cmd comment --device device-01 --text "评论内容"
+.\xhs.cmd publish --device device-01 --text "发布内容"
+.\xhs.cmd delete --device device-01
+```
+
+这些名称是小红书页面语义动作，不是效卫 WebSocket 的底层 action。授权写在 `Xhs.Interactions.AllowedActionsByAlias`，不要把它们加入 `Xiaowei.Api.AcceptedActionsByAlias`；执行器会按当前页面的 UI 语义定位控件并校验结果。
+
+需要顺序浏览推荐流并在指定位置互动时，使用单设备 Feed 工作流：
+
+```powershell
+.\xhs.cmd feed run --device device-01 --task-id feed-001 --count 10 --like-at 5 --favorite-at 10
+```
+
+工作流只统计成功打开并验证身份的不同内容。点赞和收藏先检查已激活状态，已完成时不会再次点击；发送边界不明确时，同一任务拒绝重放。详细契约见 [Feed 顺序浏览与指定互动](docs/FEED_WORKFLOW.md)，真机排障和 AI 接管见 [Feed Runbook](docs/FEED_RUNBOOK.md)。
+
+进入详情后执行器会区分图文与视频：图文默认停留 3–6 秒，视频默认停留 10–20 秒。停留值按任务和内容身份稳定生成；期间持续校验小红书前台，视频进度可见时还会验证进度确实变化。可用 `--image-min-seconds`、`--image-max-seconds`、`--video-min-seconds`、`--video-max-seconds` 覆盖默认区间。
+
+旧的 `scripts/*.ps1` 和可执行 Node 文件继续作为内部实现与兼容层，不再要求操作者判断应该调用哪一个。完整的安装、效卫 31 项 API 能力、安全验收、故障处理和回滚步骤见 [效卫设备 Agent 稳定操作指南](docs/XIAOWEI_DEVICE_OPERATOR_GUIDE.md)。
 
 ## 核心能力
 
 - 按 `resource-id`、文字、`content-desc` 和稳定控件关系逐机定位，不共享主控坐标。
 - 识别搜索、搜索建议、搜索结果、热搜、推荐、图文、视频、评论区、网络错误、更新弹窗和登录/挑战等页面状态。
 - 页面稳定后再行动：500 ms 间隔取得两次相同的归一化 UI 指纹，最长等待 8 秒。
-- 按主题、来源和关键词生成工作单元，最多三台设备并行，每台设备内部串行。
+- 按主题、来源和关键词生成工作单元，最多四台设备并行，每台设备内部串行。
 - 任务按 `taskId` 幂等，候选跨设备去重，并提供设备隔离、全局熔断和一次离线重分配。
 - 已标定页面可完全不调用模型；自动 AI 调用硬上限为每任务 4 次。
 - 结果以本地 JSON/JSONL 为真相源，可选镜像到飞书多维表格。
@@ -19,7 +54,7 @@
 - Windows 10/11、PowerShell 5.1+
 - Android Platform Tools，或效卫自带的 `adb.exe`
 - Node.js 18+
-- 可选：`lark-cli`，用于同步人工审核队列
+- 可选：`lark-cli`，用于同步人工审核队列和闭合白名单设备资料
 - 可选：[效卫安卓投屏](https://www.xiaowei.xin/android)。软件本体不包含在仓库中
 
 ## 配置与正式运行闸
@@ -35,17 +70,17 @@ Copy-Item config/matrix.example.psd1 config/local.psd1
 - 有效的 `AdbPath`；
 - 每台手机的真实 ADB 序列号到公开别名/编号的映射；
 - 任务要使用的设备分组，例如 `content`；
-- 如需自动输入中文，优先配置 `TextInput.NativeIme`，同时要求 `Enabled`、`HumanApproved` 为真，并把已逐机标定的别名加入 `ApprovedAliases`；设备端 Unicode 桥只作为另行批准的后备通道。
+- 如需自动输入中文，已完成逐机验收的效卫文本适配器优先；其次是批准并校准的原生中文 IME，再其次是另行批准的 Unicode 输入法。所有路径都必须精确回显并恢复原默认 IME。
 
-真实编号或分组未完成时，只允许预检和干跑，不运行正式主题分配。PowerShell 包装器和 Node 正式入口都会独立清点 ADB 在线设备，要求全部在线设备有唯一别名和显式分组；直接调用 Node 也不能绕过这道门禁。不要把序列号、账号、截图或 UI XML 写入受版本控制的文件。
+真实编号或分组未完成时，只允许预检和干跑，不运行正式主题分配。`xhs.cmd` 是唯一公开入口；原生 PowerShell/CMD 使用 `.\\xhs.cmd`，Git Bash/MSYS 使用 `bash ./xhs.cmd`，不得直接调用内部脚本。PowerShell 包装层和内部 Node 路由都会独立清点 ADB 在线设备，要求全部在线设备有唯一别名和显式分组。内部模块不是第二套操作者入口。不要把序列号、账号、截图或 UI XML 写入受版本控制的文件。
 
 先执行只读预检：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Matrix-Preflight.ps1 -ProbeApi
+.\xhs.cmd doctor
 ```
 
-效卫本地 API 当前按实验通道处理。会员或版本限制导致探测失败时，正式执行仍使用 ADB；效卫继续提供投屏和人工接管。
+效卫本地 API 按 action、设备别名和物理设备绑定逐项验收和路由。旧的全局 `PreferApi` 已废弃：未验收、版本不符、API/ADB 身份不一致或别名改绑时，对应能力保持 ADB。每次效卫请求还必须携带由统一入口会话密钥签发、绑定请求哈希且最长 30 秒有效的一次性能力票据；自制 policy 或直接调用内部 CLI 会在发送前失败。API 动作成功后仍由 ADB/UI 做后验验证。
 
 ## 主题研究任务
 
@@ -54,12 +89,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Matrix-Preflight
 ```powershell
 Copy-Item config/research-task.example.json data/my-research-task.json
 # 不连接手机，先验证任务、分配、幂等和产物
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearch.ps1 `
-  -TaskPath data/my-research-task.json -DryRun
+.\xhs.cmd research run --task data/my-research-task.json --dry-run
 
 # 完成真实设备映射后，默认使用 ADB 正式执行
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-TopicResearch.ps1 `
-  -TaskPath data/my-research-task.json
+.\xhs.cmd research run --task data/my-research-task.json
 ```
 
 任务必须同时满足：
@@ -95,54 +128,41 @@ AI 仅承担：
 本地 `data/research/` 是任务执行真相源。需要把审核队列镜像到飞书时，可运行：
 
 ```powershell
-node scripts/sync-research-review.mjs `
+$env:LARK_RESEARCH_BASE_TOKEN = "已批准的 Base Token"
+$env:LARK_RESEARCH_TABLE_ID = "已批准的 Table ID"
+.\xhs.cmd research sync-review `
   --review data/research/<taskId>/human-review.jsonl `
-  --base-token $env:LARK_RESEARCH_BASE_TOKEN `
-  --table-id $env:LARK_RESEARCH_TABLE_ID
+  --confirm-external-sync
 ```
 
-飞书只保存公开候选字段、AI 理由和审核状态，不应写入真实设备序列号。人工选中候选后，先在效卫中只显示一台手机并关闭群控同步，再执行只读交接：
+同步入口只接受 `data/research/<taskId>/human-review.jsonl`，并在任何飞书请求前核对 taskId、闭合字段、受本地设备映射批准的别名、值边界和敏感标识；不同任务使用隔离临时负载，同一队列不能并发同步。飞书只保存公开候选字段、AI 理由和审核状态，不写入真实设备序列号或本地路径。人工选中候选后，先在效卫中只显示一台手机并关闭群控同步，再执行只读交接：
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Open-ReviewCandidate.ps1 `
-  -TaskPath data/my-research-task.json `
-  -CandidateId <candidateId> -DeviceAlias device-01 `
-  -ConfirmSingleDeviceAndSyncOff
+.\xhs.cmd handoff review `
+  --task data/my-research-task.json `
+  --candidate <candidateId> --device device-01 `
+  --confirm-single-device-and-sync-off
 ```
 
 交接脚本只搜索精确候选、验证笔记 ID 或标题并暂停。找不到、匹配多条或详情身份不一致时转人工，不会打开模糊匹配，也不会执行互动。
 
-涉及中文输入时，Hermes 先按设备执行原生输入法盘点和一次中文模式校准，再进行文本动作；每次输入都必须做编辑框精确回显校验，结束后恢复原默认输入法。详见 `docs/INPUT_METHOD_WORKFLOW.md`。
+涉及中文输入时，执行器只使用该设备已验收的适配器；每次都要验证前台包和编辑框精确回显，结束后恢复原默认输入法。详见 `docs/INPUT_METHOD_WORKFLOW.md`。
 
-## 目录
+## 关键文件
 
-- `scripts/xhs-page-engine.mjs`：页面评分、UI 指纹和语义选择器
-- `scripts/research-core.mjs`：任务校验、分配、幂等、熔断、去重和结果合并
-- `scripts/research-session.mjs`：建议词发现、AI 角色编排、检查点恢复和最终摘要
-- `scripts/adb-research-provider.mjs`：只读 ADB 来源适配器和中文输入安全闸
-- `scripts/ai-role-runner.mjs`：严格 JSON 输出、缓存和模型调用预算
-- `scripts/Run-TopicResearch.ps1`：主题研究入口
-- `scripts/Open-ReviewCandidate.ps1`：单机精确候选导航和人工暂停点
-- `scripts/Invoke-MatrixAction.ps1`：通用矩阵动作和风险分类
-- `scripts/Matrix-Preflight.ps1`：效卫、ADB、在线设备和映射预检
-- `scripts/Capture-VisibleWindow.ps1`：Windows 10 上只读、前台可见的效卫窗口截图后备
-- `scripts/sync-research-review.mjs`：飞书人工审核队列镜像
-- `docs/RESEARCH_AUTOMATION.md`：任务执行与人工交接
-- `docs/ACCOUNT_RAMP_UP_AUTOMATION.md`：账号冷启动、只读研究和人工运营流程
-- `docs/ARCHITECTURE.md`：状态机、执行层和失败传播
-- `docs/SAFETY.md`：操作、数据和模型边界
-- `docs/XIAOWEI_MATRIX.md`：效卫矩阵接入和降级策略
-- `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 操作规程
-- `scripts/Collect-PhoneAssets.ps1`：逐台读取硬件、系统、小红书公开主页和 UI 层级
-- `scripts/Run-Pipeline.ps1`：一键采集、生成标准 CSV、可选同步飞书
-- `scripts/Sync-LarkBase.ps1`：创建必要字段并按设备编号/ADB 序列号更新记录
-- `scripts/cloud-vision.mjs`：OpenAI-compatible 云端视觉分类器
-- `scripts/greenarrow-api.mjs`：可选的本地 WebSocket API 示例；需要软件侧开放 API
-- `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 执行规则
-- `docs/ARCHITECTURE.md`：系统结构和页面状态机
-- `docs/INPUT_METHOD_WORKFLOW.md`：原生中文输入法与 Hermes 调度流程
-- `config/input-methods.example.psd1`：按设备别名配置输入法候选和校准状态
-- `docs/SAFETY.md`：数据与操作边界
+- `xhs.cmd`：唯一公开入口；`scripts/xhs-agent.mjs` 是其内部命令路由。
+- `scripts/xiaowei-action-catalog.mjs`：效卫当前 31 项 API 的严格契约和风险目录。
+- `scripts/xiaowei-client.mjs` / `scripts/xiaowei-transport.mjs`：逐项验收门禁、本地 WebSocket 和结果归一化。
+- `scripts/Invoke-MatrixAction.ps1`：效卫执行、ADB/UI 后验验证和兼容矩阵动作。
+- `scripts/feed-workflow.mjs` / `scripts/feed-device-runner.mjs`：Feed 顺序浏览、checkpoint、幂等互动和真机适配。
+- `scripts/adb-research-provider.mjs`：只读研究的逐机语义执行器。
+- `docs/XIAOWEI_DEVICE_OPERATOR_GUIDE.md`：操作者主手册。
+- `docs/SAFETY.md`：安全唯一事实源。
+- `docs/INPUT_METHOD_WORKFLOW.md`：中文输入唯一事实源。
+- `docs/RESEARCH_AUTOMATION.md`：只读研究任务契约。
+- `docs/HERMES_CAPABILITY_ACCEPTANCE.md`：Hermes 分阶段验收计划。
+- `docs/HERMES_RUN_CONTRACT.md`：Hermes 单轮执行、踩坑记录和可复制提示词。
+- `skills/xhs-device-operator/SKILL.md`：Agent 执行规程。
 
 ## 隐私
 
