@@ -100,12 +100,13 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["type", "queryRef", "query", "count"],
+          "required": ["type", "queryRef", "query", "count", "maxScrollsPerResult"],
           "properties": {
             "type": { "const": "search_results" },
             "queryRef": { "const": "query-001" },
             "query": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001f\\u007f-\\u009f]+$" },
-            "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "maxScrollsPerResult": { "type": "integer", "minimum": 0, "maximum": 10000 }
           }
         },
         {
@@ -125,6 +126,88 @@
                 "properties": {
                   "urlRef": { "type": "string", "pattern": "^url-[0-9]{3,5}$" },
                   "url": { "type": "string", "maxLength": 2048, "pattern": "^https://(?:www\\.)?(?:xiaohongshu\\.com/(?:explore|discovery/item)/[A-Za-z0-9_-]+|xhslink\\.com/[A-Za-z0-9_-]+)(?:[?#][^\\u0000-\\u001f\\u007f-\\u009f]*)?$" }
+                }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "topic", "seedKeywords", "sources", "commentMode", "budgets", "aiPolicy", "assignments"],
+          "properties": {
+            "type": { "const": "research_read_only" },
+            "topic": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "seedKeywords": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
+            "sources": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "enum": ["search", "suggestions", "trending", "recommended"] } },
+            "commentMode": { "enum": ["none", "metadata", "deidentified_snippets"] },
+            "budgets": {
+              "type": "object", "additionalProperties": false,
+              "required": ["wallClockSeconds", "maxQueries", "maxNotes", "maxNotesPerQuery", "maxResultScrollsPerQuery", "maxNoteScrolls", "maxCommentPanels", "maxCommentsPerNote", "maxNoNewScrolls"],
+              "properties": {
+                "wallClockSeconds": { "type": "integer", "minimum": 30, "maximum": 3600 },
+                "maxQueries": { "type": "integer", "minimum": 1, "maximum": 20 },
+                "maxNotes": { "type": "integer", "minimum": 1, "maximum": 50 },
+                "maxNotesPerQuery": { "type": "integer", "minimum": 1, "maximum": 15 },
+                "maxResultScrollsPerQuery": { "type": "integer", "minimum": 0, "maximum": 10 },
+                "maxNoteScrolls": { "type": "integer", "minimum": 0, "maximum": 8 },
+                "maxCommentPanels": { "type": "integer", "minimum": 0, "maximum": 15 },
+                "maxCommentsPerNote": { "type": "integer", "minimum": 0, "maximum": 20 },
+                "maxNoNewScrolls": { "type": "integer", "minimum": 1, "maximum": 4 }
+              }
+            },
+            "aiPolicy": {
+              "type": "object", "additionalProperties": false,
+              "required": ["topicPlanner", "pageFallback", "resultAnalysis", "maxAutomaticCalls"],
+              "properties": {
+                "topicPlanner": { "type": "boolean" }, "pageFallback": { "type": "boolean" }, "resultAnalysis": { "type": "boolean" },
+                "maxAutomaticCalls": { "type": "integer", "minimum": 0, "maximum": 4 }
+              }
+            },
+            "assignments": {
+              "type": "array", "minItems": 1, "maxItems": 64, "uniqueItems": true,
+              "items": {
+                "type": "object", "additionalProperties": false, "required": ["machine", "task"],
+                "properties": {
+                  "machine": { "type": "string", "pattern": "^[0-9]{2}$" },
+                  "task": {
+                    "type": "object", "additionalProperties": false,
+                    "required": ["schemaVersion", "taskId", "mode", "topic", "seedKeywords", "sources", "deviceGroup", "commentMode", "interactionPolicy", "budgets", "aiPolicy"],
+                    "properties": {
+                      "schemaVersion": { "const": 1 },
+                      "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
+                      "mode": { "const": "research_read_only" },
+                      "topic": { "type": "string", "minLength": 1, "maxLength": 120 },
+                      "seedKeywords": { "type": "array", "maxItems": 12, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 80 } },
+                      "sources": { "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true, "items": { "enum": ["search", "suggestions", "trending", "recommended"] } },
+                      "deviceGroup": { "const": "unified-task" },
+                      "commentMode": { "enum": ["none", "metadata", "deidentified_snippets"] },
+                      "interactionPolicy": { "const": "human_final" },
+                      "budgets": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["wallClockSeconds", "maxQueries", "maxNotes", "maxNotesPerQuery", "maxResultScrollsPerQuery", "maxNoteScrolls", "maxCommentPanels", "maxCommentsPerNote", "maxNoNewScrolls"],
+                        "properties": {
+                          "wallClockSeconds": { "type": "integer", "minimum": 30, "maximum": 3600 },
+                          "maxQueries": { "type": "integer", "minimum": 1, "maximum": 20 },
+                          "maxNotes": { "type": "integer", "minimum": 1, "maximum": 50 },
+                          "maxNotesPerQuery": { "type": "integer", "minimum": 1, "maximum": 15 },
+                          "maxResultScrollsPerQuery": { "type": "integer", "minimum": 0, "maximum": 10 },
+                          "maxNoteScrolls": { "type": "integer", "minimum": 0, "maximum": 8 },
+                          "maxCommentPanels": { "type": "integer", "minimum": 0, "maximum": 15 },
+                          "maxCommentsPerNote": { "type": "integer", "minimum": 0, "maximum": 20 },
+                          "maxNoNewScrolls": { "type": "integer", "minimum": 1, "maximum": 4 }
+                        }
+                      },
+                      "aiPolicy": {
+                        "type": "object", "additionalProperties": false,
+                        "required": ["topicPlanner", "pageFallback", "resultAnalysis", "maxAutomaticCalls"],
+                        "properties": {
+                          "topicPlanner": { "type": "boolean" }, "pageFallback": { "type": "boolean" }, "resultAnalysis": { "type": "boolean" },
+                          "maxAutomaticCalls": { "type": "integer", "minimum": 0, "maximum": 4 }
+                        }
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -172,6 +255,9 @@
         },
         "cpaCommentCountSchema": {
           "const": "cpa-comment-count/v1"
+        },
+        "researchPolicy": {
+          "const": "research-read-only-v1"
         }
       }
     },
@@ -356,12 +442,12 @@
           },
           "sourceCount": {
             "type": "integer",
-            "minimum": 1,
+            "minimum": 0,
             "maximum": 10000
           },
           "steps": {
             "type": "array",
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 99999,
             "uniqueItems": true,
             "items": {
@@ -384,6 +470,7 @@
                     "search.open_results",
                     "search.open_result",
                     "content.open_xhs_url",
+                    "research.collect",
                     "detail.inspect",
                     "detail.evaluate_title_rule",
                     "image.scroll_content",
@@ -464,7 +551,8 @@
                     },
                     "policyRef": {
                       "enum": [
-                        "count-adaptive-v1"
+                        "count-adaptive-v1",
+                        "research-read-only-v1"
                       ]
                     },
                     "conditionId": {

@@ -91,3 +91,12 @@ test("policy scan rejects retired Feed executors and fixed templates", () => {
     "retired-fixed-feed-template",
   ]);
 });
+
+test("policy scan permits legacy positional fields only inside the conversion-only wrapper", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "scripts/Run-TaskCompatibility.ps1": "[int]$LikeAt\n[int]$FavoriteAt",
+  }));
+  assert.equal(scan.status, "passed");
+  assert.deepEqual(scan.staleRestrictions, []);
+});

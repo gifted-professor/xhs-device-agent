@@ -8,6 +8,7 @@ import { createAdbResearchProvider } from "./adb-research-provider.mjs";
 import { createWindowsLocalOcr } from "./local-ocr.mjs";
 import { createDryRunProvider, validateResearchTask } from "./research-core.mjs";
 import { runResearchSession } from "./research-session.mjs";
+import { loadLocalEnvironment } from "./local-environment.mjs";
 import { createXiaoweiTextInputAdapter, validateXiaoweiTextInputConfig } from "./xiaowei-text-input.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -204,28 +205,6 @@ function parseArguments(argv) {
 
 async function readJson(filePath) {
   return JSON.parse(await readFile(path.resolve(filePath), "utf8"));
-}
-
-async function loadLocalEnvironment() {
-  const projectRoot = fileURLToPath(new URL("../", import.meta.url));
-  let contents;
-  try {
-    contents = await readFile(path.join(projectRoot, ".env"), "utf8");
-  } catch (error) {
-    if (error.code === "ENOENT") return;
-    throw error;
-  }
-  for (const rawLine of contents.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match || process.env[match[1]] !== undefined) continue;
-    let value = match[2].trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-      value = value.slice(1, -1);
-    }
-    process.env[match[1]] = value;
-  }
 }
 
 export async function runFromArguments(argv, runtime = {}) {

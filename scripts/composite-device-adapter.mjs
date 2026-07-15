@@ -126,6 +126,7 @@ function treePath(document, node) {
 export class CompositeDeviceAdapter {
   constructor({
     feedAdapter,
+    sourceAdapter,
     rules,
     runtimeProfile = {},
     assertFastGate,
@@ -143,6 +144,7 @@ export class CompositeDeviceAdapter {
     invariant(rules && typeof rules === "object", "page rules are required");
     invariant(typeof assertFastGate === "function", "composite fast gate is required");
     this.feedAdapter = feedAdapter;
+    this.sourceAdapter = sourceAdapter ?? null;
     this.rules = rules;
     this.runtimeProfile = runtimeProfile;
     this.assertFastGate = assertFastGate;
@@ -396,6 +398,9 @@ export class CompositeDeviceAdapter {
   async observe(step) {
     this.assertFastGate({ action: step.action, phase: "before_observe" });
     if (step.action === "recover.to_feed") return { status: "observed", pageState: "UNKNOWN" };
+    if (["search.open_results", "search.open_result", "content.open_xhs_url", "research.collect"].includes(step.action)) {
+      return { status: "observed", pageState: "UNKNOWN" };
+    }
     if (step.action === "feed.open_visible") {
       const snapshot = await this.readOnlySnapshot(`step-${step.stepId}-feed`, new Set(["HOME_FEED"]));
       return { status: "observed", pageState: snapshot.classification.state };
@@ -438,7 +443,7 @@ export class CompositeDeviceAdapter {
   }
 
   async bindTarget(step) {
-    if (["recover.to_feed", "feed.open_visible", "search.open_results", "search.open_result", "content.open_xhs_url"].includes(step.action)) {
+    if (["recover.to_feed", "feed.open_visible", "search.open_results", "search.open_result", "content.open_xhs_url", "research.collect"].includes(step.action)) {
       return this.sourceBinding(step);
     }
     if (step.params?.targetBindingRef) return this.currentBinding;
@@ -470,6 +475,29 @@ export class CompositeDeviceAdapter {
       this.invalidateSnapshot();
       return { status: "verified", targetHash: binding.targetHash, sent: true };
     }
+    if (step.action === "search.open_results") {
+      invariant(this.sourceAdapter, "search source adapter is unavailable");
+      this.invalidateSnapshot();
+      return this.sourceAdapter.openSearchResults(step.params);
+    }
+    if (step.action === "search.open_result") {
+      invariant(this.sourceAdapter, "search source adapter is unavailable");
+      this.currentBinding = null;
+      this.invalidateSnapshot();
+      return this.sourceAdapter.openSearchResult(step.params);
+    }
+    if (step.action === "content.open_xhs_url") {
+      invariant(this.sourceAdapter, "URL source adapter is unavailable");
+      this.currentBinding = null;
+      this.invalidateSnapshot();
+      return this.sourceAdapter.openXhsUrl(step.params);
+    }
+    if (step.action === "research.collect") {
+      invariant(this.sourceAdapter, "research source adapter is unavailable");
+      this.currentBinding = null;
+      this.invalidateSnapshot();
+      return this.sourceAdapter.collectResearch(step.params);
+    }
     if (step.action === "comments.open") return this.openComments(binding);
     if (step.action === "image.scroll_content") return this.scrollImageContent(binding);
     if (step.action === "video.advance") return this.advanceVideo(binding);
@@ -487,6 +515,12 @@ export class CompositeDeviceAdapter {
       this.currentBinding = null;
       this.invalidateSnapshot();
       return { status: result.verified ? "verified" : "failed", targetHash: binding.targetHash, sent: true };
+    }
+    if (step.action === "navigation.return_to_source") {
+      invariant(step.params.sourceType === "search_results" && this.sourceAdapter, "search return adapter is unavailable");
+      this.currentBinding = null;
+      this.invalidateSnapshot();
+      return this.sourceAdapter.returnToSearchResults();
     }
     throw new Error(`unsupported composite adapter action: ${step.action}`);
   }

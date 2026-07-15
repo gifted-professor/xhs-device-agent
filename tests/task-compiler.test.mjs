@@ -177,6 +177,52 @@ test("per-machine Feed counts compile to exact finite worker lengths", () => {
   assert.deepEqual(plan.visitPolicy.perDevice.map((entry) => [entry.machine, entry.targetValidVisits]), [["02", 11], ["04", 3], ["05", 7]]);
 });
 
+test("read-only research compiles into deterministic bounded machine shards", async () => {
+  const taskSpec = spec({
+    taskId: "research-compatibility",
+    deviceSelection: { mode: "explicit", machines: ["02", "04", "05"] },
+    maxParallel: 3,
+    source: {
+      type: "research_read_only",
+      topic: "夏季穿搭",
+      seedKeywords: ["通勤", "防晒", "轻薄"],
+      sources: ["search", "suggestions", "trending", "recommended"],
+      commentMode: "deidentified_snippets",
+      budgets: {
+        wallClockSeconds: 600,
+        maxQueries: 7,
+        maxNotes: 9,
+        maxNotesPerQuery: 5,
+        maxResultScrollsPerQuery: 2,
+        maxNoteScrolls: 2,
+        maxCommentPanels: 4,
+        maxCommentsPerNote: 8,
+        maxNoNewScrolls: 2,
+      },
+      aiPolicy: { topicPlanner: true, pageFallback: true, resultAnalysis: true, maxAutomaticCalls: 4 },
+    },
+    actions: [],
+  });
+  const taskSchema = JSON.parse(await readFile(new URL("task-spec.schema.json", configUrl), "utf8"));
+  const planSchema = JSON.parse(await readFile(new URL("composite-plan.schema.json", configUrl), "utf8"));
+  assert.deepEqual(schemaErrors(taskSchema, taskSpec), []);
+
+  const plan = compile(taskSpec);
+  const second = compile(taskSpec);
+  assert.equal(second.planHash, plan.planHash);
+  assert.deepEqual(second.taskSource.assignments, plan.taskSource.assignments);
+  assert.deepEqual(plan.devices.map((entry) => entry.steps.map((step) => step.action)), [
+    ["research.collect"], ["research.collect"], ["research.collect"],
+  ]);
+  assert.equal(new Set(plan.devices.map((entry) => entry.taskId)).size, 3);
+  assert.equal(plan.limits.maxStateChangesTotal, 0);
+  assert.equal(plan.taskSource.assignments.reduce((sum, entry) => sum + entry.task.budgets.maxQueries, 0), 7);
+  assert.equal(plan.taskSource.assignments.reduce((sum, entry) => sum + entry.task.budgets.maxNotes, 0), 9);
+  assert.equal(plan.taskSource.assignments.reduce((sum, entry) => sum + entry.task.budgets.maxCommentPanels, 0), 4);
+  assert.equal(plan.taskSource.assignments.reduce((sum, entry) => sum + entry.task.aiPolicy.maxAutomaticCalls, 0), 4);
+  assert.deepEqual(schemaErrors(planSchema, plan), []);
+});
+
 test("auto-idle selection is deterministic and unrelated devices do not block explicit 02", () => {
   const auto = spec({ deviceSelection: { mode: "auto_idle", count: 1 } });
   const inventory = [

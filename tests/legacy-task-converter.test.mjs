@@ -4,8 +4,29 @@ import test from "node:test";
 import {
   convertLegacyFeedBatch,
   convertLegacyFeedRun,
+  convertLegacyResearch,
   normalizeLegacyFeedBatch,
 } from "../scripts/legacy-task-converter.mjs";
+
+function researchTask() {
+  return {
+    schemaVersion: 1,
+    taskId: "legacy-research-001",
+    mode: "research_read_only",
+    topic: "通勤穿搭",
+    seedKeywords: ["夏季", "轻薄"],
+    sources: ["search", "suggestions", "trending"],
+    deviceGroup: "private-local-group",
+    commentMode: "deidentified_snippets",
+    interactionPolicy: "human_final",
+    budgets: {
+      wallClockSeconds: 600, maxQueries: 6, maxNotes: 9, maxNotesPerQuery: 4,
+      maxResultScrollsPerQuery: 2, maxNoteScrolls: 2, maxCommentPanels: 3,
+      maxCommentsPerNote: 8, maxNoNewScrolls: 2,
+    },
+    aiPolicy: { topicPlanner: true, pageFallback: true, resultAnalysis: true, maxAutomaticCalls: 3 },
+  };
+}
 
 test("legacy Feed positions become ordered unified actions for every selected machine", () => {
   const input = {
@@ -71,4 +92,18 @@ test("legacy Feed derives safe deterministic worker task IDs from an 80-characte
   assert.equal(task.taskIdsByMachine.length, 2);
   assert.equal(task.taskIdsByMachine.every(({ taskId }) => taskId.length <= 80), true);
   assert.equal(new Set(task.taskIdsByMachine.map(({ taskId }) => taskId)).size, 2);
+});
+
+test("legacy Research becomes one deterministic read-only unified task with exact selected machines", () => {
+  const input = researchTask();
+  const task = convertLegacyResearch(input, { machines: ["02", "04", "05"], maxParallel: 2 });
+  assert.deepEqual(task.deviceSelection.machines, ["02", "04", "05"]);
+  assert.equal(task.maxParallel, 2);
+  assert.equal(task.source.type, "research_read_only");
+  assert.equal(task.source.topic, input.topic);
+  assert.deepEqual(task.source.budgets, input.budgets);
+  assert.deepEqual(task.actions, []);
+  assert.equal(task.maxWallClockMs, 600000);
+  assert.equal(JSON.stringify(task).includes("private-local-group"), false);
+  assert.deepEqual(convertLegacyResearch(input, { machines: ["02", "04", "05"], maxParallel: 2 }), task);
 });

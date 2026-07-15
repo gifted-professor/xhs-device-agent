@@ -15,6 +15,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "Import-Utf8PowerShellDataFile.ps1")
 . (Join-Path $PSScriptRoot "Device-Lock.ps1")
 . (Join-Path $PSScriptRoot "Machine-Identity.ps1")
+. (Join-Path $PSScriptRoot "Task-TextInputContext.ps1")
 
 function Get-Sha256Hex {
     param([Parameter(Mandatory = $true)][string]$Value)
@@ -159,6 +160,19 @@ try {
         rulesPath = Join-Path $projectRoot "config\xhs-page-rules.json"
         acceptanceRoot = $AcceptanceRoot
         devices = $runtimeDevices
+    }
+    if ($spec.source.type -ceq "search_results" -or $spec.source.type -ceq "research_read_only") {
+        $runtime.textInput = Get-TaskTextInputContext -Config $config -RuntimeDevices $runtimeDevices
+        $queries = if ($spec.source.type -ceq "search_results") {
+            @([string]$spec.source.query)
+        } elseif (@($spec.source.sources | Where-Object { $_ -in @("search", "suggestions") }).Count) {
+            @([string]$spec.source.topic) + @($spec.source.seedKeywords | ForEach-Object { [string]$_ })
+        } else { @() }
+        foreach ($query in $queries) {
+            if (!(Test-TaskQueryInputCapability -Query $query -TextInputContext $runtime.textInput -DeviceAliases @($runtimeDevices.deviceAlias))) {
+                throw "One or more selected machines lack an accepted input capability required by the task query"
+            }
+        }
     }
     $runtimeRoot = Join-Path $OutputRoot ".runtime"
     New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null

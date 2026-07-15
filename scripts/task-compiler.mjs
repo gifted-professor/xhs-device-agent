@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { ACTION_REGISTRY, validateCompiledSteps } from "./composite-action-registry.mjs";
 import { canonicalizeJson, hashPlan } from "./composite-plan-core.mjs";
+import { validateResearchTask } from "./research-core.mjs";
 
 const COMMENT_BANDS = new Set(["ZERO", "ONE_TO_FIVE", "SIX_TO_TWENTY", "TWENTY_ONE_TO_NINETY_NINE", "HUNDRED_PLUS", "UNKNOWN"]);
 const ENGAGEMENT_ACTIONS = new Set(["engagement.ensure_liked", "engagement.ensure_favorited"]);
@@ -51,6 +52,7 @@ function normalizeTitle(value) {
 }
 
 function sourceCount(source) {
+  if (source.type === "research_read_only") return 1;
   return source.type === "url_list" ? source.urls.length : source.count;
 }
 
@@ -59,16 +61,91 @@ function operationId(prefix, ...parts) {
   return `${prefix}-${digest}`;
 }
 
-function taskSource(source, sourceCountsByMachine) {
+function taskSource(source, sourceCountsByMachine, researchAssignments = []) {
   if (source.type === "feed") return {
     type: "feed", count: source.count, candidateCap: source.candidateCap, maxScrollsPerItem: source.maxScrollsPerItem,
     ...(sourceCountsByMachine?.length ? { countsByMachine: sourceCountsByMachine.map((entry) => ({ ...entry })) } : {}),
   };
-  if (source.type === "search_results") return { type: "search_results", queryRef: "query-001", query: source.query, count: source.count };
+  if (source.type === "search_results") return {
+    type: "search_results", queryRef: "query-001", query: source.query, count: source.count,
+    maxScrollsPerResult: source.maxScrollsPerResult,
+  };
+  if (source.type === "research_read_only") return {
+    ...source,
+    assignments: researchAssignments.map((entry) => ({ machine: entry.machine, task: structuredClone(entry.task) })),
+  };
   return {
     type: "url_list",
     urls: source.urls.map((url, index) => ({ urlRef: `url-${String(index + 1).padStart(3, "0")}`, url })),
   };
+}
+
+function safeDerivedTaskId(taskId, machine) {
+  const plain = `${taskId}-research-${machine}`;
+  if (plain.length <= 80) return plain;
+  return `${taskId.slice(0, 56)}-${machine}-${operationId("shard", taskId, machine).slice(-16)}`;
+}
+
+function allocateWithMinimum(total, minima) {
+  invariant(Number.isSafeInteger(total) && minima.every(Number.isSafeInteger), "research shard budget is invalid");
+  const values = [...minima];
+  let remaining = total - values.reduce((sum, value) => sum + value, 0);
+  invariant(remaining >= 0, "research shard minima exceed the approved budget");
+  for (let index = 0; remaining > 0; index = (index + 1) % values.length) {
+    values[index] += 1;
+    remaining -= 1;
+  }
+  return values;
+}
+
+function compileResearchAssignments(task, machines) {
+  if (task.source.type !== "research_read_only") return [];
+  const source = task.source;
+  const keywordSources = source.sources.some((value) => value === "search" || value === "suggestions");
+  const keywords = [...new Set([source.topic, ...source.seedKeywords])].slice(0, source.budgets.maxQueries);
+  const activeCount = keywordSources
+    ? Math.min(machines.length, keywords.length, source.budgets.maxQueries, source.budgets.maxNotes)
+    : 1;
+  const activeMachines = machines.slice(0, activeCount);
+  const keywordGroups = activeMachines.map(() => []);
+  if (keywordSources) keywords.forEach((keyword, index) => keywordGroups[index % activeCount].push(keyword));
+  else keywordGroups[0].push(source.topic);
+  const queryMinima = keywordGroups.map((group) => Math.max(1, group.length));
+  const queryBudgets = allocateWithMinimum(source.budgets.maxQueries, queryMinima);
+  const noteBudgets = allocateWithMinimum(source.budgets.maxNotes, activeMachines.map(() => 1));
+  const commentBudgets = allocateWithMinimum(source.budgets.maxCommentPanels, activeMachines.map(() => 0));
+  const aiBudgets = allocateWithMinimum(source.aiPolicy.maxAutomaticCalls, activeMachines.map(() => 0));
+  const assignments = [];
+  for (const [index, machine] of activeMachines.entries()) {
+    const sources = source.sources.filter((value) => {
+      if (value === "search" || value === "suggestions") return keywordGroups[index].length > 0;
+      return index === 0;
+    });
+    if (!sources.length) continue;
+    const shardTopic = keywordGroups[index][0] ?? source.topic;
+    assignments.push({
+      machine,
+      task: {
+        schemaVersion: 1,
+        taskId: safeDerivedTaskId(task.taskId, machine),
+        mode: "research_read_only",
+        topic: shardTopic,
+        seedKeywords: keywordGroups[index].slice(1),
+        sources,
+        deviceGroup: "unified-task",
+        commentMode: source.commentMode,
+        interactionPolicy: "human_final",
+        budgets: {
+          ...source.budgets,
+          maxQueries: queryBudgets[index],
+          maxNotes: noteBudgets[index],
+          maxCommentPanels: commentBudgets[index],
+        },
+        aiPolicy: { ...source.aiPolicy, maxAutomaticCalls: aiBudgets[index] },
+      },
+    });
+  }
+  return assignments;
 }
 
 export function resolveTaskMachines(task, inventory) {
@@ -122,13 +199,45 @@ export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
     const maxScrollsPerItem = source.maxScrollsPerItem === undefined ? 1 : integer(source.maxScrollsPerItem, "source.maxScrollsPerItem", 0, 10000);
     normalizedSource = { type: "feed", count: source.count, candidateCap, maxScrollsPerItem };
   } else if (source.type === "search_results") {
-    exactKeys(source, ["type", "query", "count"], "search source");
-    normalizedSource = { type: "search_results", query: safeText(source.query, "source.query", 200), count: integer(source.count, "source.count", 1, 10000) };
-  } else {
+    exactKeys(source, ["type", "query", "count", "maxScrollsPerResult"], "search source");
+    normalizedSource = {
+      type: "search_results",
+      query: safeText(source.query, "source.query", 200),
+      count: integer(source.count, "source.count", 1, 10000),
+      maxScrollsPerResult: source.maxScrollsPerResult === undefined
+        ? 1
+        : integer(source.maxScrollsPerResult, "source.maxScrollsPerResult", 0, 10000),
+    };
+  } else if (source.type === "url_list") {
     exactKeys(source, ["type", "urls"], "URL source");
     invariant(source.type === "url_list" && Array.isArray(source.urls) && source.urls.length > 0 && source.urls.length <= 10000, "URL list is invalid");
     normalizedSource = { type: "url_list", urls: source.urls.map(safeXhsUrl) };
     invariant(new Set(normalizedSource.urls).size === normalizedSource.urls.length, "URL list contains duplicates");
+  } else {
+    exactKeys(source, ["type", "topic", "seedKeywords", "sources", "commentMode", "budgets", "aiPolicy"], "research source");
+    invariant(source.type === "research_read_only", "unsupported task source");
+    const research = validateResearchTask({
+      schemaVersion: 1,
+      taskId: input.taskId,
+      mode: "research_read_only",
+      topic: source.topic,
+      seedKeywords: source.seedKeywords,
+      sources: source.sources,
+      deviceGroup: "unified-task",
+      commentMode: source.commentMode,
+      interactionPolicy: "human_final",
+      budgets: source.budgets,
+      aiPolicy: source.aiPolicy,
+    });
+    normalizedSource = {
+      type: "research_read_only",
+      topic: research.topic,
+      seedKeywords: [...research.seedKeywords],
+      sources: [...research.sources],
+      commentMode: research.commentMode,
+      budgets: { ...research.budgets },
+      aiPolicy: { ...research.aiPolicy },
+    };
   }
 
   let sourceCountsByMachine;
@@ -165,6 +274,7 @@ export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
   }
 
   invariant(Array.isArray(input.actions) && input.actions.length <= 10000, "actions must be a finite ordered array");
+  if (normalizedSource.type === "research_read_only") invariant(input.actions.length === 0, "research compatibility source is read-only");
   const count = sourceCount(normalizedSource);
   const actions = input.actions.map((entry, index) => {
     plain(entry, `actions[${index}]`);
@@ -217,7 +327,7 @@ export function normalizeTaskSpec(input, { resolvedMachines } = {}) {
 }
 
 function requiredActions(task) {
-  const actions = new Set(["detail.inspect"]);
+  const actions = new Set(task.source.type === "research_read_only" ? ["research.collect"] : ["detail.inspect"]);
   if (task.source.type === "feed") actions.add("recover.to_feed"), actions.add("feed.open_visible"), actions.add("navigation.return_to_feed");
   if (task.source.type === "search_results") actions.add("search.open_results"), actions.add("search.open_result"), actions.add("navigation.return_to_source");
   if (task.source.type === "url_list") actions.add("content.open_xhs_url");
@@ -227,7 +337,7 @@ function requiredActions(task) {
   return [...actions];
 }
 
-function compileWorker(task, machine, titleRules, visibleName, count, taskId) {
+function compileWorker(task, machine, titleRules, visibleName, count, taskId, researchAssignment = null) {
   const steps = [];
   let sequence = 0;
   const add = (action, params = {}, when, accountState = false, ordinal = 0) => {
@@ -242,6 +352,10 @@ function compileWorker(task, machine, titleRules, visibleName, count, taskId) {
     steps.push(step);
     return step;
   };
+  if (task.source.type === "research_read_only") {
+    if (researchAssignment) add("research.collect", { policyRef: "research-read-only-v1" });
+    return { machine, ...(visibleName ? { visibleName } : {}), taskId, sourceCount: researchAssignment ? 1 : 0, steps };
+  }
   if (task.source.type === "feed") add("recover.to_feed", {
     strategyId: "bounded_home_entry_v1", maxBackAttemptsPerPhase: 4, maxLaunchAttempts: 2,
   });
@@ -251,7 +365,9 @@ function compileWorker(task, machine, titleRules, visibleName, count, taskId) {
       visibleRank: 1, candidateCap: task.source.candidateCap, maxScrolls: task.source.maxScrollsPerItem,
       fallback: task.source.maxScrollsPerItem > 0 ? "feed_scroll_once_then_skip" : "skip_target",
     });
-    if (task.source.type === "search_results") add("search.open_result", { resultOrdinal: ordinal, candidateCap: count });
+    if (task.source.type === "search_results") add("search.open_result", {
+      resultOrdinal: ordinal, candidateCap: count, maxScrolls: task.source.maxScrollsPerResult,
+    });
     if (task.source.type === "url_list") add("content.open_xhs_url", { urlRef: `url-${String(ordinal).padStart(3, "0")}` });
     const detail = add("detail.inspect", {});
     const targetBindingRef = `${detail.stepId}.target`;
@@ -302,14 +418,19 @@ export function compileUnifiedTaskPlan(input, context) {
   const preparedByMachine = new Map(context.preparationSnapshot.devices.map((entry) => [entry.machine, entry]));
   const sourceCountOverrides = new Map((task.sourceCountsByMachine ?? []).map((entry) => [entry.machine, entry.count]));
   const taskIdOverrides = new Map((task.taskIdsByMachine ?? []).map((entry) => [entry.machine, entry.taskId]));
-  const deviceSourceCount = (machine) => sourceCountOverrides.get(machine) ?? sourceCount(task.source);
+  const researchAssignments = compileResearchAssignments(task, machines);
+  const researchByMachine = new Map(researchAssignments.map((entry) => [entry.machine, entry]));
+  const deviceSourceCount = (machine) => task.source.type === "research_read_only"
+    ? Number(researchByMachine.has(machine))
+    : (sourceCountOverrides.get(machine) ?? sourceCount(task.source));
   const devices = machines.map((machine) => compileWorker(
     task,
     machine,
     titleRules,
     preparedByMachine.get(machine)?.visibleName,
     deviceSourceCount(machine),
-    taskIdOverrides.get(machine) ?? `${task.taskId}-${machine}`,
+    researchByMachine.get(machine)?.task.taskId ?? taskIdOverrides.get(machine) ?? `${task.taskId}-${machine}`,
+    researchByMachine.get(machine),
   ));
   const stateChanges = devices.flatMap((device) => device.steps).filter((step) => ACTION_REGISTRY[step.action].risk === "account_state").length;
   const commentConditionTargets = new Set();
@@ -338,11 +459,16 @@ export function compileUnifiedTaskPlan(input, context) {
     capabilityProfileHash: context.capabilityProfileHash,
     compilerVersion: context.compilerVersion ?? "2.0.0",
     rng: { algorithm: "hmac-sha256-counter-v1", seed: task.seed },
-    taskSource: taskSource(task.source, task.sourceCountsByMachine),
+    taskSource: taskSource(task.source, task.sourceCountsByMachine, researchAssignments),
     titleRules,
     inventorySnapshotHash: context.preparationSnapshot.inventorySnapshotHash,
     capabilitySnapshotHash: context.preparationSnapshot.capabilitySnapshotHash,
-    capabilityRequirements: { actionRegistry: "composite-actions/v1", commentPolicy: "count-adaptive-v1", cpaCommentCountSchema: "cpa-comment-count/v1" },
+    capabilityRequirements: {
+      actionRegistry: "composite-actions/v1",
+      commentPolicy: "count-adaptive-v1",
+      cpaCommentCountSchema: "cpa-comment-count/v1",
+      ...(task.source.type === "research_read_only" ? { researchPolicy: "research-read-only-v1" } : {}),
+    },
     visitPolicy: {
       targetValidVisitsPerDevice: count,
       maxVisitAttemptsPerDevice: count * 2,

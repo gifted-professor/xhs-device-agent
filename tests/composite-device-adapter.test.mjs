@@ -252,3 +252,40 @@ test("unified feed open, title condition, and return use the compiled budgets an
   assert.deepEqual(calls.at(-1), ["return", 1]);
   assert.equal(adapter.currentBinding, null);
 });
+
+test("search, URL, and research actions enter only through the bound task source adapter", async () => {
+  const calls = [];
+  const sourceAdapter = {
+    async openSearchResults(params) { calls.push(["search", params]); return { status: "verified", pageState: "SEARCH_RESULTS" }; },
+    async openSearchResult(params) { calls.push(["result", params]); return { status: "verified", pageState: "IMAGE_NOTE" }; },
+    async returnToSearchResults() { calls.push(["return"]); return { status: "verified", pageState: "SEARCH_RESULTS" }; },
+    async openXhsUrl(params) { calls.push(["url", params]); return { status: "verified", pageState: "IMAGE_NOTE" }; },
+    async collectResearch(params) { calls.push(["research", params]); return { status: "verified", researchStatus: "completed" }; },
+  };
+  const adapter = new CompositeDeviceAdapter({
+    feedAdapter: { stableUi: async () => snapshot("IMAGE_NOTE", detailNodes, "source-detail") },
+    sourceAdapter,
+    rules: {},
+    assertFastGate: () => {},
+  });
+  for (const step of [
+    { stepId: "m02.s00001", action: "search.open_results", params: { queryRef: "query-001" } },
+    { stepId: "m02.s00002", action: "search.open_result", params: { resultOrdinal: 1, candidateCap: 2, maxScrolls: 3 } },
+    { stepId: "m02.s00003", action: "navigation.return_to_source", params: { sourceType: "search_results" } },
+    { stepId: "m02.s00004", action: "content.open_xhs_url", params: { urlRef: "url-001" } },
+    { stepId: "m02.s00005", action: "research.collect", params: { policyRef: "research-read-only-v1" } },
+  ]) {
+    const observed = await adapter.observe(step);
+    assert.equal(observed.status, "observed");
+    const bound = await adapter.bindTarget(step);
+    const result = await adapter.sendOnce(step, bound, { observed });
+    assert.equal(result.status, "verified");
+  }
+  assert.deepEqual(calls, [
+    ["search", { queryRef: "query-001" }],
+    ["result", { resultOrdinal: 1, candidateCap: 2, maxScrolls: 3 }],
+    ["return"],
+    ["url", { urlRef: "url-001" }],
+    ["research", { policyRef: "research-read-only-v1" }],
+  ]);
+});

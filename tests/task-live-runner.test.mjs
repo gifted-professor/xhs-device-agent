@@ -190,3 +190,74 @@ test("approved live plan completes the parent, slot, ledger, and worker pipeline
   assert.equal(JSON.stringify(executed).includes("PRIVATE_SERIAL"), false);
   assert.equal(JSON.stringify(executed).includes("private-alias"), false);
 });
+
+test("approved search, direct URL, and research plans pass the unified live executor capability gate", async () => {
+  for (const [taskId, source] of [
+    ["live-search-source", { type: "search_results", query: "summer commute", count: 2, maxScrollsPerResult: 3 }],
+    ["live-url-source", { type: "url_list", urls: ["https://www.xiaohongshu.com/explore/64abcde01234567890fedcba"] }],
+    ["live-research-source", {
+      type: "research_read_only", topic: "summer commute", seedKeywords: ["office"], sources: ["search"],
+      commentMode: "none",
+      budgets: {
+        wallClockSeconds: 60, maxQueries: 2, maxNotes: 2, maxNotesPerQuery: 1,
+        maxResultScrollsPerQuery: 1, maxNoteScrolls: 0, maxCommentPanels: 0,
+        maxCommentsPerNote: 0, maxNoNewScrolls: 1,
+      },
+      aiPolicy: { topicPlanner: false, pageFallback: false, resultAnalysis: false, maxAutomaticCalls: 0 },
+    }],
+  ]) {
+    const root = await mkdtemp(path.join(os.tmpdir(), `${taskId}-`));
+    const task = spec({ taskId, source, actions: [] });
+    class FakeFeedAdapter {}
+    class FakeSourceAdapter { constructor() {} }
+    class FakeDeviceAdapter {
+      async observe() { return { status: "observed", pageState: "UNKNOWN" }; }
+      async bindTarget(step) { return { targetHash: "f".repeat(64), observationId: `fake-${step.stepId}`, pageState: "UNKNOWN" }; }
+      async sendOnce(_step, binding) { return { status: "verified", targetHash: binding.targetHash, sent: false }; }
+      async verify(_step, binding, { sendOutcome }) { return sendOutcome ?? { status: "verified", targetHash: binding.targetHash }; }
+    }
+    const args = {
+      spec: task,
+      runtimeContext: runtime(root),
+      activeCapability: activeCapability(),
+      outputRoot: path.join(root, "out"),
+      now: fixedNow,
+    };
+    const review = await prepareLiveTask(args);
+    const executed = await prepareLiveTask({
+      ...args,
+      confirmPlanHash: review.planHash,
+      execute: (input) => executeApprovedTaskPlan({
+        ...input,
+        dependencies: {
+          AdbFeedAdapter: FakeFeedAdapter,
+          CompositeDeviceAdapter: FakeDeviceAdapter,
+          TaskSourceDeviceAdapter: FakeSourceAdapter,
+          createAdbResearchProvider: () => ({}),
+          createWindowsLocalOcr: () => null,
+          loadLocalEnvironment: async () => {},
+          loadRules: async () => ({}),
+        },
+      }),
+    });
+    assert.equal(executed.status, "completed");
+  }
+});
+
+test("short URL live plans fail before workers or device actions are created", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "live-short-url-"));
+  const task = spec({
+    taskId: "live-short-url",
+    source: { type: "url_list", urls: ["https://xhslink.com/abc123"] },
+    actions: [],
+  });
+  const args = {
+    spec: task, runtimeContext: runtime(root), activeCapability: activeCapability(), outputRoot: path.join(root, "out"), now: fixedNow,
+  };
+  const review = await prepareLiveTask(args);
+  await assert.rejects(() => prepareLiveTask({
+    ...args,
+    confirmPlanHash: review.planHash,
+    execute: (input) => executeApprovedTaskPlan(input),
+  }), /cannot prebind url-001/u);
+});

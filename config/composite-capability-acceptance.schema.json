@@ -81,7 +81,7 @@
         "allowedActions": {
           "type": "array",
           "minItems": 1,
-          "maxItems": 19,
+          "maxItems": 20,
           "uniqueItems": true,
           "items": {
             "enum": [
@@ -90,6 +90,7 @@
               "search.open_results",
               "search.open_result",
               "content.open_xhs_url",
+              "research.collect",
               "detail.inspect",
               "detail.evaluate_title_rule",
               "image.scroll_content",

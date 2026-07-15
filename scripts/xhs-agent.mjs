@@ -366,8 +366,11 @@ export function buildDispatch(parsed) {
     return psScript("Run-TaskCompatibility.ps1", args);
   }
   if (area === "research" && command === "run") {
-    assertAllowedOptions(options, ["task", "config", "output", "group", "device", "dry-run"], "research run");
-    const args = ["-TaskPath", String(requireOption(options, "task"))];
+    assertAllowedOptions(options, [
+      "task", "config", "output", "group", "device", "max-parallel", "capability-profile",
+      "acceptance-root", "confirm-plan-hash", "dry-run", "json",
+    ], "research run");
+    const args = ["-Kind", "Research", "-LegacySpecPath", String(requireOption(options, "task"))];
     appendOption(args, options, "config", "-ConfigPath");
     appendOption(args, options, "output", "-OutputRoot");
     if (options.group) throw new Error("Research selects its live group from task.deviceGroup, not --group");
@@ -377,10 +380,14 @@ export function buildDispatch(parsed) {
     }
     if (options["dry-run"]) {
       args.push("-DryRun");
-      if (devices.length === 1) args.push("-DeviceAlias", String(devices[0]));
-      if (devices.length > 1) args.push("-DeviceAliasesCsv", devices.map(String).join(","));
+      if (devices.length) args.push("-DeviceAliasesCsv", devices.map(String).join(","));
     }
-    return psScript("Run-TopicResearch.ps1", args);
+    appendOption(args, options, "max-parallel", "-MaxParallel");
+    appendOption(args, options, "capability-profile", "-CapabilityProfileId");
+    appendOption(args, options, "acceptance-root", "-AcceptanceRoot");
+    appendOption(args, options, "confirm-plan-hash", "-ConfirmPlanHash");
+    if (options.json) args.push("-Json");
+    return psScript("Run-TaskCompatibility.ps1", args);
   }
   if (area === "research" && command === "sync-review") {
     assertAllowedOptions(options, ["review", "config", "confirm-external-sync"], "research sync-review");

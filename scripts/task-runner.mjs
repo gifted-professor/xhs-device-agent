@@ -56,7 +56,7 @@ function dryRunMachines(task) {
 }
 
 function planningCapability(task, machines) {
-  const count = task.source.type === "url_list" ? task.source.urls.length : task.source.count;
+  const count = task.source.type === "url_list" ? task.source.urls.length : (task.source.count ?? 1);
   return {
     capabilityProfileId: task.capabilityProfileId,
     profileKind: "non_executable_dry_run",

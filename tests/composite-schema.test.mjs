@@ -9,7 +9,7 @@ const fixtureUrl = new URL("./fixtures/", import.meta.url);
 
 const ACTIONS = [
   "feed.scroll", "feed.open_visible", "search.open_results", "search.open_result",
-  "content.open_xhs_url", "detail.inspect", "detail.evaluate_title_rule", "image.scroll_content",
+  "content.open_xhs_url", "research.collect", "detail.inspect", "detail.evaluate_title_rule", "image.scroll_content",
   "video.advance", "comments.observe_count", "comments.open", "comments.collect",
   "comments.close", "navigation.return_to_feed", "navigation.return_to_source", "wait.for_condition", "recover.to_feed",
   "engagement.ensure_liked", "engagement.ensure_favorited",

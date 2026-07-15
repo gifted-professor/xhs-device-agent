@@ -198,7 +198,20 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
     endpoint: config.endpoint,
     acceptedActions: config.api.acceptedActions,
   }, { sendRequest: options.sendRequest });
-  const commandRunner = options.commandRunner ?? defaultCommandRunner;
+  const rawCommandRunner = options.commandRunner ?? defaultCommandRunner;
+  const assertFastGate = typeof options.assertFastGate === "function" ? options.assertFastGate : null;
+  const commandRunner = async (...args) => {
+    if (assertFastGate) assertFastGate({ phase: "before_xiaowei_adb_operation" });
+    return rawCommandRunner(...args);
+  };
+  const invokeClient = async (...args) => {
+    if (assertFastGate) assertFastGate({ phase: "before_xiaowei_api_operation" });
+    return client.invoke(...args);
+  };
+  const probeClient = async () => {
+    if (assertFastGate) assertFastGate({ phase: "before_xiaowei_api_probe" });
+    return client.probe();
+  };
   const sleep = options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
   const expectedPackage = typeof config.expectedPackage === "string" && SAFE_PACKAGE.test(config.expectedPackage)
     ? config.expectedPackage
@@ -211,7 +224,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
       error.code = "XIAOWEI_IDENTITY_MISMATCH";
       throw error;
     }
-    const probe = await client.probe();
+    const probe = await probeClient();
     const currentApiIds = apiDeviceIds(probe.data);
     if (!currentApiIds.includes(record.serial)) {
       const error = new Error("Selected Xiaowei and ADB device identities differ");
@@ -286,7 +299,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
     const bridgeIme = profile.preferredImeService;
     const deferClearVerification = profile.echoVerification === "local_ocr";
     try {
-      const inventory = await client.invoke("imeList", { devices: record.serial });
+      const inventory = await invokeClient("imeList", { devices: record.serial });
       const installed = Array.isArray(inventory.data?.[record.serial]) ? inventory.data[record.serial] : [];
       if (!installed.includes(bridgeIme)) throw new Error("The approved bridge input method was absent from the device inventory");
     } catch (error) {
@@ -297,7 +310,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
     let bridgeEnabledByAdapter = false;
     const restoreInputState = async () => {
       audit.restoreAttempted = true;
-      await client.invoke("selectIme", { devices: record.serial, data: { ime: priorIme } }, {
+      await invokeClient("selectIme", { devices: record.serial, data: { ime: priorIme } }, {
         authorization: profileAuthorization("selectIme"),
       });
       if (!await waitForDefaultIme(commandRunner, sleep, config, record, priorIme)) {
@@ -322,7 +335,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
         if (!enabledAfterSelection.has(bridgeIme)) throw new Error("The approved bridge input method could not be enabled");
       }
       stage = "select_ime";
-      await client.invoke("selectIme", { devices: record.serial, data: { ime: bridgeIme } }, {
+      await invokeClient("selectIme", { devices: record.serial, data: { ime: bridgeIme } }, {
         authorization: profileAuthorization("selectIme"),
       });
       if (!await waitForDefaultIme(commandRunner, sleep, config, record, bridgeIme)) {
@@ -351,7 +364,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
         audit.clearVerified = true;
       }
       stage = "input_text";
-      await client.invoke("inputText", { devices: record.serial, data: { content: value } }, {
+      await invokeClient("inputText", { devices: record.serial, data: { content: value } }, {
         authorization: profileAuthorization("inputText"),
       });
       audit.apiAccepted = true;

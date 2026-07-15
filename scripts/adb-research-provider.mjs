@@ -454,6 +454,7 @@ export function createAdbResearchProvider(options = {}) {
   const xiaoweiTextApprovedAliases = new Set(options.xiaoweiTextApprovedAliases ?? []);
   const xiaoweiOcrEchoAliases = new Set(options.xiaoweiOcrEchoAliases ?? []);
   const onResourceUsage = typeof options.onResourceUsage === "function" ? options.onResourceUsage : null;
+  const assertFastGate = typeof options.assertFastGate === "function" ? options.assertFastGate : null;
   const records = (options.devices ?? []).map((device, index) => {
     if (!device || typeof device.alias !== "string" || !/^[A-Za-z0-9._-]{1,64}$/.test(device.alias.trim()) || typeof device.serial !== "string" || !device.serial.trim()) {
       throw new TypeError(`devices[${index}] must contain non-empty alias and serial strings`);
@@ -523,6 +524,7 @@ export function createAdbResearchProvider(options = {}) {
   }
 
   async function runAdb(record, args, operation, runOptions = {}) {
+    if (assertFastGate) assertFastGate({ phase: "before_device_operation", operation });
     let raw;
     try {
       raw = await commandRunner({
@@ -1798,6 +1800,119 @@ export function createAdbResearchProvider(options = {}) {
 
     async isDeviceOnline(input = {}) {
       try { return online(recordFor(input)); } catch { return false; }
+    },
+
+    async createUnifiedSearchSession({ taskId, query, count, device, deviceAlias } = {}) {
+      const record = recordFor({ device, deviceAlias });
+      const normalizedQuery = compact(query);
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u.test(String(taskId ?? ""))) {
+        throw new ProviderStop("failed", "task:invalid_id", "Unified search taskId is invalid");
+      }
+      if (!normalizedQuery || [...normalizedQuery].length > 200 || /[\u0000-\u001f\u007f-\u009f]/u.test(normalizedQuery)) {
+        throw new ProviderStop("failed", "search:invalid_query", "Unified search query is invalid");
+      }
+      if (!Number.isSafeInteger(count) || count < 1 || count > 10000) {
+        throw new ProviderStop("failed", "search:invalid_count", "Unified search count is invalid");
+      }
+      const task = {
+        taskId,
+        topic: normalizedQuery,
+        deviceGroup: "unified-task",
+        commentMode: "none",
+        interactionPolicy: "human_final",
+        budgets: {
+          maxNotesPerQuery: count,
+          maxResultScrollsPerQuery: count,
+          maxNoNewScrolls: 2,
+          maxNoteScrolls: 0,
+          maxCommentPanels: 0,
+          maxCommentsPerNote: 0,
+        },
+      };
+      const session = await createSession(record, task, { source: "search", keyword: normalizedQuery });
+      let current = await launch(session);
+      current = await routeSource(session, current, "search", normalizedQuery);
+      if (current.classification.state !== "SEARCH_RESULTS") {
+        throw new ProviderStop("human_required", `navigation:search_results:${current.classification.state}`, "Unified search did not reach SEARCH_RESULTS");
+      }
+      const seen = new Set();
+      let openedOrdinal = 0;
+
+      return Object.freeze({
+        query: normalizedQuery,
+        inputMethodAudit: safeInputMethodAudit(session.inputMethodAudits.at(-1)),
+        async openNextResult({ resultOrdinal, maxScrolls = 1 } = {}) {
+          if (resultOrdinal !== openedOrdinal + 1) {
+            throw new ProviderStop("failed", "search:ordinal_sequence", "Unified search result ordinals must execute in order");
+          }
+          if (!Number.isSafeInteger(maxScrolls) || maxScrolls < 0 || maxScrolls > 10000) {
+            throw new ProviderStop("failed", "search:invalid_scroll_budget", "Unified search scroll budget is invalid");
+          }
+          if (current.classification.state !== "SEARCH_RESULTS") {
+            throw new ProviderStop("human_required", `search:source_drift:${current.classification.state}`, "Unified search source identity drifted");
+          }
+          for (let attempt = 0; attempt <= maxScrolls; attempt += 1) {
+            const entries = noteCardEntries(current.document);
+            const selected = entries.find((entry) => {
+              const identity = entry.noteId || `${entry.author}\u0000${entry.title}\u0000${entry.mediaType}`;
+              return !seen.has(hash(identity));
+            });
+            if (selected) {
+              const identity = selected.noteId || `${selected.author}\u0000${selected.title}\u0000${selected.mediaType}`;
+              const identityHash = hash(identity);
+              await tapCurrentNode(session, current, selected.root, `unified_search_result:${identityHash.slice(0, 16)}`, "tap_unified_search_result");
+              const detail = await stableSnapshot(session);
+              if (!new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(detail.classification.state)) {
+                current = await returnToList(session, detail, "SEARCH_RESULTS");
+                throw new ProviderStop("human_required", `search:detail_state:${detail.classification.state}`, "Unified search result did not open a public detail");
+              }
+              const metadata = detailMetadata(detail);
+              const detailId = publicNoteId(detail.document.nodes);
+              const idVerified = Boolean(selected.noteId && detailId && compact(selected.noteId).toLowerCase() === compact(detailId).toLowerCase());
+              const titleVerified = Boolean(metadata.title && compact(metadata.title) === compact(selected.title));
+              if (!idVerified && !titleVerified) {
+                current = await returnToList(session, detail, "SEARCH_RESULTS");
+                throw new ProviderStop("human_required", "search:target_identity_mismatch", "Unified search opened a detail whose identity could not be verified");
+              }
+              seen.add(identityHash);
+              openedOrdinal = resultOrdinal;
+              current = detail;
+              return Object.freeze({
+                status: "verified",
+                resultOrdinal,
+                pageState: detail.classification.state,
+                targetIdentityHash: identityHash,
+                verifiedBy: idVerified ? "noteId" : "title",
+                publicMetadata: {
+                  title: compact(metadata.title || selected.title).slice(0, 200),
+                  author: compact(metadata.author || selected.author).slice(0, 120),
+                  mediaType: detail.classification.state === "VIDEO_NOTE" ? "video" : "image",
+                },
+              });
+            }
+            if (attempt === maxScrolls) break;
+            const container = currentScrollableContainer(current);
+            if (!container) break;
+            const { bounds } = container;
+            const x = Math.floor((bounds.left + bounds.right) / 2);
+            const startY = Math.floor(bounds.top + bounds.height * 0.75);
+            const endY = Math.floor(bounds.top + bounds.height * 0.25);
+            await runAdb(record, ["shell", "input", "swipe", String(x), String(startY), String(x), String(endY), "350"], "scroll_unified_search_results");
+            current = await stableSnapshot(session);
+            if (current.classification.state !== "SEARCH_RESULTS") {
+              throw new ProviderStop("human_required", `search:scroll_state:${current.classification.state}`, "Unified search scroll left SEARCH_RESULTS");
+            }
+          }
+          throw new ProviderStop("partial", "search:result_exhausted", "No new verified search result appeared within the approved scroll budget");
+        },
+        async returnToResults() {
+          if (!new Set(["IMAGE_NOTE", "VIDEO_NOTE"]).has(current.classification.state)) {
+            current = await stableSnapshot(session);
+          }
+          current = await returnToList(session, current, "SEARCH_RESULTS");
+          return Object.freeze({ status: "verified", pageState: current.classification.state });
+        },
+      });
     },
 
     async executeWorkUnit({ task, unit, device, deviceAlias, attempt = 0 } = {}) {

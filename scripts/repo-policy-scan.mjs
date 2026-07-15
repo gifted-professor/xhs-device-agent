@@ -27,7 +27,11 @@ export const STALE_RESTRICTION_RULES = Object.freeze([
   Object.freeze({ id: "feed-count-1-to-50", pattern: /ValidateRange\(1,\s*50\)|asBoundedInteger\(input\.count,\s*["']count["'],\s*1,\s*50\)/u }),
   Object.freeze({ id: "same-position-action-ban", pattern: /likeAt and favoriteAt must target different feed positions|LikeAt and FavoriteAt must target different feed positions/iu }),
   Object.freeze({ id: "legacy-feed-single-device-entry", pattern: /Feed run requires exactly one machine number or machine name/iu }),
-  Object.freeze({ id: "legacy-feed-single-action-slots", pattern: /\[int\]\$LikeAt[\s\S]*\[int\]\$FavoriteAt/u }),
+  Object.freeze({
+    id: "legacy-feed-single-action-slots",
+    pattern: /\[int\]\$LikeAt[\s\S]*\[int\]\$FavoriteAt/u,
+    compatibilityFiles: new Set(["scripts/Run-TaskCompatibility.ps1"]),
+  }),
   Object.freeze({ id: "legacy-batch-device-cap", pattern: /runs must contain one or two explicit machines/iu }),
   Object.freeze({ id: "legacy-batch-read-only-executor", pattern: /Feed batch V1 is read-only and rejects interactions/iu }),
   Object.freeze({ id: "legacy-matrix-interaction-implementation", pattern: /"Follow"\s*\{|"Comment"\s*\{|"Publish"\s*\{|"Delete"\s*\{/u }),
@@ -127,6 +131,7 @@ export function scanRepositoryPolicy(runtime = {}) {
   for (const [file, source] of sources) {
     if (STALE_SCAN_EXCLUSIONS.has(file)) continue;
     for (const rule of STALE_RESTRICTION_RULES) {
+      if (rule.compatibilityFiles?.has(file)) continue;
       const match = rule.pattern.exec(source);
       if (match) staleRestrictions.push(Object.freeze({ ruleId: rule.id, file, line: lineOf(source, match.index) }));
     }

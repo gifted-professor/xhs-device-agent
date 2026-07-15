@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Feed", "Batch")]
+    [ValidateSet("Feed", "Batch", "Research")]
     [string]$Kind,
     [string]$LegacySpecPath,
     [string]$TaskId,
@@ -42,7 +42,7 @@ function Resolve-CompatibilityMachines {
         ![string]::IsNullOrWhiteSpace($DeviceAliasesCsv),
         ![string]::IsNullOrWhiteSpace($Group)
     ) | Where-Object { $_ }
-    if ($modes.Count -ne 1) { throw "Feed compatibility requires exactly one machine selector mode" }
+    if ($modes.Count -ne 1) { throw "Compatibility conversion requires exactly one machine selector mode" }
     if ($MachineNumbersCsv) {
         $numbers = @($MachineNumbersCsv.Split(',') | ForEach-Object {
             $value = $_.Trim()
@@ -108,10 +108,38 @@ try {
         if ($FavoriteAt.HasValue) { $request.favoriteAt = [int]$FavoriteAt.Value }
         $legacyInput = Join-Path $tempRoot "legacy-feed.json"
         [System.IO.File]::WriteAllText($legacyInput, ($request | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
-    } else {
+    } elseif ($Kind -eq "Batch") {
         if (!$LegacySpecPath) { throw "Batch compatibility requires LegacySpecPath" }
         $legacyInput = Get-AbsolutePath $LegacySpecPath
         if (!(Test-Path -LiteralPath $legacyInput -PathType Leaf)) { throw "Legacy Batch spec not found" }
+    } else {
+        if (!$LegacySpecPath) { throw "Research compatibility requires LegacySpecPath" }
+        $legacyInput = Get-AbsolutePath $LegacySpecPath
+        if (!(Test-Path -LiteralPath $legacyInput -PathType Leaf)) { throw "Legacy Research spec not found" }
+        $researchTask = Get-Content -LiteralPath $legacyInput -Raw -Encoding UTF8 | ConvertFrom-Json
+        $config = $null
+        if (Test-Path -LiteralPath $ConfigPath -PathType Leaf) {
+            $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
+        }
+        if ($DryRun -and !$config) {
+            if ($MachineNumbersCsv -or $MachineName -or $Group) { throw "Dry-run named machine selection requires local configuration" }
+            $aliasCount = if ($DeviceAliasesCsv) {
+                $aliases = @($DeviceAliasesCsv.Split(',') | ForEach-Object { $_.Trim() })
+                if (!$aliases.Count -or @($aliases | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]{1,64}$' }).Count -or @($aliases | Select-Object -Unique).Count -ne $aliases.Count) {
+                    throw "Research dry-run aliases must be unique safe values"
+                }
+                $aliases.Count
+            } else { 3 }
+            if ($aliasCount -gt 64) { throw "Research dry-run supports at most 64 synthetic machine slots" }
+            $machines = @(1..$aliasCount | ForEach-Object { $_.ToString("00") })
+        } else {
+            if (!$config) { throw "Local config is required to resolve the Research device group" }
+            if (!$MachineNumbersCsv -and !$MachineName -and !$DeviceAliasesCsv -and !$Group) {
+                $Group = [string]$researchTask.deviceGroup
+            }
+            $machines = @(Resolve-CompatibilityMachines -Config $config)
+        }
+        if ($MaxParallel -eq 0) { $MaxParallel = $machines.Count }
     }
 
     $node = (Get-Command node -ErrorAction Stop).Source
@@ -122,6 +150,9 @@ try {
         "--output", $taskSpec,
         "--capability-profile", $CapabilityProfileId
     )
+    if ($Kind -eq "Research") {
+        $converterArgs += @("--machines", ($machines -join ","), "--max-parallel", [string]$MaxParallel)
+    }
     & $node @converterArgs
     if ($LASTEXITCODE -ne 0) { throw "Legacy task conversion failed" }
 

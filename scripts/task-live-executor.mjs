@@ -9,11 +9,23 @@ import { CompositeOperationLedger, operationSlotsFromPlan } from "./composite-op
 import { hashPlan, canonicalizeJson } from "./composite-plan-core.mjs";
 import { runCompositeWorkflow } from "./composite-workflow.mjs";
 import { AdbFeedAdapter } from "./feed-device-runner.mjs";
+import { createAdbResearchProvider } from "./adb-research-provider.mjs";
+import { createWindowsLocalOcr } from "./local-ocr.mjs";
+import {
+  TaskSourceDeviceAdapter,
+  taskSourceRequiresSearch,
+  unsupportedLiveUrl,
+} from "./task-source-device-adapter.mjs";
+import { createXiaoweiTextInputAdapter } from "./xiaowei-text-input.mjs";
 import { loadRules } from "./xhs-page-engine.mjs";
+import { loadLocalEnvironment } from "./local-environment.mjs";
+import { runResearchSession } from "./research-session.mjs";
 
 const LIVE_ACTIONS = new Set([
   "recover.to_feed", "feed.open_visible", "detail.inspect", "detail.evaluate_title_rule",
   "comments.observe_count", "navigation.return_to_feed",
+  "search.open_results", "search.open_result", "navigation.return_to_source", "content.open_xhs_url",
+  "research.collect",
   "engagement.ensure_liked", "engagement.ensure_favorited",
 ]);
 
@@ -71,6 +83,9 @@ export async function executeApprovedTaskPlan({
   invariant(runtimeDevices.every((entry) => entry.online === true), "a selected target device is offline");
   const unsupported = plan.devices.flatMap((device) => device.steps).filter((step) => !LIVE_ACTIONS.has(step.action));
   invariant(unsupported.length === 0, `live adapter does not implement ${unsupported[0]?.action ?? "the compiled action"}`);
+  const unsupportedUrl = unsupportedLiveUrl(plan.taskSource);
+  invariant(!unsupportedUrl, `live URL adapter cannot prebind ${unsupportedUrl?.urlRef ?? "the requested short URL"}; use a direct Xiaohongshu note URL`);
+  if (plan.taskSource.type === "research_read_only") await (dependencies.loadLocalEnvironment ?? loadLocalEnvironment)();
 
   const attemptId = `attempt-${randomBytes(8).toString("hex")}`;
   const attemptRoot = path.resolve(outputRoot, "attempts", attemptId);
@@ -117,6 +132,11 @@ export async function executeApprovedTaskPlan({
   const OperationLedger = dependencies.CompositeOperationLedger ?? CompositeOperationLedger;
   const FeedAdapter = dependencies.AdbFeedAdapter ?? AdbFeedAdapter;
   const DeviceAdapter = dependencies.CompositeDeviceAdapter ?? CompositeDeviceAdapter;
+  const SourceAdapter = dependencies.TaskSourceDeviceAdapter ?? TaskSourceDeviceAdapter;
+  const SearchProvider = dependencies.createAdbResearchProvider ?? createAdbResearchProvider;
+  const createLocalOcr = dependencies.createWindowsLocalOcr ?? createWindowsLocalOcr;
+  const createTextAdapter = dependencies.createXiaoweiTextInputAdapter ?? createXiaoweiTextInputAdapter;
+  const executeResearchSession = dependencies.runResearchSession ?? runResearchSession;
   const runWorkflow = dependencies.runCompositeWorkflow ?? runCompositeWorkflow;
   const loadPageRules = dependencies.loadRules ?? loadRules;
   const operationLedger = await OperationLedger.open({
@@ -144,8 +164,72 @@ export async function executeApprovedTaskPlan({
       runDir: workerRoot,
       sendGate: () => gate(),
     });
+    let sourceAdapter = null;
+    if (plan.taskSource.type !== "feed") {
+      let searchProvider = null;
+      if (taskSourceRequiresSearch(plan.taskSource)) {
+        const textInput = runtimeContext.textInput ?? {};
+        const xiaowei = textInput.xiaowei ?? {};
+        const xiaoweiSettings = xiaowei.textInput ?? {};
+        const xiaoweiApproved = xiaoweiSettings.enabled === true
+          && Array.isArray(xiaoweiSettings.approvedAliases)
+          && xiaoweiSettings.approvedAliases.includes(runtimeDevice.deviceAlias);
+        const selectedXiaoweiAliases = xiaoweiApproved ? [runtimeDevice.deviceAlias] : [];
+        const selectedProfile = xiaoweiApproved ? xiaoweiSettings.perDevice?.[runtimeDevice.deviceAlias] : null;
+        const xiaoweiTextInput = xiaoweiApproved
+          ? createTextAdapter({
+              endpoint: xiaowei.endpoint,
+              api: xiaowei.api,
+              adbPath: runtimeContext.adbPath,
+              expectedPackage: "com.xingin.xhs",
+              expectedOnlineSerials: [runtimeDevice.serial],
+              devices: [{ alias: runtimeDevice.deviceAlias, serial: runtimeDevice.serial }],
+              approvedAliases: selectedXiaoweiAliases,
+              preferredImeServices: xiaoweiSettings.preferredImeServices,
+              perDevice: { [runtimeDevice.deviceAlias]: selectedProfile },
+            }, { assertFastGate: () => gate() })
+          : null;
+        searchProvider = SearchProvider({
+          adbPath: runtimeContext.adbPath,
+          packageName: "com.xingin.xhs",
+          rules,
+          devices: [{ alias: runtimeDevice.deviceAlias, serial: runtimeDevice.serial, group: "unified-task" }],
+          unicodeInput: textInput.unicodeInput ?? {},
+          nativeIme: textInput.nativeIme ?? {},
+          localOcr: createLocalOcr(),
+          xiaoweiTextInput,
+          xiaoweiTextApprovedAliases: selectedXiaoweiAliases,
+          xiaoweiOcrEchoAliases: selectedProfile?.echoVerification === "local_ocr" ? selectedXiaoweiAliases : [],
+          assertFastGate: () => gate(),
+          failureArtifactsRoot: path.join(workerRoot, "diagnostics"),
+        });
+      }
+      const compiledDevice = plan.devices.find((entry) => entry.machine === machine);
+      sourceAdapter = new SourceAdapter({
+        feedAdapter,
+        searchProvider,
+        researchRunner: plan.taskSource.type === "research_read_only"
+          ? (task) => executeResearchSession(task, {
+              outputRoot: path.join(workerRoot, "research"),
+              provider: searchProvider,
+              ai: {
+                apiUrl: process.env.AI_API_URL || process.env.VISION_API_URL,
+                apiKey: process.env.AI_API_KEY || process.env.VISION_API_KEY,
+                model: process.env.AI_MODEL || process.env.VISION_MODEL,
+                promptVersion: process.env.XHS_AI_PROMPT_VERSION || "1",
+              },
+            })
+          : null,
+        taskSource: plan.taskSource,
+        taskId: compiledDevice.taskId,
+        deviceAlias: runtimeDevice.deviceAlias,
+        machine,
+        assertFastGate: gate,
+      });
+    }
     const adapter = new DeviceAdapter({
       feedAdapter,
+      sourceAdapter,
       rules,
       runtimeProfile: plan.runtimeProfile,
       assertFastGate: gate,

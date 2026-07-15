@@ -20,9 +20,9 @@ function step(stepId, action, params = {}, extra = {}) {
   return { stepId, action, params, ...extra };
 }
 
-test("registry is immutable and contains exactly the 19 approved semantic actions", () => {
+test("registry is immutable and contains exactly the 20 approved semantic actions", () => {
   assert.deepEqual(Object.keys(ACTION_REGISTRY).sort(), [...EXPECTED_ACTIONS].sort());
-  assert.equal(Object.keys(ACTION_REGISTRY).length, 19);
+  assert.equal(Object.keys(ACTION_REGISTRY).length, 20);
   assert.ok(Object.isFrozen(ACTION_REGISTRY));
   for (const [name, definition] of Object.entries(ACTION_REGISTRY)) {
     assert.ok(Object.isFrozen(definition), name);

@@ -223,7 +223,7 @@ test("research takes live targets from task.deviceGroup and accepts aliases only
   const dispatch = buildDispatch(parseCliArgs([
     "research", "run", "--task", "task.json", "--dry-run", "--device", "acceptance-device",
   ]));
-  assert.deepEqual(dispatch.args.slice(-3), ["-DryRun", "-DeviceAlias", "acceptance-device"]);
+  assert.deepEqual(dispatch.args.slice(-3), ["-DryRun", "-DeviceAliasesCsv", "acceptance-device"]);
 });
 
 test("research review sync uses the unified entry and explicit external confirmation", () => {
@@ -308,6 +308,25 @@ test("feed batch accepts only a strict spec and optional dry-run controls", () =
     () => buildDispatch(parseCliArgs(["feed", "batch", "--dry-run"])),
     /--spec is required/u,
   );
+});
+
+test("research run is a unified compatibility conversion with the same one-confirmation controls", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "research", "run", "--task", "data/research.json", "--device", "private-a", "--device", "private-b",
+    "--max-parallel", "2", "--dry-run", "--json",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Run-TaskCompatibility.ps1")));
+  assert.deepEqual(dispatch.args.slice(-10), [
+    "-Kind", "Research", "-LegacySpecPath", "data/research.json", "-DryRun",
+    "-DeviceAliasesCsv", "private-a,private-b", "-MaxParallel", "2", "-Json",
+  ]);
+  const live = buildDispatch(parseCliArgs([
+    "research", "run", "--task", "data/research.json", "--confirm-plan-hash", "a".repeat(64),
+  ]));
+  assert.equal(live.args[live.args.indexOf("-ConfirmPlanHash") + 1], "a".repeat(64));
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "research", "run", "--task", "data/research.json", "--device", "private-a",
+  ])), /only for dry-run aliases/u);
 });
 
 test("inventory collection is local-only unless sync is explicitly selected", () => {

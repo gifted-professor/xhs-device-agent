@@ -66,3 +66,45 @@ test("legacy Feed dry conversion accepts explicit machine numbers without local 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("legacy Research dry conversion enters the unified plan with synthetic private alias slots", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "xhs-task-compat-research-test-"));
+  try {
+    const taskPath = path.join(root, "research.json");
+    await writeFile(taskPath, JSON.stringify({
+      schemaVersion: 1,
+      taskId: "legacy-wrapper-research-001",
+      mode: "research_read_only",
+      topic: "通勤穿搭",
+      seedKeywords: ["夏季"],
+      sources: ["search", "suggestions"],
+      deviceGroup: "local-private-group",
+      commentMode: "none",
+      interactionPolicy: "human_final",
+      budgets: {
+        wallClockSeconds: 60, maxQueries: 2, maxNotes: 2, maxNotesPerQuery: 1,
+        maxResultScrollsPerQuery: 1, maxNoteScrolls: 0, maxCommentPanels: 0,
+        maxCommentsPerNote: 0, maxNoNewScrolls: 1,
+      },
+      aiPolicy: { topicPlanner: false, pageFallback: false, resultAnalysis: false, maxAutomaticCalls: 0 },
+    }), "utf8");
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(projectRoot, "scripts", "Run-TaskCompatibility.ps1"),
+      "-Kind", "Research", "-LegacySpecPath", taskPath,
+      "-DeviceAliasesCsv", "private-a,private-b",
+      "-ConfigPath", path.join(root, "missing-local.psd1"),
+      "-OutputRoot", path.join(root, "output"),
+      "-DryRun", "-Json",
+    ], { cwd: projectRoot, encoding: "utf8", windowsHide: true });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const publicResult = JSON.parse(result.stdout.trim());
+    assert.equal(publicResult.deviceOperations, 0);
+    assert.deepEqual(publicResult.selectedMachines, ["01", "02"]);
+    const plan = JSON.parse(await readFile(publicResult.paths.plan, "utf8"));
+    assert.equal(plan.taskSource.type, "research_read_only");
+    assert.equal(JSON.stringify(plan).includes("private-a"), false);
+    assert.equal(plan.devices.every((entry) => entry.steps.every((step) => step.action === "research.collect")), true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -270,6 +270,38 @@ test("ASCII search uses semantic per-device bounds, exact verification, stable w
   assert.equal(mock.calls.filter((call) => call.operation === "tap_search_entry").length, 1);
 });
 
+test("unified search session opens ordered exact results and returns to the bound source", async () => {
+  const keyword = "summer commute";
+  const firstId = "2222222222222222";
+  const secondId = "3333333333333333";
+  const list = results(keyword, [
+    noteCard(firstId, "Five office outfits", "Alice"),
+    noteCard(secondId, "Lightweight workwear", "Bob"),
+  ]);
+  const firstDetail = imageDetail("Five office outfits", firstId.padEnd(24, "a"));
+  const secondDetail = imageDetail("Lightweight workwear", secondId.padEnd(24, "a"));
+  const mock = mockAdb([
+    home, home, searchEntry, searchEntry, suggestions(keyword), suggestions(keyword), list, list,
+    firstDetail, firstDetail, list, list, secondDetail, secondDetail, list, list,
+  ]);
+  const gates = [];
+  const { provider } = providerFor(mock, { assertFastGate: (context) => gates.push(context) });
+  const session = await provider.createUnifiedSearchSession({
+    taskId: "unified-search-001", query: keyword, count: 2, deviceAlias: "content-01",
+  });
+  const first = await session.openNextResult({ resultOrdinal: 1, maxScrolls: 0 });
+  assert.equal(first.status, "verified");
+  assert.equal(first.publicMetadata.title, "Five office outfits");
+  assert.equal(first.verifiedBy, "noteId");
+  assert.deepEqual(await session.returnToResults(), { status: "verified", pageState: "SEARCH_RESULTS" });
+  const second = await session.openNextResult({ resultOrdinal: 2, maxScrolls: 0 });
+  assert.equal(second.publicMetadata.title, "Lightweight workwear");
+  assert.deepEqual(await session.returnToResults(), { status: "verified", pageState: "SEARCH_RESULTS" });
+  assert.equal(mock.calls.filter((call) => call.operation === "tap_unified_search_result").length, 2);
+  assert.equal(gates.length, mock.calls.length);
+  assert.equal(JSON.stringify({ first, second }).includes("REAL-SERIAL"), false);
+});
+
 test("bounded image-detail sampling scrolls only a semantic content container and reads deidentified comments", async () => {
   const keyword = "office capsule";
   const rawId = "4444444444444444";

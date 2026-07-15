@@ -49,8 +49,9 @@ const registry = {
   }),
   "search.open_result": definition({
     allowedPages: [PAGE.SEARCH],
-    paramsSchema: params(["resultOrdinal", "candidateCap"], {
+    paramsSchema: params(["resultOrdinal", "candidateCap", "maxScrolls"], {
       resultOrdinal: integer(1, 10000), candidateCap: integer(1, 10000),
+      maxScrolls: integer(0, 10000),
     }),
     expectedPostcondition: "fresh public detail opened from the exact ordered search result",
   }),
@@ -58,6 +59,11 @@ const registry = {
     allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.SEARCH, PAGE.UNKNOWN],
     paramsSchema: params(["urlRef"], { urlRef }),
     expectedPostcondition: "fresh public detail matching the approved Xiaohongshu URL reference",
+  }),
+  "research.collect": definition({
+    allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.SEARCH, PAGE.UNKNOWN],
+    paramsSchema: params(["policyRef"], { policyRef: { const: "research-read-only-v1" } }),
+    expectedPostcondition: "bounded public research result for the exact compiled machine shard",
   }),
   "detail.inspect": definition({
     allowedPages: [PAGE.IMAGE, PAGE.VIDEO], expectedPostcondition: "typed detail observation and immutable target binding",

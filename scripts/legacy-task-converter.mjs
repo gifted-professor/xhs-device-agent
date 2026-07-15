@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { canonicalizeJson } from "./composite-plan-core.mjs";
 import { normalizeTaskSpec } from "./task-compiler.mjs";
+import { validateResearchTask } from "./research-core.mjs";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u;
 const MACHINE = /^[0-9]{2}$/u;
@@ -56,7 +57,7 @@ function machineList(value, label = "machines") {
   return [...value];
 }
 
-function taskBase({ taskId, capabilityProfileId, machines, maxParallel, source, actions, sourceCountsByMachine, taskIdsByMachine, seedInput }) {
+function taskBase({ taskId, capabilityProfileId, machines, maxParallel, source, actions, sourceCountsByMachine, taskIdsByMachine, maxWallClockMs, seedInput }) {
   const task = {
     schemaVersion: "xhs-task-spec/v1",
     taskId: safeId(taskId, "taskId"),
@@ -68,6 +69,7 @@ function taskBase({ taskId, capabilityProfileId, machines, maxParallel, source, 
     ...(taskIdsByMachine ? { taskIdsByMachine } : {}),
     source,
     actions,
+    ...(maxWallClockMs ? { maxWallClockMs } : {}),
   };
   return normalizeTaskSpec(task);
 }
@@ -152,18 +154,53 @@ export function convertLegacyFeedBatch(input, { capabilityProfileId = DEFAULT_CA
   });
 }
 
+export function convertLegacyResearch(input, {
+  machines,
+  maxParallel,
+  capabilityProfileId = DEFAULT_CAPABILITY_PROFILE_ID,
+} = {}) {
+  const research = validateResearchTask(input);
+  const selectedMachines = machineList(machines, "research machines");
+  const parallel = maxParallel ?? selectedMachines.length;
+  const normalizedInput = {
+    research,
+    machines: selectedMachines,
+    maxParallel: parallel,
+    capabilityProfileId: profileId(capabilityProfileId),
+  };
+  return taskBase({
+    taskId: research.taskId,
+    capabilityProfileId: normalizedInput.capabilityProfileId,
+    machines: selectedMachines,
+    maxParallel: parallel,
+    source: {
+      type: "research_read_only",
+      topic: research.topic,
+      seedKeywords: [...research.seedKeywords],
+      sources: [...research.sources],
+      commentMode: research.commentMode,
+      budgets: { ...research.budgets },
+      aiPolicy: { ...research.aiPolicy },
+    },
+    actions: [],
+    maxWallClockMs: research.budgets.wallClockSeconds * 1000,
+    seedInput: normalizedInput,
+  });
+}
+
 function parseCli(argv) {
   const options = Object.create(null);
   for (let index = 0; index < argv.length; index += 1) {
     const name = String(argv[index] ?? "").replace(/^--/u, "");
-    invariant(["kind", "input", "output", "capability-profile"].includes(name), `legacy converter does not support --${name}`);
+    invariant(["kind", "input", "output", "capability-profile", "machines", "max-parallel"].includes(name), `legacy converter does not support --${name}`);
     invariant(!Object.hasOwn(options, name), `--${name} may be provided only once`);
     index += 1;
     invariant(index < argv.length && !String(argv[index]).startsWith("--"), `--${name} requires a value`);
     options[name] = String(argv[index]);
   }
-  invariant(["feed", "batch"].includes(options.kind), "--kind must be feed or batch");
+  invariant(["feed", "batch", "research"].includes(options.kind), "--kind must be feed, batch, or research");
   invariant(options.input && options.output, "--input and --output are required");
+  if (options.kind === "research") invariant(options.machines, "--machines is required for research conversion");
   return options;
 }
 
@@ -171,7 +208,15 @@ async function main(argv = process.argv.slice(2)) {
   const options = parseCli(argv);
   const input = JSON.parse(await readFile(path.resolve(options.input), "utf8"));
   const context = { capabilityProfileId: options["capability-profile"] ?? DEFAULT_CAPABILITY_PROFILE_ID };
-  const task = options.kind === "feed" ? convertLegacyFeedRun(input, context) : convertLegacyFeedBatch(input, context);
+  const task = options.kind === "feed"
+    ? convertLegacyFeedRun(input, context)
+    : options.kind === "batch"
+      ? convertLegacyFeedBatch(input, context)
+      : convertLegacyResearch(input, {
+          ...context,
+          machines: options.machines.split(","),
+          maxParallel: options["max-parallel"] === undefined ? undefined : Number(options["max-parallel"]),
+        });
   await writeFile(path.resolve(options.output), `${JSON.stringify(task, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
 }
 
