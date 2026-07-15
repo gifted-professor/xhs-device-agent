@@ -98,6 +98,7 @@ test("risk classes match the fixed policy", windowsOnly, async () => {
 test("TapText interaction labels cannot be confirmed or grouped through", windowsOnly, () => {
   const chineseLike = String.fromCodePoint(28857, 36190);
   const spacedChineseLike = String.fromCodePoint(28857, 32, 36190);
+  const chineseFinance = String.fromCodePoint(29702, 36130);
   for (const label of ["Like", "favoriteButton", chineseLike, spacedChineseLike]) {
     const result = runAction([
       "-Action", "TapText", "-Text", label, "-Group", "all", "-ConfirmAction",
@@ -106,6 +107,13 @@ test("TapText interaction labels cannot be confirmed or grouped through", window
     assert.notEqual(result.status, 0);
     assert.match(`${result.stdout}${result.stderr}`, /generic external-interaction path/);
   }
+
+  const financialPage = runAction([
+    "-Action", "TapText", "-Text", chineseFinance, "-Serials", "device-01", "-ConfirmAction",
+    "-ConfirmationReason", "test-only", "-RollbackInfo", "go back", "-ExpectText", "Home",
+  ]);
+  assert.notEqual(financialPage.status, 0);
+  assert.match(`${financialPage.stdout}${financialPage.stderr}`, /allowlist/);
 
   const groupedSafeLabel = runAction([
     "-Action", "TapText", "-Text", "Cancel", "-Group", "all", "-ConfirmAction",

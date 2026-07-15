@@ -45,6 +45,7 @@ const HELP = `XHS Device Agent 统一入口
   .\\xhs.cmd device list
   .\\xhs.cmd device screen --machine 02
   .\\xhs.cmd device ui --machine 02
+  .\\xhs.cmd device tap-text --machine 02 --text <text> --expect-package <package> --confirm --reason <reason> --rollback <rollback>
   .\\xhs.cmd device open-xhs --machine 02
   .\\xhs.cmd app list --machine 02
 
@@ -171,6 +172,15 @@ function matrixDispatch(action, options, { targetRequired = true, packageRequire
   appendOption(args, options, "config", "-ConfigPath");
   appendTargets(args, options, { required: targetRequired });
   if (packageRequired) args.push("-PackageName", String(requireOption(options, "package")));
+  if (action === "TapText") {
+    args.push("-Text", String(requireOption(options, "text")));
+    if (!options["expect-text"] && !options["expect-package"] && !options["expect-resource-id"]) {
+      throw new Error("device tap-text requires --expect-text, --expect-package, or --expect-resource-id");
+    }
+    appendOption(args, options, "expect-text", "-ExpectText");
+    appendOption(args, options, "expect-package", "-ExpectPackage");
+    appendOption(args, options, "expect-resource-id", "-ExpectResourceId");
+  }
   if (confirmation) {
     if (!options.confirm) throw new Error("This device-local change requires --confirm, --reason, and --rollback");
     appendConfirmation(args, options);
@@ -277,6 +287,7 @@ export function buildDispatch(parsed) {
       ["list", ["Inventory", { targetRequired: false }]],
       ["ui", ["DumpUi", {}]],
       ["screen", ["Screenshot", {}]],
+      ["tap-text", ["TapText", { confirmation: true, tapText: true }]],
       ["open-xhs", ["OpenXhs", {}]],
       ["open-profile", ["OpenProfile", {}]],
       ["home", ["Home", {}]],
@@ -288,6 +299,7 @@ export function buildDispatch(parsed) {
     const entry = actions.get(command);
     if (!entry) throw new Error(`Unknown device command: ${command || "(missing)"}`);
     const allowed = ["config", "machine", "machine-name", "device", "group"];
+    if (entry[1].tapText) allowed.push("text", "expect-text", "expect-package", "expect-resource-id");
     if (entry[1].confirmation) allowed.push("confirm", "reason", "rollback");
     assertAllowedOptions(options, allowed, `device ${command}`);
     return matrixDispatch(entry[0], options, entry[1]);

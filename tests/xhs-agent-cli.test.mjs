@@ -67,6 +67,27 @@ test("unified CLI routes a targeted XHS open through the matrix action wrapper",
   assert.deepEqual(dispatch.args.slice(-4), ["-Action", "OpenXhs", "-MachineNumber", "04"]);
 });
 
+test("manual safe-label tap requires one machine, confirmation, and a postcondition", () => {
+  const base = ["device", "tap-text", "--machine", "02", "--text", "Cancel"];
+  assert.throws(() => buildDispatch(parseCliArgs(base)), /expect-text|expect-package|expect-resource-id/u);
+  assert.throws(
+    () => buildDispatch(parseCliArgs([...base, "--expect-package", "com.xingin.xhs"])),
+    /requires --confirm/u,
+  );
+  const dispatch = buildDispatch(parseCliArgs([
+    ...base,
+    "--expect-package", "com.xingin.xhs",
+    "--confirm", "--reason", "dismiss local overlay", "--rollback", "press back",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+  assert.ok(dispatch.args.includes("-ConfirmAction"));
+  assert.deepEqual(dispatch.args.slice(-13), [
+    "-Action", "TapText", "-MachineNumber", "02", "-Text", "Cancel",
+    "-ExpectPackage", "com.xingin.xhs", "-ConfirmAction", "-ConfirmationReason",
+    "dismiss local overlay", "-RollbackInfo", "press back",
+  ]);
+});
+
 test("host status and start remain available through the unified entry", () => {
   for (const command of ["status", "start"]) {
     const dispatch = buildDispatch(parseCliArgs(["host", command]));

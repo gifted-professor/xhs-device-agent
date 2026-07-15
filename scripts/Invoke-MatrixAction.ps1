@@ -100,7 +100,6 @@ function Test-LocalSafeTapLabel {
     $normalized = $Label.Normalize([System.Text.NormalizationForm]::FormKC).Trim().ToLowerInvariant()
     if ($normalized -in @("cancel", "close", "not now", "later", "back")) { return $true }
     $safeUnicode = @(
-        (ConvertFrom-CodePoints @(29702, 36130)),
         (ConvertFrom-CodePoints @(21462, 28040)),
         (ConvertFrom-CodePoints @(20851, 38381)),
         (ConvertFrom-CodePoints @(31245, 21518)),
