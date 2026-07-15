@@ -93,8 +93,10 @@ test("feed workflow counts ten unique details and acts only at positions five an
     }
     assert.equal(item.dwell.foregroundVerified, true);
   }
-  assert.ok(checkpoints.some((entry) => entry.items[4]?.actions?.like?.phase === "send_intent"));
-  assert.ok(checkpoints.some((entry) => entry.items[9]?.actions?.favorite?.phase === "send_intent"));
+  assert.ok(checkpoints.some((entry) => entry.inFlightItem?.actions?.like?.phase === "send_intent"));
+  assert.ok(checkpoints.some((entry) => entry.inFlightItem?.actions?.favorite?.phase === "send_intent"));
+  assert.equal(checkpoints.at(-1).inFlightItem, null);
+  assert.equal(checkpoints.at(-1).items.every((item) => item.phase === "committed"), true);
 });
 
 test("already active like and favorite are idempotent no-ops", async () => {
@@ -141,9 +143,29 @@ test("a dwell verification failure stops before the scheduled interaction", asyn
     /dwell interval was not verified/u,
   );
   assert.equal(lastCheckpoint.status, "failed");
-  assert.equal(lastCheckpoint.items.length, 5);
+  assert.equal(lastCheckpoint.items.length, 4);
+  assert.equal(lastCheckpoint.inFlightItem.index, 5);
+  assert.equal(lastCheckpoint.inFlightItem.phase, "opened");
   assert.equal(adapter.calls.some(([name]) => name === "activate"), false);
   assert.equal(adapter.calls.some(([name, index]) => name === "open" && index > 5), false);
+});
+
+test("a return verification failure leaves the item in flight and does not count it", async () => {
+  const adapter = fakeAdapter({ failReturnAt: 2 });
+  let lastCheckpoint;
+  await assert.rejects(
+    runFeedWorkflow({
+      spec: { taskId: "feed-return-stop-001", count: 2 },
+      deviceAlias: "device-01",
+      adapter,
+      saveCheckpoint: async (value) => { lastCheckpoint = structuredClone(value); },
+    }),
+    (error) => error.code === "RETURN_TO_FEED_FAILED",
+  );
+  assert.equal(lastCheckpoint.items.length, 1);
+  assert.equal(lastCheckpoint.inFlightItem.index, 2);
+  assert.equal(lastCheckpoint.inFlightItem.phase, "actions_verified");
+  assert.equal(lastCheckpoint.inFlightItem.returnedToFeed, false);
 });
 
 test("an unclassified detail stops before dwell or interaction", async () => {
@@ -240,6 +262,117 @@ test("an unresolved send intent blocks resume without replay", async () => {
   assert.deepEqual(adapter.calls, []);
 });
 
+test("a crash after opening does not count the in-flight item and resumes with a new identity", async () => {
+  const spec = normalizeFeedSpec({ taskId: "feed-resume-opened-001", count: 1 });
+  const checkpoint = createFeedCheckpoint(spec, "device-01");
+  checkpoint.status = "failed";
+  checkpoint.inFlightItem = {
+    index: 1,
+    identity: identity(1),
+    pageType: "IMAGE_NOTE",
+    phase: "opened",
+    returnedToFeed: false,
+    dwell: null,
+    actions: {},
+    evidence: { detail: "evidence/opened.xml" },
+  };
+  const adapter = fakeAdapter();
+  adapter.openNextUnique = async (seen, index) => {
+    adapter.calls.push(["open", index, [...seen]]);
+    return { identity: identity(2), pageType: "IMAGE_NOTE", evidence: {} };
+  };
+
+  const summary = await runFeedWorkflow({ spec, deviceAlias: "device-01", adapter, checkpoint });
+
+  assert.equal(summary.viewedCount, 1);
+  assert.equal(summary.items[0].identity, identity(2));
+  assert.equal(summary.items[0].phase, "committed");
+  assert.equal(summary.skipped[0].identity, identity(1));
+  assert.equal(summary.skipped[0].reason, "interrupted_before_dwell_verified");
+  assert.deepEqual(adapter.calls.find(([name]) => name === "open"), ["open", 1, [identity(1)]]);
+});
+
+test("a crash after verified dwell commits a read-only item only after Feed is re-verified", async () => {
+  const spec = normalizeFeedSpec({ taskId: "feed-resume-dwell-001", count: 1 });
+  const checkpoint = createFeedCheckpoint(spec, "device-01");
+  checkpoint.status = "failed";
+  checkpoint.inFlightItem = {
+    index: 1,
+    identity: identity(1),
+    pageType: "IMAGE_NOTE",
+    phase: "dwell_verified",
+    returnedToFeed: false,
+    dwell: { actualSeconds: 3, foregroundVerified: true },
+    actions: {},
+    evidence: { detail: "evidence/detail.xml" },
+  };
+  const adapter = fakeAdapter();
+
+  const summary = await runFeedWorkflow({ spec, deviceAlias: "device-01", adapter, checkpoint });
+
+  assert.equal(summary.viewedCount, 1);
+  assert.equal(summary.items[0].phase, "committed");
+  assert.equal(summary.items[0].returnedToFeed, true);
+  assert.equal(summary.items[0].evidence.resumedToFeed, true);
+  assert.deepEqual(adapter.calls, [["ensureFeed"]]);
+});
+
+test("a crash before a scheduled action never moves that action to the interrupted item", async () => {
+  const spec = normalizeFeedSpec({ taskId: "feed-resume-action-001", count: 1, likeAt: 1 });
+  const checkpoint = createFeedCheckpoint(spec, "device-01");
+  checkpoint.status = "failed";
+  checkpoint.inFlightItem = {
+    index: 1,
+    identity: identity(1),
+    pageType: "IMAGE_NOTE",
+    phase: "dwell_verified",
+    returnedToFeed: false,
+    dwell: { actualSeconds: 3, foregroundVerified: true },
+    actions: {},
+    evidence: {},
+  };
+  const adapter = fakeAdapter();
+  adapter.openNextUnique = async (seen, index) => {
+    adapter.calls.push(["open", index, [...seen]]);
+    return { identity: identity(2), pageType: "IMAGE_NOTE", evidence: {} };
+  };
+
+  const summary = await runFeedWorkflow({ spec, deviceAlias: "device-01", adapter, checkpoint });
+
+  assert.equal(summary.items[0].identity, identity(2));
+  assert.deepEqual(
+    adapter.calls.filter(([name]) => name === "activate").map(([, action, index]) => [action, index]),
+    [["like", 1]],
+  );
+  assert.equal(summary.skipped[0].reason, "interrupted_before_scheduled_action");
+});
+
+test("a crash after return verification commits without reopening or replaying actions", async () => {
+  const spec = normalizeFeedSpec({ taskId: "feed-resume-return-001", count: 1, likeAt: 1 });
+  const checkpoint = createFeedCheckpoint(spec, "device-01");
+  checkpoint.status = "failed";
+  checkpoint.inFlightItem = {
+    index: 1,
+    identity: identity(1),
+    pageType: "IMAGE_NOTE",
+    phase: "returned_verified",
+    returnedToFeed: true,
+    dwell: { actualSeconds: 3, foregroundVerified: true },
+    actions: {
+      like: { operationId: "operation-1", phase: "verified", outcome: "completed", verification: "verified_active", evidence: {} },
+    },
+    evidence: { returned: "evidence/feed.xml" },
+  };
+  const adapter = fakeAdapter();
+
+  const summary = await runFeedWorkflow({ spec, deviceAlias: "device-01", adapter, checkpoint });
+
+  assert.equal(summary.viewedCount, 1);
+  assert.equal(summary.items[0].phase, "committed");
+  assert.equal(summary.items[0].actions.like.verification, "verified_active");
+  assert.equal(adapter.calls.some(([name]) => name === "open" || name === "activate"), false);
+});
+
 test("a completed taskId returns a duplicate summary without touching the device", async () => {
   const spec = normalizeFeedSpec({ taskId: "feed-complete-001", count: 1 });
   const checkpoint = createFeedCheckpoint(spec, "device-01");
@@ -269,6 +402,65 @@ test("feed specification rejects out-of-range and conflicting positions", () => 
     () => normalizeFeedSpec({ taskId: "feed-invalid-004", count: 10, videoMinSeconds: 20, videoMaxSeconds: 10 }),
     /minimums/u,
   );
+  assert.throws(
+    () => normalizeFeedSpec({ taskId: "feed-invalid-005", count: 10, videoPolicy: "fast" }),
+    /videoPolicy/u,
+  );
+  assert.throws(
+    () => normalizeFeedSpec({ taskId: "feed-invalid-006", count: 10, videoDwellMs: -1 }),
+    /videoDwellMs/u,
+  );
+  assert.throws(
+    () => normalizeFeedSpec({ taskId: "feed-invalid-007", count: 10, videoDwellMs: 20001 }),
+    /videoDwellMs/u,
+  );
+  assert.throws(
+    () => normalizeFeedSpec({ taskId: "feed-invalid-008", count: 10, videoDwellMs: 1.5 }),
+    /videoDwellMs/u,
+  );
+});
+
+test("feed specification accepts video policy and millisecond dwell overrides", () => {
+  const defaults = normalizeFeedSpec({ taskId: "feed-video-defaults-001", count: 1 });
+  assert.equal(defaults.videoPolicy, "normal");
+  assert.equal(defaults.videoDwellMs, null);
+
+  const configured = normalizeFeedSpec({
+    taskId: "feed-video-configured-001",
+    count: 1,
+    videoPolicy: "skip_and_count",
+    videoDwellMs: 0,
+  });
+  assert.equal(configured.videoPolicy, "skip_and_count");
+  assert.equal(configured.videoDwellMs, 0);
+});
+
+test("skip_and_count records a video with zero dwell without calling the adapter timer", async () => {
+  const adapter = fakeAdapter();
+  adapter.openNextUnique = async () => ({
+    identity: identity(1),
+    pageType: "VIDEO_NOTE",
+    evidence: { detailVisited: true, returnedToList: false, videoSkipped: false },
+  });
+  const summary = await runFeedWorkflow({
+    spec: {
+      taskId: "feed-video-skip-001",
+      count: 1,
+      videoPolicy: "skip_and_count",
+      videoDwellMs: 0,
+    },
+    deviceAlias: "device-01",
+    adapter,
+  });
+
+  assert.equal(summary.status, "completed");
+  assert.equal(summary.viewedCount, 1);
+  assert.equal(summary.items[0].dwell.plannedSeconds, 0);
+  assert.equal(summary.items[0].dwell.actualSeconds, 0);
+  assert.equal(summary.items[0].dwell.foregroundVerified, true);
+  assert.equal(summary.items[0].dwell.playbackProgressVerified, null);
+  assert.equal(summary.items[0].evidence.videoSkipped, true);
+  assert.equal(adapter.calls.some(([name]) => name === "dwell"), false);
 });
 
 test("dwell duration is deterministic per task, item identity, and media type", () => {
@@ -279,4 +471,11 @@ test("dwell duration is deterministic per task, item identity, and media type", 
   assert.equal(imageFirst, imageSecond);
   assert.ok(imageFirst >= 3 && imageFirst <= 6);
   assert.ok(video >= 10 && video <= 20);
+
+  const millisecondVideo = deterministicDwellSeconds(
+    { taskId: "feed-dwell-ms-001", count: 1, videoDwellMs: 1250 },
+    identity(1),
+    "VIDEO_NOTE",
+  );
+  assert.equal(millisecondVideo, 1.25);
 });

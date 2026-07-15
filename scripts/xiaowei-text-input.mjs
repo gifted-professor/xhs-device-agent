@@ -204,12 +204,17 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
     ? config.expectedPackage
     : null;
 
-  async function verifyIdentity() {
+  async function verifyIdentity(deviceAlias) {
+    const record = records.get(deviceAlias);
+    if (!record || !approvedAliases.has(deviceAlias) || !expectedOnlineSerials.includes(record.serial)) {
+      const error = new Error("Selected Xiaowei and ADB device identities differ");
+      error.code = "XIAOWEI_IDENTITY_MISMATCH";
+      throw error;
+    }
     const probe = await client.probe();
     const currentApiIds = apiDeviceIds(probe.data);
-    if (currentApiIds.length !== expectedOnlineSerials.length
-        || currentApiIds.some((serial, index) => serial !== expectedOnlineSerials[index])) {
-      const error = new Error("API and ADB device identities differ");
+    if (!currentApiIds.includes(record.serial)) {
+      const error = new Error("Selected Xiaowei and ADB device identities differ");
       error.code = "XIAOWEI_IDENTITY_MISMATCH";
       throw error;
     }
@@ -250,7 +255,7 @@ export function createXiaoweiTextInputAdapter(config, options = {}) {
     }
 
     try {
-      await verifyIdentity();
+      await verifyIdentity(deviceAlias);
       audit.apiIdentityVerified = true;
     } catch (error) {
       throw stagedInputFailure(error, audit, "identity", "IDENTITY_MISMATCH", "Xiaowei input stopped because API and ADB device identities could not be verified");

@@ -1,8 +1,14 @@
 import test from "node:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import {
   AdbFeedAdapter,
+  countUiDumpBytes,
   detailSurfaceStable,
   dominantPackage,
   extractHierarchyXml,
@@ -16,6 +22,7 @@ import {
   transientOverlayKind,
   visibleFeedCards,
 } from "../scripts/feed-device-runner.mjs";
+import { initializeBatchControl } from "../scripts/feed-batch-control.mjs";
 import { parseUiAutomatorXml } from "../scripts/xhs-page-engine.mjs";
 
 function documentOf(body) {
@@ -259,6 +266,52 @@ test("foreground verification ignores stale non-focused XHS windows", () => {
   assert.equal(isPackageFocused("mCurrentFocus=null\nmFocusedApp=null"), false);
 });
 
+test("batch workers reject every sent device command when the parent lease is absent", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "xhs-feed-batch-gate-"));
+  try {
+    const adapter = new AdbFeedAdapter({
+      adbPath: "this-command-must-never-run",
+      serial: "redacted",
+      deviceAlias: "device-01",
+      rules: {},
+      runDir: root,
+      batchControl: { paths: initializeBatchControl(root, "attempt-001"), attemptId: "attempt-001" },
+    });
+    assert.throws(
+      () => adapter.adb(["shell", "input", "tap", "1", "1"], { sent: true }),
+      (error) => error.code === "BATCH_PARENT_LOST",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("direct batch worker invocation rejects interactions before any device command", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "xhs-feed-batch-read-only-"));
+  try {
+    const runner = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts", "feed-device-runner.mjs");
+    const result = spawnSync(process.execPath, [
+      runner,
+      "--adb-path", path.join(root, "must-not-run-adb"),
+      "--serial", "redacted",
+      "--device-alias", "device-01",
+      "--task-id", "batch-read-only-001",
+      "--count", "2",
+      "--like-at", "1",
+      "--video-policy", "skip_and_count",
+      "--video-dwell-ms", "0",
+      "--output-root", path.join(root, "feed"),
+      "--batch-root", path.join(root, "batch"),
+      "--batch-attempt-id", "attempt-001",
+    ], { encoding: "utf8" });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /read-only and rejects interactions/u);
+    assert.equal(existsSync(path.join(root, "feed")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("foreground probing uses the full window dump supported by the current ROM", () => {
   const commands = [];
   const result = probePackageFocus((args) => {
@@ -314,8 +367,8 @@ test("opening a stable unsupported commercial detail returns to feed and skips t
       "<node package=\"com.xingin.xhs\" class=\"android.widget.TextView\" text=\"Download now\" />" +
     "</node>",
   );
-  const feed = { document: feedDocument, classification: { state: "HOME_FEED", safety: {} }, path: "feed.xml" };
-  const detail = { document: detailDocument, classification: { state: "UNKNOWN", safety: {} }, path: "detail.xml" };
+  const feed = { document: feedDocument, classification: { state: "HOME_FEED", safety: {} }, path: "feed.xml", foregroundPackage: "com.xingin.xhs" };
+  const detail = { document: detailDocument, classification: { state: "UNKNOWN", safety: {} }, path: "detail.xml", foregroundPackage: "com.xingin.xhs" };
   const adapter = new AdbFeedAdapter({
     adbPath: "unused-adb",
     serial: "test-device",
@@ -326,13 +379,25 @@ test("opening a stable unsupported commercial detail returns to feed and skips t
   const stages = [];
   adapter.stableUi = async (stage) => {
     stages.push(stage);
-    return stage.endsWith("-feed") ? feed : detail;
+    return feed;
   };
+  adapter.stableUiWhileTransitioning = async () => ({
+    sample: detail,
+    attempts: 2,
+    rawBytes: 512,
+    parseError: null,
+  });
   adapter.tapNode = () => {};
+  adapter.pause = async () => {};
+  adapter.captureScreenshot = async () => null;
   let backCount = 0;
   adapter.backToFeed = async () => {
     backCount += 1;
     return { ...feed, path: "returned.xml" };
+  };
+  adapter.backToFeedOptional = async () => {
+    backCount += 1;
+    return { snapshot: { ...feed, path: "returned.xml" }, returnedToFeed: true };
   };
 
   const result = await adapter.openNextUnique(new Set(), 6);
@@ -341,7 +406,144 @@ test("opening a stable unsupported commercial detail returns to feed and skips t
   assert.equal(result.reason, "commercial_cta");
   assert.equal(result.evidence.unsupported, "../detail.xml");
   assert.equal(backCount, 1);
-  assert.deepEqual(stages, ["item-6-feed", "item-6-detail"]);
+  assert.equal(result.evidence.detailVisited, true);
+  assert.deepEqual(stages, ["item-6-feed"]);
+});
+
+function feedFixture({ state = "HOME_FEED", path = "feed.xml", text = "" } = {}) {
+  return {
+    document: documentOf(
+      "<node package=\"com.xingin.xhs\" class=\"androidx.recyclerview.widget.RecyclerView\" resource-id=\"com.xingin.xhs:id/home_feed\" scrollable=\"true\" bounds=\"[0,100][1080,2200]\">" +
+        "<node class=\"android.widget.FrameLayout\" resource-id=\"com.xingin.xhs:id/note_card\" clickable=\"true\" enabled=\"true\" bounds=\"[20,140][520,1040]\">" +
+          "<node class=\"android.widget.TextView\" text=\"summer outfit guide\" bounds=\"[40,780][480,840]\" />" +
+          "<node class=\"android.widget.TextView\" text=\"public author\" bounds=\"[40,850][480,910]\" />" +
+        "</node>" +
+      "</node>",
+    ),
+    classification: { state, safety: {} },
+    path,
+    foregroundPackage: "com.xingin.xhs",
+  };
+}
+
+function detailFixture({ state, path = "detail.xml", title = "summer outfit guide" } = {}) {
+  const xml =
+    "<hierarchy>" +
+      "<node package=\"com.xingin.xhs\" resource-id=\"com.xingin.xhs:id/noteContentLayout\" class=\"android.widget.LinearLayout\">" +
+        "<node package=\"com.xingin.xhs\" resource-id=\"com.xingin.xhs:id/noteContentText\" class=\"android.widget.TextView\" text=\"" + title + "\" />" +
+      "</node>" +
+    "</hierarchy>";
+  return {
+    xml,
+    document: parseUiAutomatorXml(xml),
+    classification: { state, safety: {} },
+    path,
+    foregroundPackage: "com.xingin.xhs",
+    rawBytes: countUiDumpBytes(xml),
+  };
+}
+
+function stubAdapter() {
+  const adapter = new AdbFeedAdapter({
+    adbPath: "unused-adb",
+    serial: "test-device",
+    deviceAlias: "device-test",
+    rules: {},
+    runDir: "run",
+  });
+  adapter.pause = async () => {};
+  adapter.captureScreenshot = async () => null;
+  return adapter;
+}
+
+test("openNextUnique tolerates three invalid UI dumps during transition then classifies a video detail", async () => {
+  const adapter = stubAdapter();
+  const feed = feedFixture({});
+  const video = detailFixture({ state: "VIDEO_NOTE" });
+  let transitionAttempts = 0;
+  adapter.stableUi = async () => feed;
+  adapter.readUi = async (stage) => {
+    if (stage === "item-1-detail") {
+      transitionAttempts += 1;
+      if (transitionAttempts <= 3) {
+        throw Object.assign(new Error("incomplete"), { code: "UI_DUMP_INVALID" });
+      }
+      return video;
+    }
+    return feed;
+  };
+  adapter.tapNode = () => {};
+  adapter.backToFeed = async () => feed;
+
+  const result = await adapter.openNextUnique(new Set(), 1);
+  assert.equal(result.pageType, "VIDEO_NOTE");
+  assert.equal(result.evidence.detailTransitionAttempts, 4);
+  assert.equal(result.evidence.contentKind, "VIDEO_NOTE");
+  assert.equal(result.evidence.detailVisited, true);
+  assert.equal(result.evidence.returnedToList, false);
+  assert.equal(result.evidence.uiDumpRawBytes, countUiDumpBytes(video.xml));
+  assert.equal(result.evidence.uiDumpParseError, null);
+});
+
+test("detail transition reports the full bounded budget when only a non-detail sample is readable", async () => {
+  const adapter = stubAdapter();
+  const unknown = detailFixture({ state: "UNKNOWN" });
+  let attempts = 0;
+  adapter.readUi = async () => {
+    attempts += 1;
+    if (attempts === 1) return unknown;
+    throw Object.assign(new Error("incomplete"), { code: "UI_DUMP_INVALID" });
+  };
+
+  const result = await adapter.stableUiWhileTransitioning("item-1-detail");
+  assert.equal(attempts, 5);
+  assert.equal(result.attempts, 5);
+  assert.equal(result.sample.classification.state, "UNKNOWN");
+});
+
+test("openNextUnique stops without repeated Back on an ambiguous return state", async () => {
+  const adapter = stubAdapter();
+  const feed = feedFixture({});
+  const detail = detailFixture({ state: "UNKNOWN" });
+  let backCalls = 0;
+  adapter.stableUi = async () => feed;
+  adapter.stableUiWhileTransitioning = async () => ({
+    sample: detail,
+    attempts: 5,
+    rawBytes: countUiDumpBytes(detail.xml),
+    parseError: null,
+  });
+  adapter.tapNode = () => {};
+  adapter.backToFeedOptional = async (stage) => {
+    backCalls += 1;
+    return { snapshot: { ...detail, path: stage + ".xml" }, returnedToFeed: false };
+  };
+
+  await assert.rejects(
+    adapter.openNextUnique(new Set(), 1),
+    (error) => error.code === "RETURN_TO_FEED_FAILED",
+  );
+  assert.equal(backCalls, 1);
+});
+
+test("openNextUnique continues normal flow for image notes", async () => {
+  const adapter = stubAdapter();
+  const feed = feedFixture({});
+  const image = detailFixture({ state: "IMAGE_NOTE" });
+  adapter.stableUi = async () => feed;
+  adapter.stableUiWhileTransitioning = async () => ({
+    sample: image,
+    attempts: 1,
+    rawBytes: countUiDumpBytes(image.xml),
+    parseError: null,
+  });
+  adapter.tapNode = () => {};
+  adapter.backToFeed = async () => feed;
+
+  const result = await adapter.openNextUnique(new Set(), 1);
+  assert.equal(result.pageType, "IMAGE_NOTE");
+  assert.equal(result.evidence.contentKind, "IMAGE_NOTE");
+  assert.equal(result.evidence.detailVisited, true);
 });
 
 function startupAdapter() {
@@ -423,4 +625,33 @@ test("feed startup relaunches XHS when BACK leaves the app, then verifies home",
     "shell input keyevent KEYCODE_BACK",
     "shell monkey -p com.xingin.xhs -c android.intent.category.LAUNCHER 1",
   ]);
+});
+
+test("feed startup auto-recovers from a residual video detail without counting it", async () => {
+  const { adapter, commands } = startupAdapter();
+  const detail = startupSnapshot("VIDEO_NOTE", "detail.xml");
+  const home = startupSnapshot("HOME_FEED", "home.xml");
+  const stages = [];
+  adapter.stableUi = async (stage) => {
+    stages.push(stage);
+    return stage === "feed-entry-current" ? detail : home;
+  };
+
+  const result = await adapter.ensureFeed();
+  assert.equal(result.verified, true);
+  assert.equal(result.evidence.feedEntry, "../home.xml");
+  assert.deepEqual(stages, ["feed-entry-current", "feed-entry-current-back-1"]);
+  assert.deepEqual(commands, ["shell input keyevent KEYCODE_BACK"]);
+});
+
+test("feed startup stops after one Back when a residual detail cannot return home", async () => {
+  const { adapter, commands } = startupAdapter();
+  const detail = startupSnapshot("VIDEO_NOTE", "detail.xml");
+  adapter.stableUi = async () => detail;
+
+  await assert.rejects(
+    adapter.ensureFeed(),
+    (error) => error.code === "RESIDUAL_DETAIL",
+  );
+  assert.deepEqual(commands, ["shell input keyevent KEYCODE_BACK"]);
 });

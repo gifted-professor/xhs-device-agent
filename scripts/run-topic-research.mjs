@@ -232,6 +232,7 @@ export async function runFromArguments(argv, runtime = {}) {
   await loadLocalEnvironment();
   const args = parseArguments(argv);
   const task = validateResearchTask(await readJson(args.taskPath));
+  const executeResearchSession = runtime.runResearchSession ?? runResearchSession;
   const common = {
     outputRoot: args.outputRoot,
     ai: {
@@ -242,7 +243,7 @@ export async function runFromArguments(argv, runtime = {}) {
     },
   };
   if (args.dryRun) {
-    return runResearchSession(task, {
+    return executeResearchSession(task, {
       ...common,
       provider: createDryRunProvider({ devices: args.devices.length ? args.devices : undefined }),
     });
@@ -267,20 +268,7 @@ export async function runFromArguments(argv, runtime = {}) {
         perDevice: xiaoweiSettings.perDevice,
       }, runtime.xiaoweiAdapterOptions)
     : null;
-  if (xiaoweiTextInput && typeof xiaoweiTextInput.verifyIdentity === "function") {
-    try {
-      await xiaoweiTextInput.verifyIdentity();
-    } catch (error) {
-      const mismatch = error?.code === "XIAOWEI_IDENTITY_MISMATCH";
-      throw entryError(
-        mismatch ? "XIAOWEI_IDENTITY_MISMATCH" : "XIAOWEI_IDENTITY_UNVERIFIED",
-        mismatch
-          ? "Formal research is blocked because Xiaowei API and ADB device identities differ"
-          : "Formal research is blocked because Xiaowei API device identity could not be verified",
-      );
-    }
-  }
-  return runResearchSession(task, {
+  return executeResearchSession(task, {
     ...common,
     providerFactory({ pageRecovery, resourceUsage, onResourceUsage, taskDirectory }) {
       return createAdbResearchProvider({

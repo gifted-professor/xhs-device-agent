@@ -257,3 +257,22 @@ test("result schema rejects leaked identifiers and out-of-budget model counts", 
   assert.notDeepEqual(schemaErrors(schema, { ...valid, devices: ["safe-alias", "unsafe alias"] }), []);
   assert.notDeepEqual(schemaErrors(schema, { ...valid, paths: { ...valid.paths, screenshot: "screen.png" } }), []);
 });
+
+test("supervised composite policy and initial capability candidate match their public schemas", async () => {
+  const [policySchema, policy, capabilitySchema, capability] = await Promise.all([
+    readJson("composite-policy.schema.json"),
+    readJson("composite-policy.supervised-v1.json"),
+    readJson("composite-capability.schema.json"),
+    readJson("composite-capability.initial-v1.json"),
+  ]);
+
+  assertSchemaValid(assert, policySchema, policy, "supervised composite policy");
+  assertSchemaValid(assert, capabilitySchema, capability, "initial composite capability candidate");
+  assert.equal(capability.profileKind, "production_candidate");
+  assert.equal(capability.maxDevices, 2);
+  assert.equal(capability.runtimeProfile.validationMode, "startup_strict_runtime_light_account_state_strict");
+  assert.ok(
+    capability.runtimeProfile.cpaWorkflowSoftTimeoutMs < capability.cpaLimits.providerHardTimeoutMs,
+    "CPA workflow soft timeout must degrade before the provider hard timeout",
+  );
+});

@@ -514,6 +514,33 @@
             "node": { "attribute": "clickable", "equals": true }
           }
         ],
+        "comments_container": [
+          { "strategy": "resource-id", "match": "includes", "values": ["comment_panel", "comment_list", "comment_container", "comment_scroll", "comments_list", "comments_container"] },
+          {
+            "id": "scrollable-comment-list-without-editor",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "scrollable", "equals": true },
+              { "attribute": "className", "match": "includes", "values": ["RecyclerView", "ListView", "ScrollView"] }
+            ]
+          }
+        ],
+        "note_content_container": [
+          { "strategy": "resource-id", "match": "includes", "values": ["note_content_container", "note_content_scroll", "content_scroll", "detail_scroll", "article_content"] },
+          { "strategy": "content-desc", "match": "regex", "values": ["^图片[,，]?第\\d+张[,，]?共\\d+张"] },
+          {
+            "id": "image-note-scrollable-surface",
+            "strategy": "attributes",
+            "all": [
+              { "attribute": "scrollable", "equals": true },
+              { "attribute": "className", "match": "includes", "values": ["RecyclerView", "ScrollView", "ViewPager"] }
+            ]
+          }
+        ],
+        "video_player_surface": [
+          { "strategy": "resource-id", "match": "includes", "values": ["video_player", "player_surface", "video_surface"] },
+          { "strategy": "content-desc", "match": "regex", "values": ["^(?:播放|暂停)$", "^已播放到"] }
+        ],
         "retry": [
           { "strategy": "resource-id", "match": "includes", "values": ["retry", "reload"] },
           { "strategy": "text", "values": ["重试", "重新加载", "刷新"] },

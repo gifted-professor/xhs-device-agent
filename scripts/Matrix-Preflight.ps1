@@ -7,12 +7,20 @@ $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "Import-Utf8PowerShellDataFile.ps1")
+. (Join-Path $PSScriptRoot "Machine-Identity.ps1")
 if (!$ConfigPath) { $ConfigPath = Join-Path $projectRoot "config\local.psd1" }
 
 if (!(Test-Path -LiteralPath $ConfigPath)) {
     throw "Config not found: $ConfigPath. Copy config/matrix.example.psd1 to config/local.psd1 first."
 }
 $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
+$machineDirectory = @()
+$machineDirectoryError = $null
+try {
+    $machineDirectory = @(Get-MachineDirectory -Config $config)
+} catch {
+    $machineDirectoryError = $_.Exception.Message
+}
 if (!$config.AdbPath -or !(Test-Path -LiteralPath $config.AdbPath)) {
     throw "Configured AdbPath does not exist"
 }
@@ -39,9 +47,11 @@ $online = @(
     }
 )
 $devices = foreach ($serial in $online) {
-    $number = if ($config.Devices -and $config.Devices.ContainsKey($serial)) { $config.Devices[$serial] } else { "unmapped" }
+    $deviceAlias = if ($config.Devices -and $config.Devices.ContainsKey($serial)) { [string]$config.Devices[$serial] } else { "unmapped" }
+    $identity = @($machineDirectory | Where-Object { $_.DeviceAlias -ceq $deviceAlias }) | Select-Object -First 1
     [ordered]@{
-        number = $number
+        machine = if ($identity) { $identity.Number } else { "unmapped" }
+        name = if ($identity) { $identity.Name } else { "unmapped" }
         model = (& $config.AdbPath -s $serial shell getprop ro.product.model 2>$null | Out-String).Trim()
         android = (& $config.AdbPath -s $serial shell getprop ro.build.version.release 2>$null | Out-String).Trim()
     }
@@ -135,6 +145,7 @@ if ($ProbeApi) {
 
 $configurationBlockers = New-Object System.Collections.Generic.List[string]
 if (!$online.Count) { $configurationBlockers.Add("no online ADB devices") }
+if ($machineDirectoryError) { $configurationBlockers.Add("machine directory: $machineDirectoryError") }
 $mappedAliases = @()
 if (!$config.Devices -or !$config.Devices.Count) {
     $configurationBlockers.Add("no local device aliases are configured")
@@ -272,8 +283,6 @@ if ($xiaoweiText -and $xiaoweiText.Enabled) {
         $configurationBlockers.Add("enabled Xiaowei text input requires a live API identity probe")
     } elseif (!$api.available) {
         $configurationBlockers.Add("enabled Xiaowei text input requires an available Xiaowei API")
-    } elseif (!$api.identityAligned) {
-        $configurationBlockers.Add("enabled Xiaowei text input requires aligned API and ADB device identities")
     }
     if (!$apiPolicy -or !$apiPolicy.Enabled -or !$versionAccepted -or !$textProfileAccepted -or $api.deviceBindingMismatches.Count) {
         $configurationBlockers.Add("enabled Xiaowei text input is outside its version/action acceptance gate")
@@ -309,8 +318,19 @@ if (!$windowsCapture.computerUseWindowScreenshotCompatible) {
     Write-Warning "Computer Use window screenshots require Windows build 20348 or newer. This host is build $($windowsCapture.windowsBuild); use ADB screenshots and UI hierarchy for phone content. For Xiaowei's visible desktop window, use .\xhs.cmd host capture only while that window is foreground and unobscured."
 }
 $publicDevices = @($devices | ForEach-Object {
-    [ordered]@{ number = $_.number; model = $_.model; android = $_.android }
+    [ordered]@{ machine = $_.machine; name = $_.name; model = $_.model; android = $_.android }
 })
+$publicApi = [ordered]@{
+    endpoint = $api.endpoint
+    probed = $api.probed
+    available = $api.available
+    identityAligned = $api.identityAligned
+    apiDeviceCount = $api.apiDeviceCount
+    versionAccepted = $api.versionAccepted
+    routingEnabled = $api.routingEnabled
+    reason = $api.reason
+    blockers = $api.blockers
+}
 [ordered]@{
     checkedAt = $result.checkedAt
     transport = $result.transport
@@ -318,7 +338,7 @@ $publicDevices = @($devices | ForEach-Object {
     verificationChannel = $result.verificationChannel
     windowsCapture = $result.windowsCapture
     software = $result.software
-    api = $result.api
+    api = $publicApi
     readyForDeviceWork = $result.readyForDeviceWork
     blockers = $result.blockers
     onlineDeviceCount = $result.onlineDeviceCount

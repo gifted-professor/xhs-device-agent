@@ -12,6 +12,7 @@ import {
   normalizeDynamicText,
   parseUiAutomatorXml,
   resolveRuleProfile,
+  resolveSemanticNode,
   resolveSemanticTarget,
   scorePageStates,
 } from "../scripts/xhs-page-engine.mjs";
@@ -154,6 +155,20 @@ test("current obfuscated image-note detail is distinguished from an inline comme
   assert.equal(result.state, "IMAGE_NOTE");
   assert.equal(result.accepted, true);
   assert.equal(result.matchedEvidence.includes("image-note-marker"), true);
+});
+
+test("real-detail-shaped comment and image surfaces resolve semantically", () => {
+  const xml = hierarchy(
+    node({ class: "android.widget.FrameLayout", "content-desc": "图片,第1张,共15张,双指左划或右划即可查看更多内容" }),
+    node({ class: "android.widget.Button", "content-desc": "评论 42", clickable: "true" }),
+  );
+  const comments = resolveSemanticTarget(xml, rules, "comments_entry");
+  assert.equal(comments.found, true);
+  assert.equal(comments.strategy, "content-desc");
+  assert.equal(JSON.stringify(comments).includes("bounds"), false);
+  const image = resolveSemanticNode(xml, rules, "note_content_container");
+  assert.equal(image.found, true);
+  assert.equal(image.node.contentDesc.startsWith("图片,第1张"), true);
 });
 
 test("current obfuscated full-page comments are distinguished from note detail and home feed", () => {
@@ -375,6 +390,21 @@ test("device overrides only activate for the exact calibrated app version", () =
     resolveRuleProfile(localRules, { deviceAlias: "content-01", resolution: "1080x2400", dpi: "420", xhsVersion: "9.9.10" }).overrideId,
     null,
   );
+});
+
+test("composite semantic surfaces resolve a current node but never reuse another fixture", () => {
+  const surfaceRules = {
+    states: [{ state: "UNKNOWN", fallback: true, evidence: [] }],
+    semanticTargets: {
+      note_content_container: [{ strategy: "resource-id", match: "includes", values: ["note_content_container"] }],
+      video_player_surface: [{ strategy: "resource-id", match: "includes", values: ["video_player_surface"] }],
+    },
+  };
+  const image = parseUiAutomatorXml(hierarchy(node({ "resource-id": "note_content_container", scrollable: "true", bounds: "[10,20][300,900]" })));
+  const video = parseUiAutomatorXml(hierarchy(node({ "resource-id": "video_player_surface", bounds: "[100,200][900,1800]" })));
+  assert.equal(resolveSemanticNode(image, surfaceRules, "note_content_container").node.attributes.bounds, "[10,20][300,900]");
+  assert.equal(resolveSemanticNode(video, surfaceRules, "video_player_surface").node.attributes.bounds, "[100,200][900,1800]");
+  assert.equal(resolveSemanticNode(image, surfaceRules, "video_player_surface").found, false);
 });
 
 test("both 9.36 device profiles classify partial and non-scrollable search pages only on exact calibration", () => {

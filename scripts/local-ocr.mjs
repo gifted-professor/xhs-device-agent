@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { parseCommentCount, resolveCommentCount } from "./detail-perception.mjs";
 
 const DEFAULT_SCRIPT_PATH = fileURLToPath(new URL("./windows-ocr.ps1", import.meta.url));
 
@@ -36,6 +37,24 @@ function exactCropArguments(input) {
     "-CropWidth", String(right - left),
     "-CropHeight", String(bottom - top),
     "-ExpectedTextHash", exactTextHash(expectedText),
+  ];
+}
+
+function numericCropArguments(input) {
+  if (input.mode !== "numeric_count") return null;
+  const bounds = input.bounds;
+  if (!bounds || typeof bounds !== "object" || Array.isArray(bounds)) return null;
+  const left = Number(bounds.left);
+  const top = Number(bounds.top);
+  const right = Number(bounds.right);
+  const bottom = Number(bounds.bottom);
+  if (![left, top, right, bottom].every(Number.isSafeInteger)
+      || left < 0 || top < 0 || right <= left || bottom <= top) return null;
+  return [
+    "-CropX", String(left),
+    "-CropY", String(top),
+    "-CropWidth", String(right - left),
+    "-CropHeight", String(bottom - top),
   ];
 }
 
@@ -188,17 +207,20 @@ export function createWindowsLocalOcr(options = {}) {
   return async function windowsLocalOcr(input = {}) {
     if (!enabled || !input.imagePath) return null;
     const mode = input.mode ?? "page_safety";
-    if (mode !== "page_safety" && mode !== "exact_text") return null;
+    if (!["page_safety", "exact_text", "numeric_count"].includes(mode)) return null;
     if (mode === "page_safety" && input.bounds !== undefined) return null;
     const exactArgs = mode === "exact_text" ? exactCropArguments(input) : [];
     if (mode === "exact_text" && !exactArgs) return null;
+    const numericArgs = mode === "numeric_count" ? numericCropArguments(input) : [];
+    if (mode === "numeric_count" && !numericArgs) return null;
     let result;
     try {
+      const modeArgs = mode === "numeric_count" ? [...numericArgs, "-Mode", "numeric_count"] : exactArgs;
       result = await commandRunner({
         file: powershellPath,
         args: [
           "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-          "-File", scriptPath, "-ImagePath", input.imagePath, ...exactArgs,
+          "-File", scriptPath, "-ImagePath", input.imagePath, ...modeArgs,
         ],
         timeoutMs: 20_000,
       });
@@ -208,6 +230,24 @@ export function createWindowsLocalOcr(options = {}) {
     if (Number(result?.exitCode) !== 0) return null;
     const payload = parseOcrPayload(result?.stdout);
     if (!payload || payload.available !== true) return null;
+    if (mode === "numeric_count") {
+      const keys = Object.keys(payload);
+      if (keys.some((key) => !["available", "candidates"].includes(key))
+          || !Array.isArray(payload.candidates) || payload.candidates.length === 0 || payload.candidates.length > 16
+          || payload.candidates.some((candidate) => typeof candidate !== "string" || candidate.length > 32)) return null;
+      const observation = resolveCommentCount(payload.candidates.map((candidate) => ({
+        value: candidate,
+        confidence: parseCommentCount(candidate).countKind === "unknown" ? 0 : 1,
+      })));
+      return {
+        count: observation.count,
+        countKind: observation.countKind,
+        confidence: observation.confidence,
+        ocrAvailable: true,
+        source: "windows_local_ocr",
+        safeForCloud: false,
+      };
+    }
     if (mode === "exact_text") {
       const keys = Object.keys(payload);
       if (keys.some((key) => !["available", "matched"].includes(key)) || typeof payload.matched !== "boolean") return null;

@@ -466,8 +466,8 @@ function semanticSelectorReference(selector, node) {
   return { relation: selector.id ?? "stable-relation" };
 }
 
-/** Resolve a named target using semantic selectors only. Coordinates are never accepted or returned. */
-export function resolveSemanticTarget(input, config, semanticTarget, context = {}) {
+/** Resolve a named target to its current UI node for immediate in-process use. */
+export function resolveSemanticNode(input, config, semanticTarget, context = {}) {
   const document = asDocument(input);
   const selected = resolveRuleProfile(config, context);
   const selectors = [...(selected.semanticTargets[semanticTarget] ?? [])].sort(
@@ -483,10 +483,28 @@ export function resolveSemanticTarget(input, config, semanticTarget, context = {
       found: true,
       strategy: selector.strategy,
       selector: semanticSelectorReference(selector, node),
-      node: { className: node.className, clickable: node.clickable, enabled: node.enabled, path: nodePath(document, node) },
+      node,
     };
   }
   return { semanticTarget, found: false, reason: selectors.length ? "no-semantic-match" : "unknown-semantic-target" };
+}
+
+/** Resolve a named target using semantic selectors only. Coordinates are never accepted or returned. */
+export function resolveSemanticTarget(input, config, semanticTarget, context = {}) {
+  const resolved = resolveSemanticNode(input, config, semanticTarget, context);
+  if (!resolved.found) return resolved;
+  return {
+    semanticTarget,
+    found: true,
+    strategy: resolved.strategy,
+    selector: resolved.selector,
+    node: {
+      className: resolved.node.className,
+      clickable: resolved.node.clickable,
+      enabled: resolved.node.enabled,
+      path: nodePath(asDocument(input), resolved.node),
+    },
+  };
 }
 
 export async function loadRules(path) {

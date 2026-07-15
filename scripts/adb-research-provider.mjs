@@ -12,6 +12,13 @@ import {
   parseUiAutomatorXml,
   resolveSemanticTarget,
 } from "./xhs-page-engine.mjs";
+import {
+  collectCommentSnippets,
+  deidentifyCommentSnippet,
+  extractDetailMetadata,
+  findCommentContainer,
+  findNoteContentContainer,
+} from "./detail-perception.mjs";
 
 const DEFAULT_PACKAGE = "com.xingin.xhs";
 const DEFAULT_RULES_PATH = fileURLToPath(new URL("../config/xhs-page-rules.json", import.meta.url));
@@ -358,48 +365,42 @@ function currentScrollableContainer(snapshot) {
 }
 
 function noteContentContainer(snapshot) {
-  if (snapshot.classification.state !== "IMAGE_NOTE") return null;
-  return snapshot.document.nodes
-    .filter((node) => node.scrollable && /note[_-]?content|content[_-]?scroll|detail[_-]?scroll|article[_-]?content/iu.test(node.resourceId) && parseBounds(node.attributes.bounds))
-    .map((node) => ({ node, bounds: parseBounds(node.attributes.bounds) }))
-    .sort((left, right) => right.bounds.width * right.bounds.height - left.bounds.width * left.bounds.height)[0] ?? null;
+  return findNoteContentContainer(snapshot);
 }
 
-function deidentifyComment(value) {
-  return compact(value)
-    .replace(/@[\p{L}\p{N}_.-]+/gu, "@用户")
-    .replace(/(?:\+?86[-\s]?)?1[3-9]\d{9}/g, "[手机号已脱敏]")
-    .replace(/https?:\/\/\S+/giu, "[链接已脱敏]")
-    .replace(/\b\d{6,}\b/g, "[数字已脱敏]")
-    .slice(0, 240);
+const LEGACY_COMMENT_REDACTIONS = Object.freeze({
+  author: "[作者已脱敏]",
+  handle: "@用户",
+  phone: "[手机号已脱敏]",
+  email: "[邮箱已脱敏]",
+  url: "[链接已脱敏]",
+  contact: "[联系方式已脱敏]",
+  account: "[数字已脱敏]",
+});
+
+function deidentifyComment(value, metadata = {}) {
+  return deidentifyCommentSnippet(value, {
+    authorNames: metadata.author ? [metadata.author] : [],
+    redactions: LEGACY_COMMENT_REDACTIONS,
+  });
 }
 
 function detailMetadata(snapshot) {
-  const nodes = snapshot.document.nodes;
-  const countNode = nodes.find((node) => /comment[_-]?(?:count|entry)|comment_count/iu.test(node.resourceId)) ??
-    nodes.find((node) => /(?:共\s*)?\d+\s*(?:条)?评论|评论\s*\d+/u.test(compact(node.text || node.contentDesc)));
-  const countSource = compact(countNode?.text || countNode?.contentDesc);
-  const parsedCount = /(?:共\s*)?(\d+)\s*(?:条)?评论/iu.exec(countSource)?.[1];
-  const count = parsedCount ?? (/^\d+$/.test(countSource) ? countSource : null);
-  return {
-    title: preferredText(nodes, /note[_-]?title|title_text/iu),
-    author: preferredText(nodes, /author|nickname|user[_-]?name/iu),
-    count,
-  };
+  return extractDetailMetadata(snapshot);
+}
+
+function commentContainer(snapshot) {
+  return findCommentContainer(snapshot);
 }
 
 function commentSnippets(snapshot, maximum) {
-  const output = [];
-  const seen = new Set();
-  for (const node of snapshot.document.nodes) {
-    if (!/comment[_-]?(?:content|text|body)/iu.test(node.resourceId) || /input|editor/iu.test(node.resourceId)) continue;
-    const value = deidentifyComment(node.text || node.contentDesc);
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    output.push(value);
-    if (output.length >= maximum) break;
-  }
-  return output;
+  const metadata = detailMetadata(snapshot);
+  return collectCommentSnippets({
+    nodes: snapshot.document.nodes,
+    maximum,
+    authorNames: metadata.author ? [metadata.author] : [],
+    redactions: LEGACY_COMMENT_REDACTIONS,
+  });
 }
 
 function hasForbiddenCoordinate(value) {

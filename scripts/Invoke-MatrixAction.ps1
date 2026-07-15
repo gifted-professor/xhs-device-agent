@@ -4,6 +4,9 @@ param(
     [string]$Action,
     [string]$ConfigPath,
     [string[]]$Serials,
+    [string[]]$MachineNumber,
+    [string]$MachineNumbersCsv,
+    [string]$MachineName,
     [string[]]$DeviceAlias,
     [string]$DeviceAliasesCsv,
     [string]$Group,
@@ -24,6 +27,7 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (!$ConfigPath) { $ConfigPath = Join-Path $projectRoot "config\local.psd1" }
 $runRoot = Join-Path $projectRoot "data\matrix\runs\$((Get-Date).ToString('yyyyMMdd-HHmmss-fff'))-$([guid]::NewGuid().ToString('N').Substring(0,8))"
 . (Join-Path $PSScriptRoot "Device-Lock.ps1")
+. (Join-Path $PSScriptRoot "Machine-Identity.ps1")
 
 function ConvertFrom-CodePoints {
     param([int[]]$CodePoints)
@@ -116,6 +120,14 @@ if (![string]::IsNullOrWhiteSpace($DeviceAliasesCsv)) {
     }
     $DeviceAlias = $parsedAliases
 }
+if (![string]::IsNullOrWhiteSpace($MachineNumbersCsv)) {
+    if ($MachineNumber) { throw "Use MachineNumber or MachineNumbersCsv, not both" }
+    $parsedMachineNumbers = @($MachineNumbersCsv.Split(',') | ForEach-Object { $_.Trim() })
+    if ($parsedMachineNumbers.Count -lt 2) {
+        throw "MachineNumbersCsv requires two or more machine numbers"
+    }
+    $MachineNumber = $parsedMachineNumbers
+}
 
 if ($Action -eq "TapText" -and (Test-ExternalInteractionLabel $Text)) {
     $actionRiskClass = "external_interaction"
@@ -126,6 +138,8 @@ if ($actionRiskClass -eq "external_interaction" -and $xhsSemanticActions -notcon
 if ($Action -eq "TapText") {
     $explicitTapTargets = 0
     if ($Serials) { $explicitTapTargets += @($Serials).Count }
+    if ($MachineNumber) { $explicitTapTargets += @($MachineNumber).Count }
+    if ($MachineName) { $explicitTapTargets++ }
     if ($DeviceAlias) { $explicitTapTargets += @($DeviceAlias).Count }
     if ($Group -or $explicitTapTargets -ne 1) {
         throw "TapText is single-device only. Select exactly one device explicitly; groups and implicit all-device targeting are blocked."
@@ -144,6 +158,7 @@ if ($actionRiskClass -eq "device_local_change" -and (!$ConfirmAction -or ([strin
 if (!(Test-Path -LiteralPath $ConfigPath)) { throw "Config not found: $ConfigPath" }
 . (Join-Path $PSScriptRoot "Import-Utf8PowerShellDataFile.ps1")
 $config = Import-Utf8PowerShellDataFile -LiteralPath $ConfigPath
+$machineDirectory = @(Get-MachineDirectory -Config $config)
 $adb = $config.AdbPath
 if (!$adb -or !(Test-Path -LiteralPath $adb)) { throw "Configured AdbPath does not exist" }
 if (!$config.Devices -or !$config.Devices.Count) { throw "Device aliases are not configured" }
@@ -172,12 +187,28 @@ function Protect-DeviceIdentifiers {
 
 $selectionModes = 0
 if ($Serials) { $selectionModes++ }
+if ($MachineNumber) { $selectionModes++ }
+if ($MachineName) { $selectionModes++ }
 if ($DeviceAlias) { $selectionModes++ }
 if ($Group) { $selectionModes++ }
-if ($selectionModes -gt 1) { throw "Use only one of Serials, DeviceAlias, or Group" }
+if ($selectionModes -gt 1) { throw "Use only one machine selector or group" }
 if ($Group) {
     if (!$config.Groups -or !$config.Groups.ContainsKey($Group)) { throw "Unknown group: $Group" }
     $targets = @($config.Groups[$Group])
+} elseif ($MachineNumber) {
+    $targets = @()
+    $normalizedMachineNumbers = @()
+    foreach ($requestedNumber in @($MachineNumber)) {
+        $identity = Resolve-MachineIdentity -Directory $machineDirectory -MachineNumber ([string]$requestedNumber)
+        if ($normalizedMachineNumbers -contains $identity.Number) { throw "Machine numbers must be unique" }
+        $normalizedMachineNumbers += $identity.Number
+        $matchingSerials = @($config.Devices.Keys | Where-Object { [string]$config.Devices[$_] -ceq $identity.DeviceAlias })
+        $targets += [string]$matchingSerials[0]
+    }
+} elseif ($MachineName) {
+    $identity = Resolve-MachineIdentity -Directory $machineDirectory -MachineName $MachineName
+    $matchingSerials = @($config.Devices.Keys | Where-Object { [string]$config.Devices[$_] -ceq $identity.DeviceAlias })
+    $targets = @([string]$matchingSerials[0])
 } elseif ($DeviceAlias) {
     if (!$config.Devices) { throw "Device aliases are not configured" }
     $targets = @()
@@ -961,10 +992,11 @@ $deviceIndex = 0
 $results = foreach ($serial in $targets) {
     $deviceIndex++
     $number = if ($config.Devices -and $config.Devices.ContainsKey($serial)) { $config.Devices[$serial] } else { "unmapped" }
+    $machineIdentity = Get-MachineIdentityForAlias -Directory $machineDirectory -DeviceAlias ([string]$number)
     $safeDirectoryName = if ([string]$number -match '^[A-Za-z0-9._-]{1,64}$' -and $number -ne "unmapped") { [string]$number } else { "unmapped-$deviceIndex" }
     $deviceDir = Join-Path $runRoot $safeDirectoryName
     New-Item -ItemType Directory -Force -Path $deviceDir | Out-Null
-    $entry = [ordered]@{ number = $number; action = $Action; riskClass = $actionRiskClass; transport = "adb"; executionChannel = "adb"; executionOutcome = "started"; verificationChannel = "adb-state"; verificationOutcome = "not_recorded"; status = "success"; detail = $null; model = $null; android = $null; apps = $null; hierarchyPath = $null; screenshotPath = $null; apiScreenshotPath = $null; verificationBeforePath = $null; verificationPath = $null; imageDifference = $null }
+    $entry = [ordered]@{ machine = $machineIdentity.Number; name = $machineIdentity.Name; action = $Action; riskClass = $actionRiskClass; transport = "adb"; executionChannel = "adb"; executionOutcome = "started"; verificationChannel = "adb-state"; verificationOutcome = "not_recorded"; status = "success"; detail = $null; model = $null; android = $null; apps = $null; apiPackageCount = $null; adbPackageCount = $null; missingFromApiCount = $null; missingFromAdbCount = $null; hierarchyPath = $null; screenshotPath = $null; apiScreenshotPath = $null; verificationBeforePath = $null; verificationPath = $null; imageDifference = $null }
     try {
         switch ($Action) {
             "Inventory" {
@@ -1244,7 +1276,8 @@ $results = foreach ($serial in $targets) {
                         $apiResult = Invoke-XiaoweiApi "apkList" $number $serial $null ([ordered]@{})
                         $deviceProperty = $apiResult.data.PSObject.Properties[$serial]
                         $deviceApps = if ($deviceProperty) { $deviceProperty.Value } else { @() }
-                        $apiApps = @($deviceApps | ForEach-Object { if ($_ -is [string]) { [string]$_ } elseif ($_.apk) { [string]$_.apk } } | Where-Object { $_ -match '^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$' } | Sort-Object -Unique)
+                        $apiApps = @($deviceApps | ForEach-Object { if ($_ -is [string]) { [string]$_ } elseif ($_.packageName) { [string]$_.packageName } elseif ($_.apk) { [string]$_.apk } } | Where-Object { $_ -match '^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$' } | Sort-Object -Unique)
+                        $entry.apiPackageCount = $apiApps.Count
                         if ($apiApps.Count) {
                             $entry.executionOutcome = "accepted_unverified"
                         } else {
@@ -1257,9 +1290,12 @@ $results = foreach ($serial in $targets) {
                 $rawApps = Invoke-Adb $serial @("shell", "pm", "list", "packages")
                 $apps = @($rawApps -split '\r?\n' | ForEach-Object { ($_ -replace '^package:', '').Trim() } | Where-Object { $_ -match '^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$' } | Sort-Object -Unique)
                 if (!$apps.Count) { throw "ADB package inventory was empty" }
+                $entry.adbPackageCount = $apps.Count
                 if ($apiApps.Count) {
                     $missingFromApi = @($apps | Where-Object { $apiApps -notcontains $_ })
                     $missingFromAdb = @($apiApps | Where-Object { $apps -notcontains $_ })
+                    $entry.missingFromApiCount = $missingFromApi.Count
+                    $entry.missingFromAdbCount = $missingFromAdb.Count
                     if (!$missingFromApi.Count -and !$missingFromAdb.Count) {
                         $entry.transport = "xiaowei-api+adb-package-verify"
                         $entry.verificationOutcome = "verified"
@@ -1566,6 +1602,7 @@ $results = foreach ($serial in $targets) {
     [pscustomobject]$entry
 }
 
+$results = @($results | Sort-Object machine)
 $summary = [ordered]@{
     executedAt = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
     action = $Action
@@ -1578,7 +1615,11 @@ $summary = [ordered]@{
     results = @($results)
 }
 $summary | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runRoot "result.json") -Encoding UTF8
-$results | Format-Table number,action,status,detail -AutoSize
+if ($Action -eq "Inventory") {
+    $results | Format-Table machine,name,status,model,android -AutoSize
+} else {
+    $results | Format-Table machine,name,action,status,detail -AutoSize
+}
 $matrixExitCode = if ($summary.failed -or $summary.unknown) { 2 } else { 0 }
 } finally {
     Exit-DeviceLocks -Handles $deviceLockHandles

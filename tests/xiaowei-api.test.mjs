@@ -329,7 +329,13 @@ test("approved Xiaowei text input selects a bridge IME, sends Unicode, and resto
   const verificationOrder = [];
   const sendRequest = async (request) => {
     calls.push(request);
-    if (request.action === "list") return { code: 10000, message: "SUCCESS", data: [{ serial: "test-serial" }] };
+    if (request.action === "list") {
+      return {
+        code: 10000,
+        message: "SUCCESS",
+        data: [{ serial: "test-serial" }, { serial: "api-only-extra-device" }],
+      };
+    }
     if (request.action === "imeList") return { code: 10000, message: "SUCCESS", data: { "test-serial": [nativeIme, otherBridgeIme, bridgeIme] } };
     if (request.action === "selectIme") {
       pendingIme = request.data.ime;
@@ -349,7 +355,7 @@ test("approved Xiaowei text input selects a bridge IME, sends Unicode, and resto
     },
     adbPath: "test-adb",
     expectedPackage: "com.xingin.xhs",
-    expectedOnlineSerials: ["test-serial"],
+    expectedOnlineSerials: ["test-serial", "adb-only-extra-device"],
     devices: [{ alias: "content-01", serial: "test-serial" }],
     approvedAliases: ["content-01"],
     preferredImeServices: [otherBridgeIme, bridgeIme],
@@ -665,9 +671,9 @@ test("Xiaowei pre-input identity failures retain a stage code and partial audit"
     sleep: async () => {},
   });
 
-  await assert.rejects(adapter.verifyIdentity(), (error) => {
+  await assert.rejects(adapter.verifyIdentity("content-01"), (error) => {
     assert.equal(error.code, "XIAOWEI_IDENTITY_MISMATCH");
-    assert.equal(error.message, "API and ADB device identities differ");
+    assert.equal(error.message, "Selected Xiaowei and ADB device identities differ");
     return true;
   });
   assert.deepEqual(calls.map((call) => call.action), ["list"]);

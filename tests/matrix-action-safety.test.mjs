@@ -159,6 +159,15 @@ test("named XHS interactions use a separate per-alias semantic authorization", a
   assert.doesNotMatch(configSource, /AcceptedActionsByAlias\s*=\s*@\{[^}]*\b(?:like|favorite|follow|comment|publish|delete)\b/is);
 });
 
+test("Xiaowei apkList accepts the official packageName response field", async () => {
+  const source = await readFile(actionScript, "utf8");
+  assert.match(source, /\$_\.packageName/);
+  assert.match(source, /\$_\.apk/);
+  assert.match(source, /apiPackageCount/);
+  assert.match(source, /missingFromApiCount/);
+  assert.match(source, /missingFromAdbCount/);
+});
+
 test("matrix UI capture prefers direct XML output before the remote-file fallback", async () => {
   const source = await readFile(actionScript, "utf8");
   const directIndex = source.indexOf("exec-out uiautomator dump /dev/tty");

@@ -5,6 +5,8 @@ param(
     [int]$CropY = -1,
     [int]$CropWidth = -1,
     [int]$CropHeight = -1,
+    [ValidateSet("page_safety", "exact_text", "numeric_count")]
+    [string]$Mode = "page_safety",
     [string]$ExpectedTextHash = ""
 )
 
@@ -59,9 +61,16 @@ try {
     $resolved = (Resolve-Path -LiteralPath $ImagePath).Path
     $ocrImagePath = $resolved
     $exactMode = $ExpectedTextHash -ne ""
-    if ($exactMode) {
-        if ($ExpectedTextHash -notmatch '^[a-fA-F0-9]{64}$' -or $CropX -lt 0 -or $CropY -lt 0 -or $CropWidth -le 0 -or $CropHeight -le 0) {
+    $numericMode = $Mode -eq "numeric_count"
+    if ($numericMode -and $exactMode) {
+        throw "Numeric OCR cannot include an exact-text hash"
+    }
+    if ($exactMode -or $numericMode) {
+        if ($exactMode -and ($ExpectedTextHash -notmatch '^[a-fA-F0-9]{64}$' -or $CropX -lt 0 -or $CropY -lt 0 -or $CropWidth -le 0 -or $CropHeight -le 0)) {
             throw "Invalid exact OCR request"
+        }
+        if ($numericMode -and ($CropX -lt 0 -or $CropY -lt 0 -or $CropWidth -le 0 -or $CropHeight -le 0)) {
+            throw "Invalid numeric OCR request"
         }
         Add-Type -AssemblyName System.Drawing
         $source = [System.Drawing.Bitmap]::FromFile($resolved)
@@ -102,12 +111,24 @@ try {
             (Get-TextSha256 ([string]$_)).Equals($ExpectedTextHash, [System.StringComparison]::OrdinalIgnoreCase)
         } | Select-Object -First 1)
         [ordered]@{ available = $true; matched = $matched } | ConvertTo-Json -Depth 2 -Compress
+    } elseif ($numericMode) {
+        $numericPattern = '(?<![\p{L}\p{N}])\d+(?:\.\d+)?\s*(?:\+|[kKwW\u4e07])?(?![\p{L}\p{N}])'
+        $candidates = @(
+            @([string]$result.Text) + $lines |
+                ForEach-Object { [System.Text.RegularExpressions.Regex]::Matches([string]$_, $numericPattern) } |
+                ForEach-Object { $_.Value -replace '\s+', '' } |
+                Where-Object { $_ } |
+                Select-Object -Unique -First 16
+        )
+        [ordered]@{ available = $true; candidates = $candidates } | ConvertTo-Json -Depth 3 -Compress
     } else {
         [ordered]@{ available = $true; text = [string]$result.Text; lines = $lines } | ConvertTo-Json -Depth 4 -Compress
     }
 } catch {
     if ($ExpectedTextHash -ne "") {
         [ordered]@{ available = $false; matched = $false; error = "WINDOWS_OCR_UNAVAILABLE" } | ConvertTo-Json -Depth 2 -Compress
+    } elseif ($Mode -eq "numeric_count") {
+        [ordered]@{ available = $false; candidates = @(); error = "WINDOWS_OCR_UNAVAILABLE" } | ConvertTo-Json -Depth 3 -Compress
     } else {
         [ordered]@{ available = $false; text = ""; lines = @(); error = "WINDOWS_OCR_UNAVAILABLE" } | ConvertTo-Json -Depth 4 -Compress
     }

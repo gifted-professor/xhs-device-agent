@@ -298,6 +298,9 @@ test("bounded image-detail sampling scrolls only a semantic content container an
     "@用户 可以看看 [手机号已脱敏]",
     "更多信息 [链接已脱敏]",
   ]);
+  const serializedSnippets = JSON.stringify(result.candidates[0].commentMetadata.snippets);
+  assert.equal(serializedSnippets.includes("13800138000"), false);
+  assert.equal(serializedSnippets.includes("example.test"), false);
   const noteScroll = mock.calls.find((call) => call.operation === "scroll_note_content");
   assert.deepEqual(noteScroll.args.slice(-5), ["540", "1450", "540", "750", "350"]);
   assert.equal(mock.calls.filter((call) => call.operation === "tap_comments_entry").length, 1);

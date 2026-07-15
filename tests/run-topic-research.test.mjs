@@ -218,7 +218,7 @@ test("formal run entry performs the Node inventory gate before creating a provid
   );
 });
 
-test("formal run rechecks Xiaowei identity before creating a research session", async () => {
+test("formal run defers Xiaowei identity verification until the selected device uses Xiaowei input", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "xhs-live-identity-gate-"));
   const taskPath = path.join(root, "task.json");
   const configPath = path.join(root, "provider.json");
@@ -257,35 +257,38 @@ test("formal run rechecks Xiaowei identity before creating a research session", 
   ]);
 
   let identityChecks = 0;
-  await assert.rejects(
-    runFromArguments([
-      "--task", taskPath,
-      "--provider-config", configPath,
-      "--output-root", path.join(root, "output"),
-    ], {
-      listOnlineDevices: async () => ["test-serial-a"],
-      createXiaoweiTextInputAdapter: () => {
-        const adapter = async () => { assert.fail("research work must not start"); };
-        adapter.verifyIdentity = async () => {
-          identityChecks += 1;
-          const error = new Error("identity changed");
-          error.code = "XIAOWEI_IDENTITY_MISMATCH";
-          throw error;
-        };
-        return adapter;
-      },
-    }),
-    (error) => error.code === "XIAOWEI_IDENTITY_MISMATCH"
-      && !error.message.includes("test-serial-a"),
-  );
-  assert.equal(identityChecks, 1);
+  let sessionCalls = 0;
+  const result = await runFromArguments([
+    "--task", taskPath,
+    "--provider-config", configPath,
+    "--output-root", path.join(root, "output"),
+  ], {
+    listOnlineDevices: async () => ["test-serial-a"],
+    createXiaoweiTextInputAdapter: () => {
+      const adapter = async () => { assert.fail("test session does not perform text input"); };
+      adapter.verifyIdentity = async () => {
+        identityChecks += 1;
+        throw new Error("entry must not perform a fleet-wide identity check");
+      };
+      return adapter;
+    },
+    runResearchSession: async (_task, options) => {
+      sessionCalls += 1;
+      assert.equal(typeof options.providerFactory, "function");
+      return { status: "completed" };
+    },
+  });
+  assert.deepEqual(result, { status: "completed" });
+  assert.equal(identityChecks, 0);
+  assert.equal(sessionCalls, 1);
 });
 
-test("doctor blocks enabled Xiaowei text input when API and ADB identities differ", async () => {
+test("doctor reports fleet identity drift without blocking unrelated selected-device work", async () => {
   const source = await readFile(new URL("../scripts/Matrix-Preflight.ps1", import.meta.url), "utf8");
-  assert.match(
+  assert.doesNotMatch(
     source,
-    /elseif \(!\$api\.identityAligned\)\s*\{\s*\$configurationBlockers\.Add\("enabled Xiaowei text input requires aligned API and ADB device identities"\)\s*\}/u,
+    /\$configurationBlockers\.Add\("enabled Xiaowei text input requires aligned API and ADB device identities"\)/u,
   );
+  assert.match(source, /\$apiBlockers\.Add\("API and ADB device identities differ"\)/u);
   assert.match(source, /readyForDeviceWork\s*=\s*!\$configurationBlockers\.Count/u);
 });

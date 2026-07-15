@@ -22,6 +22,12 @@ import {
   normalizeFeedSpec,
   runFeedWorkflow,
 } from "./feed-workflow.mjs";
+import {
+  assertBatchControlActiveSync,
+  batchControlPaths,
+  tripBatchFuse,
+} from "./feed-batch-control.mjs";
+import { classifyFeedBatchFailure } from "./feed-batch-core.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -29,6 +35,7 @@ const XHS_PACKAGE = "com.xingin.xhs";
 const DETAIL_STATES = new Set(["IMAGE_NOTE", "VIDEO_NOTE"]);
 const STARTUP_BACK_ATTEMPTS = 4;
 const STARTUP_LAUNCH_ATTEMPTS = 2;
+const DETAIL_TRANSITION_ATTEMPTS = 5;
 const SAFE_ALIAS = /^[A-Za-z0-9._-]{1,64}$/u;
 const CHROME_TEXT = new Set(["首页", "发现", "关注", "消息", "我", "搜索", "推荐", "购物", "发布", "直播"]);
 
@@ -85,6 +92,12 @@ export function extractHierarchyXml(raw) {
   const declarationStart = value.lastIndexOf("<?xml", hierarchyStart);
   const start = declarationStart >= 0 ? declarationStart : hierarchyStart;
   return value.slice(start, hierarchyEnd + "</hierarchy>".length);
+}
+
+export function countUiDumpBytes(raw) {
+  const value = String(raw ?? "");
+  if (value.length === 0) return 0;
+  return new TextEncoder().encode(value).length;
 }
 
 function stablePublicText(value) {
@@ -450,7 +463,7 @@ export function probePackageFocus(runAdb, packageName = XHS_PACKAGE) {
 }
 
 export class AdbFeedAdapter {
-  constructor({ adbPath, serial, deviceAlias, rules, runDir }) {
+  constructor({ adbPath, serial, deviceAlias, rules, runDir, batchControl = null }) {
     this.adbPath = adbPath;
     this.serial = serial;
     this.deviceAlias = deviceAlias;
@@ -459,6 +472,7 @@ export class AdbFeedAdapter {
     this.captureSequence = 0;
     this.context = { deviceAlias, xhsVersion: "", androidSdk: "", resolution: "", dpi: "" };
     this.currentDetailSnapshot = null;
+    this.batchControl = batchControl;
   }
 
   sanitize(value) {
@@ -466,6 +480,7 @@ export class AdbFeedAdapter {
   }
 
   adb(args, { binary = false, sent = false, timeout = 30000, allowFailureWithOutput = false } = {}) {
+    if (sent) this.assertBatchActive();
     const result = spawnSync(this.adbPath, ["-s", this.serial, ...args], {
       encoding: binary ? null : "utf8",
       windowsHide: true,
@@ -478,6 +493,14 @@ export class AdbFeedAdapter {
       throw new FeedDeviceError("ADB_COMMAND_FAILED", this.sanitize(detail).trim(), { sent });
     }
     return result.stdout;
+  }
+
+  assertBatchActive() {
+    if (!this.batchControl) return;
+    assertBatchControlActiveSync(this.batchControl.paths, {
+      attemptId: this.batchControl.attemptId,
+      requireStart: true,
+    });
   }
 
   async initializeContext() {
@@ -521,13 +544,16 @@ export class AdbFeedAdapter {
       },
     ];
     let lastCauseCode = "invalid_xml";
+    let lastRawBytes = null;
     for (let index = 0; index < attempts.length; index += 1) {
       const attempt = attempts[index];
       try {
-        const xml = extractHierarchyXml(attempt.run());
+        const raw = attempt.run();
+        lastRawBytes = countUiDumpBytes(raw);
+        const xml = extractHierarchyXml(raw);
         if (!xml) throw new FeedDeviceError("UI_DUMP_INVALID", attempt.name + " returned incomplete hierarchy output");
         const document = parseUiAutomatorXml(xml);
-        return { xml, document, source: attempt.name };
+        return { xml, document, source: attempt.name, rawBytes: lastRawBytes };
       } catch (error) {
         lastCauseCode = String(error?.code ?? error?.name ?? "unknown");
       }
@@ -536,12 +562,12 @@ export class AdbFeedAdapter {
     throw new FeedDeviceError(
       "UI_DUMP_INVALID",
       "UI hierarchy remained unavailable after three bounded dump attempts",
-      { attempts: attempts.length, lastCauseCode },
+      { attempts: attempts.length, lastCauseCode, rawBytes: lastRawBytes },
     );
   }
 
   async readUi(stage) {
-    const { xml, document } = await this.captureUiHierarchy();
+    const { xml, document, rawBytes } = await this.captureUiHierarchy();
     const classification = classifyPage(document, this.rules, this.context);
     const suffix = String(++this.captureSequence).padStart(3, "0");
     const safeStage = String(stage).replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 48);
@@ -554,6 +580,7 @@ export class AdbFeedAdapter {
       fingerprint: createNormalizedFingerprint(document).hash,
       foregroundPackage: dominantPackage(document),
       path: xmlPath,
+      rawBytes,
     };
   }
 
@@ -580,6 +607,58 @@ export class AdbFeedAdapter {
       if (Date.now() - started < timeoutMs) await this.pause(500);
     }
     throw new FeedDeviceError("UI_NOT_STABLE", "UI did not produce two semantically stable hierarchy samples");
+  }
+
+  async readUiTransition(stage) {
+    try {
+      return await this.readUi(stage);
+    } catch (error) {
+      if (error?.code !== "UI_DUMP_INVALID") throw error;
+      return {
+        error: true,
+        code: "UI_DUMP_INVALID",
+        message: error.message,
+        rawBytes: Number.isInteger(error?.rawBytes) ? error.rawBytes : null,
+        parseError: String(error?.lastCauseCode ?? error?.message ?? error?.name ?? "unknown"),
+      };
+    }
+  }
+
+  async stableUiWhileTransitioning(stage, { maxAttempts = DETAIL_TRANSITION_ATTEMPTS, pauseMs = 600 } = {}) {
+    let lastFailure = null;
+    let lastReadable = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const current = await this.readUiTransition(stage);
+      if (current.error) {
+        lastFailure = current;
+      } else {
+        if (current.foregroundPackage !== XHS_PACKAGE) {
+          throw new FeedDeviceError(
+            "APP_LEFT_FOREGROUND",
+            "XHS left the foreground while the workflow was waiting for a detail transition",
+          );
+        }
+        const readable = {
+          sample: current,
+          attempts: attempt,
+          rawBytes: Number.isInteger(current.rawBytes) ? current.rawBytes : countUiDumpBytes(current.xml),
+          parseError: null,
+        };
+        if (DETAIL_STATES.has(current.classification.state)) return readable;
+        lastReadable = readable;
+      }
+      if (attempt < maxAttempts) await this.pause(pauseMs);
+    }
+    if (lastReadable) return { ...lastReadable, attempts: maxAttempts };
+    throw new FeedDeviceError(
+      "UI_DUMP_INVALID",
+      "UI hierarchy remained unavailable during detail transition after " + maxAttempts + " bounded attempts",
+      {
+        attempts: maxAttempts,
+        rawBytes: lastFailure?.rawBytes ?? null,
+        lastCauseCode: lastFailure?.parseError ?? "unknown",
+      },
+    );
   }
 
   assertOperable(snapshot, expectedStates = null) {
@@ -641,18 +720,59 @@ export class AdbFeedAdapter {
     return after;
   }
 
+  async captureFailure() {
+    const imagePath = path.join(this.runDir, "failure.png");
+    try {
+      const png = this.adb(["exec-out", "screencap", "-p"], { binary: true, timeout: 15000 });
+      await writeFile(imagePath, png);
+      return evidencePath(this.runDir, imagePath);
+    } catch {
+      return null;
+    }
+  }
+
+  async captureScreenshot(stage) {
+    const imagePath = path.join(
+      this.runDir,
+      "evidence",
+      String(++this.captureSequence).padStart(3, "0") + "-" +
+      String(stage).replace(/[^A-Za-z0-9._-]+/gu, "-").slice(0, 48) + ".png",
+    );
+    try {
+      const png = this.adb(["exec-out", "screencap", "-p"], { binary: true, timeout: 15000 });
+      await writeFile(imagePath, png);
+      return evidencePath(this.runDir, imagePath);
+    } catch {
+      return null;
+    }
+  }
+
   async ensureFeed() {
     await this.initializeContext();
     let snapshot = await this.stableUiWhileStarting("feed-entry-current");
     let sawXhsPage = Boolean(snapshot);
     if (snapshot) {
+      if (DETAIL_STATES.has(snapshot.classification.state)) {
+        this.assertOperable(snapshot);
+        this.adb(["shell", "input", "keyevent", "KEYCODE_BACK"], { sent: true });
+        const recovered = await this.stableUiWhileStarting("feed-entry-current-back-1");
+        if (recovered?.classification.state !== "HOME_FEED") {
+          throw new FeedDeviceError(
+            "RESIDUAL_DETAIL",
+            "Task started on a residual detail page and one Back did not return to the feed",
+          );
+        }
+        return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, recovered.path) } };
+      }
       snapshot = await this.recoverHomeWithBack(snapshot, "feed-entry-current");
       if (snapshot?.classification.state === "HOME_FEED") {
         return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, snapshot.path) } };
       }
-      const tabRecovered = await this.recoverHomeWithTab(snapshot, "feed-entry-current");
-      if (tabRecovered) {
-        return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, tabRecovered.path) } };
+      if (snapshot) {
+        const tabRecovered = await this.recoverHomeWithTab(snapshot, "feed-entry-current");
+        if (tabRecovered) {
+          return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, tabRecovered.path) } };
+        }
       }
     }
 
@@ -696,6 +816,15 @@ export class AdbFeedAdapter {
     return after;
   }
 
+  async backToFeedOptional(stage) {
+    this.adb(["shell", "input", "keyevent", "KEYCODE_BACK"], { sent: true });
+    const after = await this.stableUi(stage);
+    this.assertOperable(after);
+    const returnedToFeed = after.classification.state === "HOME_FEED";
+    if (returnedToFeed) this.currentDetailSnapshot = null;
+    return { snapshot: after, returnedToFeed };
+  }
+
   async openNextUnique(seen, index) {
     let snapshot = await this.stableUi("item-" + index + "-feed");
     this.assertOperable(snapshot, new Set(["HOME_FEED"]));
@@ -705,12 +834,29 @@ export class AdbFeedAdapter {
       if (candidate) {
         const feedPath = snapshot.path;
         this.tapNode(candidate.node);
-        const detail = await this.stableUi("item-" + index + "-detail");
+
+        let detailTransitionAttempts = 0;
+        let uiDumpRawBytes = null;
+        let uiDumpParseError = null;
+        let detail;
+        const transitionResult = await this.stableUiWhileTransitioning("item-" + index + "-detail");
+        detailTransitionAttempts = transitionResult.attempts;
+        detail = transitionResult.sample;
+        uiDumpRawBytes = transitionResult.rawBytes;
+        uiDumpParseError = transitionResult.parseError;
+
+        const screenshotAvailable = await this.captureScreenshot("item-" + index + "-detail");
         this.assertOperable(detail);
         if (!DETAIL_STATES.has(detail.classification.state)) {
           const returned = detail.classification.state === "HOME_FEED"
-            ? detail
-            : await this.backToFeed("item-" + index + "-skip-returned");
+            ? { snapshot: detail, returnedToFeed: true }
+            : await this.backToFeedOptional("item-" + index + "-skip-returned");
+          if (!returned.returnedToFeed) {
+            throw new FeedDeviceError(
+              "RETURN_TO_FEED_FAILED",
+              "One Back did not verify a return to HOME_FEED after an unsupported detail",
+            );
+          }
           return {
             skipped: true,
             identity: candidate.identity,
@@ -719,7 +865,15 @@ export class AdbFeedAdapter {
             evidence: {
               feedBefore: evidencePath(this.runDir, feedPath),
               unsupported: evidencePath(this.runDir, detail.path),
-              returned: evidencePath(this.runDir, returned.path),
+              returned: evidencePath(this.runDir, returned.snapshot.path),
+              detailTransitionAttempts,
+              uiDumpRawBytes,
+              uiDumpParseError,
+              contentKind: detail.classification.state,
+              videoSkipped: false,
+              detailVisited: detail.classification.state !== "HOME_FEED",
+              returnedToList: returned.returnedToFeed,
+              screenshotAvailable,
             },
           };
         }
@@ -729,7 +883,13 @@ export class AdbFeedAdapter {
           .join(" ");
         const identityVerified = candidate.tokens.some((token) => token.length >= 3 && detailText.includes(token));
         if (!identityVerified) {
-          const returned = await this.backToFeed("item-" + index + "-identity-mismatch-returned");
+          const returned = await this.backToFeedOptional("item-" + index + "-identity-mismatch-returned");
+          if (!returned.returnedToFeed) {
+            throw new FeedDeviceError(
+              "RETURN_TO_FEED_FAILED",
+              "One Back did not verify a return to HOME_FEED after an identity mismatch",
+            );
+          }
           return {
             skipped: true,
             identity: candidate.identity,
@@ -738,7 +898,15 @@ export class AdbFeedAdapter {
             evidence: {
               feedBefore: evidencePath(this.runDir, feedPath),
               unsupported: evidencePath(this.runDir, detail.path),
-              returned: evidencePath(this.runDir, returned.path),
+              returned: evidencePath(this.runDir, returned.snapshot.path),
+              detailTransitionAttempts,
+              uiDumpRawBytes,
+              uiDumpParseError,
+              contentKind: detail.classification.state,
+              videoSkipped: false,
+              detailVisited: true,
+              returnedToList: returned.returnedToFeed,
+              screenshotAvailable,
             },
           };
         }
@@ -749,6 +917,14 @@ export class AdbFeedAdapter {
           evidence: {
             feedBefore: evidencePath(this.runDir, feedPath),
             detail: evidencePath(this.runDir, detail.path),
+            detailTransitionAttempts,
+            uiDumpRawBytes,
+            uiDumpParseError,
+            contentKind: detail.classification.state,
+            videoSkipped: false,
+            detailVisited: true,
+            returnedToList: false,
+            screenshotAvailable,
           },
         };
       }
@@ -768,6 +944,7 @@ export class AdbFeedAdapter {
     while (performance.now() < deadline) {
       const remaining = deadline - performance.now();
       await new Promise((resolve) => setTimeout(resolve, Math.min(1000, Math.max(1, remaining))));
+      this.assertBatchActive();
       const focus = probePackageFocus((args) => this.adb(args));
       if (!focus.focused) {
         throw new FeedDeviceError("APP_LEFT_FOREGROUND", "XHS left the foreground during the dwell interval");
@@ -839,18 +1016,13 @@ export class AdbFeedAdapter {
 
   async returnToFeed(item) {
     const after = await this.backToFeed("item-" + item.index + "-returned");
-    return { verified: true, evidence: { returned: evidencePath(this.runDir, after.path) } };
-  }
-
-  async captureFailure() {
-    const imagePath = path.join(this.runDir, "failure.png");
-    try {
-      const png = this.adb(["exec-out", "screencap", "-p"], { binary: true, timeout: 15000 });
-      await writeFile(imagePath, png);
-      return evidencePath(this.runDir, imagePath);
-    } catch {
-      return null;
-    }
+    return {
+      verified: true,
+      evidence: {
+        returned: evidencePath(this.runDir, after.path),
+        returnedToList: true,
+      },
+    };
   }
 }
 
@@ -873,11 +1045,27 @@ async function runCli(argv) {
     imageMaxSeconds: options["image-max-seconds"],
     videoMinSeconds: options["video-min-seconds"],
     videoMaxSeconds: options["video-max-seconds"],
+    videoPolicy: options["video-policy"],
+    videoDwellMs: options["video-dwell-ms"],
   });
   const adbPath = path.resolve(requireOption(options, "adb-path"));
   const serial = requireOption(options, "serial");
   const outputRoot = path.resolve(options["output-root"] || path.join(PROJECT_ROOT, "data", "feed"));
   const rulesPath = path.resolve(options.rules || path.join(PROJECT_ROOT, "config", "xhs-page-rules.json"));
+  const batchRootOption = options["batch-root"];
+  const batchAttemptId = options["batch-attempt-id"];
+  if (Boolean(batchRootOption) !== Boolean(batchAttemptId)) {
+    throw new Error("--batch-root and --batch-attempt-id must be supplied together");
+  }
+  const batchControl = batchRootOption
+    ? { paths: batchControlPaths(path.resolve(batchRootOption), batchAttemptId), attemptId: batchAttemptId }
+    : null;
+  if (batchControl && (spec.likeAt || spec.favoriteAt)) {
+    throw new Error("Feed batch V1 is read-only and rejects interactions");
+  }
+  if (batchControl && (spec.count > 10 || spec.videoPolicy !== "skip_and_count" || spec.videoDwellMs !== 0)) {
+    throw new Error("Feed batch V1 requires count<=10 and zero-dwell video skip policy");
+  }
   const runDir = path.resolve(outputRoot, spec.taskId);
   if (path.dirname(runDir) !== outputRoot) throw new Error("task-id escaped the feed output root");
   await mkdir(path.join(runDir, "evidence"), { recursive: true });
@@ -889,9 +1077,10 @@ async function runCli(argv) {
     ? JSON.parse(await readFile(checkpointPath, "utf8"))
     : null;
   const rules = await loadRules(rulesPath);
-  const adapter = new AdbFeedAdapter({ adbPath, serial, deviceAlias, rules, runDir });
+  const adapter = new AdbFeedAdapter({ adbPath, serial, deviceAlias, rules, runDir, batchControl });
+  let eventSequence = 0;
   const emit = async (event) => {
-    await appendFile(eventsPath, JSON.stringify({ at: new Date().toISOString(), ...event }) + "\n", "utf8");
+    await appendFile(eventsPath, JSON.stringify({ seq: ++eventSequence, at: new Date().toISOString(), ...event }) + "\n", "utf8");
   };
 
   try {
@@ -915,6 +1104,18 @@ async function runCli(argv) {
       eventsPath,
     }, null, 2) + "\n");
   } catch (error) {
+    if (batchControl) {
+      const code = String(error?.code ?? "FEED_WORKER_FAILED").toUpperCase();
+      const category = classifyFeedBatchFailure(code);
+      if (category === "global_safety" || category === "batch_integrity") {
+        tripBatchFuse(batchControl.paths, {
+          attemptId: batchAttemptId,
+          category,
+          code,
+          taskId: spec.taskId,
+        });
+      }
+    }
     const failureScreenshot = await adapter.captureFailure();
     const persisted = existsSync(checkpointPath)
       ? JSON.parse(await readFile(checkpointPath, "utf8"))

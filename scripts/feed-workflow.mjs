@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 
 const ACTION_NAMES = Object.freeze(["like", "favorite"]);
 const DETAIL_PAGE_TYPES = new Set(["IMAGE_NOTE", "VIDEO_NOTE"]);
+const VIDEO_POLICIES = new Set(["normal", "skip_and_count"]);
+const ITEM_PHASES = new Set(["opened", "dwell_verified", "actions_verified", "returned_verified", "committed"]);
 const SAFE_TASK_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u;
 const DEFAULT_DWELL = Object.freeze({
   imageMinSeconds: 3,
@@ -66,6 +68,11 @@ export function normalizeFeedSpec(input = {}) {
   if (imageMinSeconds > imageMaxSeconds || videoMinSeconds > videoMaxSeconds) {
     throw new FeedWorkflowError("INVALID_SPEC", "Dwell minimums cannot exceed their maximums");
   }
+  const videoPolicy = String(input.videoPolicy ?? "normal").trim();
+  if (!VIDEO_POLICIES.has(videoPolicy)) {
+    throw new FeedWorkflowError("INVALID_SPEC", "videoPolicy must be normal or skip_and_count");
+  }
+  const videoDwellMs = asBoundedInteger(input.videoDwellMs, "videoDwellMs", 0, 20000, { optional: true });
   return Object.freeze({
     schemaVersion: 1,
     taskId,
@@ -76,6 +83,8 @@ export function normalizeFeedSpec(input = {}) {
     imageMaxSeconds,
     videoMinSeconds,
     videoMaxSeconds,
+    videoPolicy,
+    videoDwellMs,
   });
 }
 
@@ -94,6 +103,8 @@ function operationId(spec, identity, action) {
 export function deterministicDwellSeconds(specInput, identity, pageType) {
   const spec = normalizeFeedSpec(specInput);
   const video = String(pageType) === "VIDEO_NOTE";
+  if (video && spec.videoPolicy === "skip_and_count") return 0;
+  if (video && spec.videoDwellMs !== null) return spec.videoDwellMs / 1000;
   const minimum = video ? spec.videoMinSeconds : spec.imageMinSeconds;
   const maximum = video ? spec.videoMaxSeconds : spec.imageMaxSeconds;
   const digest = createHash("sha256")
@@ -114,6 +125,7 @@ export function createFeedCheckpoint(specInput, deviceAlias, now = new Date().to
     updatedAt: now,
     failureSignature: null,
     skipped: [],
+    inFlightItem: null,
     items: [],
   };
 }
@@ -123,6 +135,52 @@ function actionAt(spec, index) {
   if (spec.likeAt === index) actions.push("like");
   if (spec.favoriteAt === index) actions.push("favorite");
   return actions;
+}
+
+function itemIsSkippedVideo(spec, pageType) {
+  return spec.videoPolicy === "skip_and_count" && pageType === "VIDEO_NOTE";
+}
+
+function inferLegacyItemPhase(item) {
+  if (item?.returnedToFeed === true) return "committed";
+  const actions = Object.values(item?.actions ?? {});
+  if (actions.some((record) => record?.phase === "verified")) return "actions_verified";
+  if (
+    item?.dwell?.foregroundVerified === true &&
+    Number.isFinite(Number(item?.dwell?.actualSeconds))
+  ) return "dwell_verified";
+  return "opened";
+}
+
+function normalizeCheckpointLifecycle(checkpoint) {
+  if (!Array.isArray(checkpoint.items)) checkpoint.items = [];
+  if (!Array.isArray(checkpoint.skipped)) checkpoint.skipped = [];
+  if (!Object.hasOwn(checkpoint, "inFlightItem")) checkpoint.inFlightItem = null;
+
+  const incomplete = checkpoint.items.filter((item) => item?.returnedToFeed !== true);
+  if (incomplete.length > 1 || (incomplete.length === 1 && checkpoint.items.at(-1) !== incomplete[0])) {
+    throw new FeedWorkflowError("INVALID_CHECKPOINT", "Feed checkpoint contains multiple or non-trailing incomplete items");
+  }
+  if (incomplete.length === 1) {
+    if (checkpoint.inFlightItem) {
+      throw new FeedWorkflowError("INVALID_CHECKPOINT", "Feed checkpoint contains two in-flight items");
+    }
+    checkpoint.inFlightItem = checkpoint.items.pop();
+  }
+  for (const item of checkpoint.items) item.phase ??= "committed";
+  if (checkpoint.inFlightItem) checkpoint.inFlightItem.phase ??= inferLegacyItemPhase(checkpoint.inFlightItem);
+}
+
+function checkpointItems(checkpoint) {
+  return [...checkpoint.items, ...(checkpoint.inFlightItem ? [checkpoint.inFlightItem] : [])];
+}
+
+function requiredActionsVerified(spec, item) {
+  return actionAt(spec, item.index).every((action) => item.actions?.[action]?.phase === "verified");
+}
+
+function itemDwellVerified(item) {
+  return item?.dwell?.foregroundVerified === true && Number.isFinite(Number(item?.dwell?.actualSeconds));
 }
 
 function assertCheckpoint(checkpoint, spec, deviceAlias) {
@@ -135,7 +193,20 @@ function assertCheckpoint(checkpoint, spec, deviceAlias) {
   if (checkpoint.deviceAlias !== String(deviceAlias ?? "")) {
     throw new FeedWorkflowError("TASK_CONFLICT", "The taskId is bound to a different device alias");
   }
-  for (const item of checkpoint.items ?? []) {
+  normalizeCheckpointLifecycle(checkpoint);
+  if (checkpoint.items.length > spec.count) {
+    throw new FeedWorkflowError("INVALID_CHECKPOINT", "Feed checkpoint contains more committed items than requested");
+  }
+  if (
+    checkpoint.status === "completed" &&
+    (checkpoint.inFlightItem !== null || checkpoint.items.length !== spec.count)
+  ) {
+    throw new FeedWorkflowError("INVALID_CHECKPOINT", "Completed feed checkpoint is not fully committed");
+  }
+  for (const item of checkpointItems(checkpoint)) {
+    if (!ITEM_PHASES.has(item.phase)) {
+      throw new FeedWorkflowError("INVALID_CHECKPOINT", "Feed checkpoint contains an invalid item phase");
+    }
     for (const action of ACTION_NAMES) {
       if (item.actions?.[action]?.phase === "send_intent") {
         throw new FeedWorkflowError(
@@ -159,6 +230,16 @@ function workflowSummary(checkpoint, duplicate = false) {
     viewedCount: checkpoint.items.length,
     skippedCount: skipped.length,
     failureSignature: checkpoint.failureSignature,
+    inFlightItem: checkpoint.inFlightItem ? {
+      index: checkpoint.inFlightItem.index,
+      identity: checkpoint.inFlightItem.identity,
+      pageType: checkpoint.inFlightItem.pageType,
+      phase: checkpoint.inFlightItem.phase,
+      returnedToFeed: checkpoint.inFlightItem.returnedToFeed,
+      actions: checkpoint.inFlightItem.actions,
+      dwell: checkpoint.inFlightItem.dwell,
+      evidence: checkpoint.inFlightItem.evidence,
+    } : null,
     skipped: skipped.map((entry) => ({
       targetIndex: entry.targetIndex,
       identity: entry.identity,
@@ -170,6 +251,7 @@ function workflowSummary(checkpoint, duplicate = false) {
       index: item.index,
       identity: item.identity,
       pageType: item.pageType,
+      phase: item.phase,
       returnedToFeed: item.returnedToFeed,
       actions: item.actions,
       dwell: item.dwell,
@@ -198,17 +280,56 @@ export async function runFeedWorkflow({
   }
   const checkpoint = suppliedCheckpoint ?? createFeedCheckpoint(spec, deviceAlias, now());
   assertCheckpoint(checkpoint, spec, deviceAlias);
-  if (!Array.isArray(checkpoint.skipped)) checkpoint.skipped = [];
   if (checkpoint.status === "completed") return workflowSummary(checkpoint, true);
 
   checkpoint.status = "running";
   checkpoint.failureSignature = null;
   checkpoint.updatedAt = now();
   await saveCheckpoint(checkpoint);
-  await emit({ type: "started", taskId: spec.taskId, resumed: checkpoint.items.length > 0 });
+  await emit({
+    type: "started",
+    taskId: spec.taskId,
+    resumed: checkpoint.items.length > 0 || checkpoint.inFlightItem !== null,
+  });
 
   try {
-    await adapter.ensureFeed();
+    const feedReady = await adapter.ensureFeed();
+    if (!feedReady?.verified) {
+      throw new FeedWorkflowError("FEED_NOT_VERIFIED", "The workflow did not verify the feed before continuing");
+    }
+
+    if (checkpoint.inFlightItem) {
+      const item = checkpoint.inFlightItem;
+      const canCommit = itemDwellVerified(item) && requiredActionsVerified(spec, item);
+      if (canCommit) {
+        item.returnedToFeed = true;
+        item.phase = "committed";
+        item.committedAt = now();
+        item.evidence = { ...item.evidence, ...(feedReady.evidence ?? {}), resumedToFeed: true };
+        checkpoint.items.push(item);
+        checkpoint.inFlightItem = null;
+        checkpoint.updatedAt = now();
+        await saveCheckpoint(checkpoint);
+        await emit({ type: "item_committed_after_resume", index: item.index, identity: item.identity });
+      } else {
+        const interrupted = {
+          targetIndex: item.index,
+          identity: item.identity,
+          pageState: item.pageType,
+          reason: itemDwellVerified(item)
+            ? "interrupted_before_scheduled_action"
+            : "interrupted_before_dwell_verified",
+          skippedAt: now(),
+          evidence: { ...item.evidence, resumedToFeed: true },
+        };
+        checkpoint.skipped.push(interrupted);
+        checkpoint.inFlightItem = null;
+        checkpoint.updatedAt = now();
+        await saveCheckpoint(checkpoint);
+        await emit({ type: "item_interrupted_recovered", ...interrupted });
+      }
+    }
+
     const seen = new Set(
       [...checkpoint.items, ...checkpoint.skipped]
         .map((entry) => entry.identity)
@@ -256,13 +377,17 @@ export async function runFeedWorkflow({
         index,
         identity: opened.identity,
         pageType: opened.pageType ?? "UNKNOWN",
+        phase: "opened",
         openedAt: now(),
         returnedToFeed: false,
         dwell: null,
         actions: {},
-        evidence: opened.evidence ?? {},
+        evidence: {
+          ...(opened.evidence ?? {}),
+          videoSkipped: itemIsSkippedVideo(spec, opened.pageType),
+        },
       };
-      checkpoint.items.push(item);
+      checkpoint.inFlightItem = item;
       seen.add(item.identity);
       checkpoint.updatedAt = now();
       await saveCheckpoint(checkpoint);
@@ -282,7 +407,15 @@ export async function runFeedWorkflow({
       };
       checkpoint.updatedAt = now();
       await saveCheckpoint(checkpoint);
-      const dwellResult = await adapter.dwell(item, { plannedSeconds });
+      const dwellResult = itemIsSkippedVideo(spec, item.pageType)
+        ? {
+            verified: true,
+            actualSeconds: 0,
+            foregroundVerified: true,
+            playbackProgressVerified: null,
+            evidence: { videoPolicy: spec.videoPolicy },
+          }
+        : await adapter.dwell(item, { plannedSeconds });
       const actualSeconds = Number(dwellResult?.actualSeconds);
       if (
         !dwellResult?.verified ||
@@ -299,6 +432,7 @@ export async function runFeedWorkflow({
       item.dwell.playbackProgressBeforeSeconds = dwellResult.beforeProgressSeconds ?? null;
       item.dwell.playbackProgressAfterSeconds = dwellResult.afterProgressSeconds ?? null;
       item.dwell.evidence = dwellResult.evidence ?? {};
+      item.phase = "dwell_verified";
       checkpoint.updatedAt = now();
       await saveCheckpoint(checkpoint);
       await emit({
@@ -357,12 +491,24 @@ export async function runFeedWorkflow({
         }
       }
 
+      item.phase = "actions_verified";
+      checkpoint.updatedAt = now();
+      await saveCheckpoint(checkpoint);
+
       const returned = await adapter.returnToFeed(item);
       if (!returned?.verified) {
         throw new FeedWorkflowError("RETURN_TO_FEED_FAILED", "The workflow did not verify a return to the feed");
       }
       item.returnedToFeed = true;
+      item.phase = "returned_verified";
       item.evidence = { ...item.evidence, ...(returned.evidence ?? {}) };
+      checkpoint.updatedAt = now();
+      await saveCheckpoint(checkpoint);
+
+      item.phase = "committed";
+      item.committedAt = now();
+      checkpoint.items.push(item);
+      checkpoint.inFlightItem = null;
       checkpoint.updatedAt = now();
       await saveCheckpoint(checkpoint);
       await emit({ type: "item_completed", index, identity: item.identity });

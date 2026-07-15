@@ -181,3 +181,66 @@ test("exact local OCR fails closed for invalid requests or raw-text payloads", a
     bounds: { left: 1, top: 1, right: 2, bottom: 2 },
   }), null);
 });
+
+test("numeric-count OCR uses a bounded crop and returns only a typed count observation", async () => {
+  let invocation;
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async (input) => {
+      invocation = input;
+      return {
+        exitCode: 0,
+        stdout: '{"available":true,"candidates":["99+","99+"]}',
+      };
+    },
+  });
+  const result = await localOcr({
+    mode: "numeric_count",
+    imagePath: "C:\\\\temp\\\\count.png",
+    bounds: { left: 10, top: 20, right: 210, bottom: 100 },
+  });
+  assert.ok(invocation.args.includes("numeric_count"));
+  assert.deepEqual(invocation.args.slice(invocation.args.indexOf("-CropX"), invocation.args.indexOf("-Mode")), [
+    "-CropX", "10", "-CropY", "20", "-CropWidth", "200", "-CropHeight", "80",
+  ]);
+  assert.deepEqual(result, {
+    count: 99,
+    countKind: "lower_bound",
+    confidence: 1,
+    ocrAvailable: true,
+    source: "windows_local_ocr",
+    safeForCloud: false,
+  });
+  assert.equal(JSON.stringify(result).includes("99+"), false);
+  assert.equal(JSON.stringify(result).includes("count.png"), false);
+});
+
+test("numeric-count OCR fails closed for malformed requests, conflicts, and payload leakage", async () => {
+  let calls = 0;
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async () => {
+      calls += 1;
+      return { exitCode: 0, stdout: '{"available":true,"candidates":["5","6"]}' };
+    },
+  });
+  assert.equal(await localOcr({ mode: "numeric_count", imagePath: "screen.png" }), null);
+  assert.equal(await localOcr({
+    mode: "numeric_count", imagePath: "screen.png", bounds: { left: 1, top: 1, right: 1, bottom: 2 },
+  }), null);
+  assert.equal(calls, 0);
+  assert.deepEqual(await localOcr({
+    mode: "numeric_count", imagePath: "screen.png", bounds: { left: 1, top: 1, right: 20, bottom: 20 },
+  }), {
+    count: null, countKind: "unknown", confidence: 0, ocrAvailable: true,
+    source: "windows_local_ocr", safeForCloud: false,
+  });
+
+  const leaking = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async () => ({ exitCode: 0, stdout: '{"available":true,"candidates":["5"],"text":"secret"}' }),
+  });
+  assert.equal(await leaking({
+    mode: "numeric_count", imagePath: "screen.png", bounds: { left: 1, top: 1, right: 20, bottom: 20 },
+  }), null);
+});

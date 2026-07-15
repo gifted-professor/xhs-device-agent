@@ -34,6 +34,39 @@ test("device locks reject a second owner and can be reacquired after release", (
   }
 });
 
+test("task locks reject concurrent reuse of one taskId", () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "xhs-task-lock-"));
+  try {
+    const command = [
+      ". $env:XHS_LOCK_SCRIPT",
+      "$first = @(Enter-TaskLocks -ProjectRoot $env:XHS_LOCK_ROOT -TaskIds @('feed-task-001'))",
+      "$blocked = $false",
+      "try { $second = @(Enter-TaskLocks -ProjectRoot $env:XHS_LOCK_ROOT -TaskIds @('feed-task-001')); Exit-DeviceLocks -Handles $second } catch { $blocked = $true }",
+      "Exit-DeviceLocks -Handles $first",
+      "if (!$blocked) { exit 1 }",
+    ].join("; ");
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command,
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, XHS_LOCK_SCRIPT: lockScript, XHS_LOCK_ROOT: temporaryRoot },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("feed workers lock device and task before fresh inventory and use both batch barriers", () => {
+  const source = readFileSync(path.join(root, "scripts", "Run-FeedWorkflow.ps1"), "utf8");
+  const deviceLock = source.indexOf("Enter-DeviceLocks");
+  const taskLock = source.indexOf("Enter-TaskLocks");
+  const inventory = source.indexOf("$config.AdbPath devices");
+  assert.ok(deviceLock >= 0 && taskLock > deviceLock && inventory > taskLock);
+  assert.match(source, /Write-FeedBatchReady[\s\S]*?-Stage "lock"[\s\S]*?Wait-FeedBatchBarrier[\s\S]*?-Stage "preflight"/u);
+  assert.match(source, /Write-FeedBatchReady[\s\S]*?-Stage "preflight"[\s\S]*?Wait-FeedBatchBarrier[\s\S]*?-Stage "start"/u);
+});
+
 test("all multi-step device entry scripts release shared locks in finally blocks", () => {
   for (const file of [
     "Invoke-MatrixAction.ps1",
