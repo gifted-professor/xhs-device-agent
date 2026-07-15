@@ -8,9 +8,10 @@ const configUrl = new URL("../config/", import.meta.url);
 const fixtureUrl = new URL("./fixtures/", import.meta.url);
 
 const ACTIONS = [
-  "feed.scroll", "feed.open_visible", "detail.inspect", "image.scroll_content",
+  "feed.scroll", "feed.open_visible", "search.open_results", "search.open_result",
+  "content.open_xhs_url", "detail.inspect", "detail.evaluate_title_rule", "image.scroll_content",
   "video.advance", "comments.observe_count", "comments.open", "comments.collect",
-  "comments.close", "navigation.return_to_feed", "wait.for_condition", "recover.to_feed",
+  "comments.close", "navigation.return_to_feed", "navigation.return_to_source", "wait.for_condition", "recover.to_feed",
   "engagement.ensure_liked", "engagement.ensure_favorited",
 ];
 
@@ -19,7 +20,7 @@ const SCHEMAS = [
   "composite-approval.schema.json", "composite-policy.schema.json",
   "composite-capability.schema.json", "composite-capability-acceptance.schema.json",
   "composite-worker-ticket.schema.json", "composite-attempt.schema.json",
-  "cpa-request.schema.json", "cpa-comment-count.schema.json",
+  "cpa-request.schema.json", "cpa-comment-count.schema.json", "task-spec.schema.json",
 ];
 
 async function json(url, name) {

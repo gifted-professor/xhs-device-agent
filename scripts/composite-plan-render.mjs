@@ -26,11 +26,16 @@ export function renderCompositePlan(plan) {
     `- Capability: ${lineValue(plan.capabilityProfileId)}`,
     `- Compiler: ${lineValue(plan.compilerVersion)}`,
     "",
+    "## Task source and compiled title rules",
+    "",
+    `- Source: ${lineValue(plan.taskSource ?? { type: "legacy_composite" })}`,
+    `- Title rules: ${lineValue(plan.titleRules ?? [])}`,
+    "",
     "## Machines and exact steps",
     "",
   ];
   for (const device of plan.devices) {
-    lines.push(`### Machine ${lineValue(device.machine)} — ${lineValue(device.taskId)}`, "");
+    lines.push(`### Machine ${lineValue(device.machine)}${device.visibleName ? ` — ${lineValue(device.visibleName)}` : ""} — ${lineValue(device.taskId)}`, "");
     for (const step of device.steps) {
       const risk = ACTION_REGISTRY[step.action].risk;
       lines.push(`1. ${lineValue(step.stepId)} — ${lineValue(step.action)} — risk=${lineValue(risk)}`);

@@ -65,3 +65,12 @@ test("policy scan treats a missing authority declaration as a violation", () => 
   assert.equal(scan.status, "failed");
   assert.deepEqual(scan.missingContracts.map((item) => item.ruleId), ["agents-task-business-authority"]);
 });
+
+test("policy scan rejects reintroduced per-device static interaction authorization", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "scripts/legacy-provider.mjs": "provider.readInteractionAuthorization(machine)",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), ["static-device-interaction-authorization"]);
+});

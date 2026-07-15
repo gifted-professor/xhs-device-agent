@@ -27,7 +27,7 @@ function validateExecution(execution) {
   invariant(exactKeys(execution, ["planHash", "attemptId", "stepId"]), "execution binding is invalid");
   invariant(/^[a-f0-9]{64}$/u.test(execution.planHash), "planHash is invalid");
   invariant(/^attempt-[a-f0-9]{16}$/u.test(execution.attemptId), "attemptId is invalid");
-  invariant(/^m[0-9]{2}\.s[0-9]{3}$/u.test(execution.stepId), "stepId is invalid");
+  invariant(/^m[0-9]{2}\.s[0-9]{3,5}$/u.test(execution.stepId), "stepId is invalid");
 }
 
 function validateArtifact(artifact, maximum) {

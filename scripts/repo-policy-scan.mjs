@@ -23,6 +23,7 @@ export const STALE_RESTRICTION_RULES = Object.freeze([
   Object.freeze({ id: "permanent-business-block", pattern: /permanently blocked/iu }),
   Object.freeze({ id: "confirmation-cannot-override", pattern: /confirmation cannot override/iu }),
   Object.freeze({ id: "static-device-interaction-allowlist", pattern: /Xhs\.Interactions\.AllowedActionsByAlias|AllowedActionsByAlias\s*=\s*@\{/u }),
+  Object.freeze({ id: "static-device-interaction-authorization", pattern: /readInteractionAuthorization\s*\(|interactionAuthorization\s*:/u }),
   Object.freeze({ id: "feed-count-1-to-50", pattern: /ValidateRange\(1,\s*50\)|asBoundedInteger\(input\.count,\s*["']count["'],\s*1,\s*50\)/u }),
   Object.freeze({ id: "same-position-action-ban", pattern: /likeAt and favoriteAt must target different feed positions|LikeAt and FavoriteAt must target different feed positions/iu }),
   Object.freeze({ id: "template-overrides-explicit-value", pattern: /Feed template .* fixes --|模板参数不允许冲突覆盖|拒绝冲突覆盖/iu }),

@@ -135,6 +135,7 @@ export class CompositeDeviceAdapter {
     executionContext,
     operationLedger,
     machine,
+    titleRules = [],
     now = Date.now,
     tripFuse = () => {},
   }) {
@@ -157,6 +158,8 @@ export class CompositeDeviceAdapter {
     if (operationLedger) invariant(/^[0-9]{2}$/u.test(machine), "operation ledger requires a machine binding");
     this.operationLedger = operationLedger ?? null;
     this.machine = machine ?? null;
+    invariant(Array.isArray(titleRules), "compiled title rules must be an array");
+    this.titleRules = new Map(titleRules.map((entry) => [entry.ruleRef, entry]));
     this.now = now;
     this.tripFuse = tripFuse;
     this.currentSnapshot = null;
@@ -164,6 +167,9 @@ export class CompositeDeviceAdapter {
     this.currentBinding = null;
     this.commentBudgets = new Map();
     this.lastResults = new Map();
+    this.feedSeen = new Set();
+    this.feedVisit = 0;
+    this.currentItem = null;
   }
 
   invalidateSnapshot() {
@@ -184,7 +190,7 @@ export class CompositeDeviceAdapter {
   }
 
   async readOnlySnapshot(stage, expectedStates = null) {
-    const reuseMs = Math.max(0, Number(this.runtimeProfile.uiSnapshotReuseMs) || 0);
+    const reuseMs = Math.max(0, Number(this.runtimeProfile.snapshotReuseMs ?? this.runtimeProfile.uiSnapshotReuseMs) || 0);
     if (this.currentSnapshot && this.now() - this.currentSnapshotAt <= reuseMs) {
       this.feedAdapter.assertOperable?.(this.currentSnapshot, expectedStates);
       return this.currentSnapshot;
@@ -379,7 +385,21 @@ export class CompositeDeviceAdapter {
     }, "skipped_condition");
   }
 
+  sourceBinding(step) {
+    return Object.freeze({
+      targetHash: createHash("sha256").update(`${this.machine ?? "00"}\0${step.stepId}\0${step.action}`, "utf8").digest("hex"),
+      pageState: step.action === "feed.open_visible" ? "HOME_FEED" : "UNKNOWN",
+      observationId: `source-${step.stepId}`,
+    });
+  }
+
   async observe(step) {
+    this.assertFastGate({ action: step.action, phase: "before_observe" });
+    if (step.action === "recover.to_feed") return { status: "observed", pageState: "UNKNOWN" };
+    if (step.action === "feed.open_visible") {
+      const snapshot = await this.readOnlySnapshot(`step-${step.stepId}-feed`, new Set(["HOME_FEED"]));
+      return { status: "observed", pageState: snapshot.classification.state };
+    }
     if (step.action === "detail.inspect") {
       const binding = await this.bindCurrentDetail(`step-${step.stepId}-detail`);
       return { status: "observed", pageState: binding.pageState, targetHash: binding.targetHash };
@@ -401,18 +421,55 @@ export class CompositeDeviceAdapter {
       this.lastResults.set(step.action, result);
       return { status: "observed", pageState: snapshot.classification.state, countBand: result.budget.band, ...result };
     }
+    if (step.action === "detail.evaluate_title_rule") {
+      const binding = await this.bindCurrentDetail(`step-${step.stepId}-title-rule`);
+      const rule = this.titleRules.get(step.params.ruleRef);
+      invariant(rule?.operator === "normalized_contains", "compiled title rule is unavailable");
+      const normalizedTitle = String(binding.metadata?.title ?? "").normalize("NFKC").replace(/\s+/gu, " ").trim().toLocaleLowerCase("zh-CN");
+      return {
+        status: "observed",
+        pageState: binding.pageState,
+        targetState: normalizedTitle.includes(rule.value) ? "ACTIVE" : "INACTIVE",
+      };
+    }
     const expected = step.action.startsWith("comments.") ? COMMENT_STATE : DETAIL_STATES;
     const snapshot = await this.readOnlySnapshot(`step-${step.stepId}-observe`, expected);
     return { status: "observed", pageState: snapshot.classification.state };
   }
 
   async bindTarget(step) {
+    if (["recover.to_feed", "feed.open_visible", "search.open_results", "search.open_result", "content.open_xhs_url"].includes(step.action)) {
+      return this.sourceBinding(step);
+    }
     if (step.params?.targetBindingRef) return this.currentBinding;
     return this.bindCurrentDetail(`step-${step.stepId}-bind`);
   }
 
   async sendOnce(step, binding, { observed } = {}) {
-    if (["detail.inspect", "comments.observe_count"].includes(step.action)) return { status: "completed", sent: false };
+    if (["detail.inspect", "detail.evaluate_title_rule", "comments.observe_count"].includes(step.action)) return { status: "completed", sent: false };
+    if (step.action === "recover.to_feed") {
+      invariant(step.params.strategyId === "bounded_home_entry_v1", "live recovery strategy is not implemented");
+      this.assertFastGate({ action: step.action, phase: "before_recovery" });
+      const result = await this.feedAdapter.ensureFeed({
+        maxBackAttemptsPerPhase: step.params.maxBackAttemptsPerPhase,
+        maxLaunchAttempts: step.params.maxLaunchAttempts,
+      });
+      this.currentBinding = null;
+      this.currentItem = null;
+      this.invalidateSnapshot();
+      return { status: result.verified ? "verified" : "failed", targetHash: binding.targetHash, sent: true };
+    }
+    if (step.action === "feed.open_visible") {
+      invariant(step.params.visibleRank === 1, "live feed adapter currently accepts the first approved visible candidate only");
+      this.assertFastGate({ action: step.action, phase: "before_open" });
+      this.feedVisit += 1;
+      const item = await this.feedAdapter.openNextUnique(this.feedSeen, this.feedVisit, { maxScrolls: step.params.maxScrolls });
+      if (item?.identity) this.feedSeen.add(item.identity);
+      if (item?.skipped) return { status: "failed", targetHash: binding.targetHash, sent: true, reason: item.reason };
+      this.currentItem = { ...item, index: this.feedVisit };
+      this.invalidateSnapshot();
+      return { status: "verified", targetHash: binding.targetHash, sent: true };
+    }
     if (step.action === "comments.open") return this.openComments(binding);
     if (step.action === "image.scroll_content") return this.scrollImageContent(binding);
     if (step.action === "video.advance") return this.advanceVideo(binding);
@@ -422,6 +479,15 @@ export class CompositeDeviceAdapter {
       return this.collectComments(binding, budget);
     }
     if (step.action === "comments.close") return this.closeComments(binding);
+    if (step.action === "navigation.return_to_feed") {
+      invariant(this.currentItem, "navigation.return_to_feed requires the opened feed item");
+      this.assertFastGate({ action: step.action, phase: "before_return" });
+      const result = await this.feedAdapter.returnToFeed(this.currentItem);
+      this.currentItem = null;
+      this.currentBinding = null;
+      this.invalidateSnapshot();
+      return { status: result.verified ? "verified" : "failed", targetHash: binding.targetHash, sent: true };
+    }
     throw new Error(`unsupported composite adapter action: ${step.action}`);
   }
 

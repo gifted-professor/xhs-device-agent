@@ -7,7 +7,7 @@ import { canonicalizeJson, hashPlan } from "./composite-plan-core.mjs";
 
 const PLAN_KEYS = new Set([
   "schemaVersion", "planId", "policyProfileId", "policyHash", "capabilityProfileId", "capabilityProfileHash",
-  "compilerVersion", "rng", "inventorySnapshotHash", "capabilitySnapshotHash", "capabilityRequirements",
+  "compilerVersion", "rng", "taskSource", "titleRules", "inventorySnapshotHash", "capabilitySnapshotHash", "capabilityRequirements",
   "visitPolicy", "devices", "limits", "runtimeProfile", "failurePolicyRef", "planHash",
 ]);
 

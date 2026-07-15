@@ -4,7 +4,7 @@ import path from "node:path";
 const OPERATION = /^operation-[a-f0-9]{16}$/u;
 const BUDGET = /^budget-[a-f0-9]{16}$/u;
 const MACHINE = /^[0-9]{2}$/u;
-const STEP = /^m[0-9]{2}\.s[0-9]{3}$/u;
+const STEP = /^m[0-9]{2}\.s[0-9]{3,5}$/u;
 const ACTIONS = new Set(["engagement.ensure_liked", "engagement.ensure_favorited"]);
 const TERMINAL_OUTCOMES = new Set([
   "verified_active", "noop_already_active", "skipped_condition", "target_changed",

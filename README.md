@@ -1,5 +1,24 @@
 # XHS Device Agent
 
+## Unified supervised task entry
+
+New Feed work uses one task specification and one entry point:
+
+```powershell
+# Offline compile/review only; no device inventory or device operation.
+.\xhs.cmd task run --spec data/task.json --dry-run
+
+# Fresh selected-device read-only preparation and full plan review.
+.\xhs.cmd task run --spec data/task.json
+
+# The only execution confirmation: resubmit the exact rendered plan hash.
+.\xhs.cmd task run --spec data/task.json --confirm-plan-hash <64-hex-planHash>
+```
+
+The task file is governed by `config/task-spec.schema.json`. It selects Feed, search results, or an ordered Xiaohongshu URL list; exact machines or deterministic idle-machine selection; concurrency; ordered ensure-like/ensure-favorite actions; and closed title/comment-count conditions. Same-target like and favorite are allowed. Templates provide defaults only.
+
+Live execution additionally requires a current human-accepted capability receipt. Use `xhs.cmd capability status` to inspect the public binding and `xhs.cmd capability accept ... --confirm-human` only after independently reviewing the exact profile and evidence hashes. CAPTCHA, login/identity verification, payments, system permissions, platform risk controls, target ambiguity, and unverifiable account-state results still stop the run.
+
 一个面向小红书多手机矩阵的低 Token、只读研究框架。效卫负责连接、投屏、设备分组和人工接管；ADB 负责逐台手机的确定性执行与后验验证；AI 只在主题扩展、未知页面恢复和结果分析等事件发生时介入。
 
 项目的研究流程默认只读。自动设备操作只接受经过编译、完整展示并一次批准的有限任务计划；任务决定来源、设备、动作顺序、条件、次数和并发，模板只补默认值。验证码、登录验证、支付、系统权限、平台风控和无法验证的状态仍要求人工接管。

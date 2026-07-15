@@ -26,7 +26,7 @@ function readOnlyRequest(machines = ["01"]) {
   };
 }
 
-function fakeProvider({ devices, favoriteAuthorized = true } = {}) {
+function fakeProvider({ devices } = {}) {
   const calls = [];
   return {
     calls,
@@ -41,16 +41,12 @@ function fakeProvider({ devices, favoriteAuthorized = true } = {}) {
       calls.push(`readCapability:${machine}`);
       return { appVersion: "9.99.0", adapterVersion: "adapter-v1", actionRegistryVersion: "composite-actions/v1" };
     },
-    async readInteractionAuthorization(machine) {
-      calls.push(`readInteractionAuthorization:${machine}`);
-      return { ensureLiked: true, ensureFavorited: favoriteAuthorized };
-    },
     async navigate() { assert.fail("prepare must not navigate"); },
     async send() { assert.fail("prepare must not send"); },
   };
 }
 
-test("prepare binds exact machines, accepted profile, capabilities, authorizations, hashes, and expiry", async () => {
+test("prepare binds exact machines, accepted profile, required capabilities, hashes, and expiry", async () => {
   const provider = fakeProvider();
   const snapshot = await prepareCompositeSnapshot({
     request: request(),
@@ -68,10 +64,7 @@ test("prepare binds exact machines, accepted profile, capabilities, authorizatio
   assert.equal(snapshot.createdAt, "2026-07-15T00:00:00.000Z");
   assert.equal(snapshot.expiresAt, "2026-07-15T00:01:00.000Z");
   assert.deepEqual(snapshot.devices.map(({ machine, taskId }) => ({ machine, taskId })), request().devices);
-  assert.deepEqual(provider.calls, [
-    "listDevices", "readCapability:01", "readInteractionAuthorization:01",
-    "readCapability:02", "readInteractionAuthorization:02",
-  ]);
+  assert.deepEqual(provider.calls, ["listDevices", "readCapability:01", "readCapability:02"]);
 });
 
 test("prepare fails closed on duplicate, missing, offline, ambiguous, or over-capability machines", async () => {
@@ -92,27 +85,13 @@ test("prepare fails closed on duplicate, missing, offline, ambiguous, or over-ca
   }), /unique online/);
 });
 
-test("prepare rejects missing account-state authorization without expanding activity", async () => {
-  const provider = fakeProvider({ favoriteAuthorized: false });
-  await assert.rejects(() => prepareCompositeSnapshot({
-    request: request(["02"]),
-    activeCapability: { profile, profileHash: "a".repeat(64), acceptanceHash: "b".repeat(64) },
-    provider,
-  }), /favorite authorization/);
-  assert.equal(provider.calls.some((call) => call === "navigate" || call === "send"), false);
-});
-
 test("read-only preparation checks only capabilities required by the requested actions", async () => {
   const provider = fakeProvider();
-  provider.readInteractionAuthorization = async () => assert.fail("read-only preparation must not inspect interaction authorization");
   const snapshot = await prepareCompositeSnapshot({
     request: readOnlyRequest(),
     activeCapability: { profile, profileHash: "a".repeat(64), acceptanceHash: "b".repeat(64) },
     provider,
   });
   assert.deepEqual(provider.calls, ["listDevices", "readCapability:01"]);
-  assert.deepEqual(snapshot.devices[0].interactionAuthorization, {
-    ensureLiked: false,
-    ensureFavorited: false,
-  });
+  assert.equal(Object.hasOwn(snapshot.devices[0], "interactionAuthorization"), false);
 });

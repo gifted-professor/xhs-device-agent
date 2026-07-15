@@ -18,7 +18,7 @@ The project has three distinct modes. Do not silently broaden one mode into anot
 2. `feed_read_only`: the existing V1.1 foreground batch lane; while it remains reachable it continues to reject every interaction field. Its historical device/count limits are legacy implementation details, not task-governance limits.
 3. `supervised_composite_v1`: a foreground, human-supervised, compiled action plan for an explicit finite machine list. `maxParallel` is bounded by the current tested capability profile, not by a permanent repository-wide device ceiling.
 
-`supervised_composite_v1` is the primary customization lane. It may run only after its compiler, approval, executor, and safety capabilities are implemented and verified. Device count and concurrency come from the exact task and must fit the currently accepted capability evidence; the repository has no permanent numeric ceiling. Until the composite runtime exists, the existing `trusted-10` command remains the only automated like/favorite acceptance path.
+`supervised_composite_v1` is the primary customization lane. Use `xhs.cmd task run --spec <file> --dry-run` for an offline candidate, then `xhs.cmd task run --spec <file>` for fresh read-only preparation and the complete review. Execution starts only when the exact rendered hash is resubmitted with `--confirm-plan-hash`. Device count and concurrency come from the exact task and must fit the currently active human-accepted capability evidence; the repository has no permanent numeric ceiling. A registry action that lacks a current accepted device adapter remains unavailable and must fail before approval or device navigation.
 
 ## 3. Composite plan lifecycle
 
@@ -52,7 +52,11 @@ The initial `supervised_composite_v1` registry exposes these high-level semantic
 
 - `feed.scroll`
 - `feed.open_visible`
+- `search.open_results`
+- `search.open_result`
+- `content.open_xhs_url`
 - `detail.inspect`
+- `detail.evaluate_title_rule`
 - `image.scroll_content`
 - `video.advance`
 - `comments.observe_count`
@@ -60,6 +64,7 @@ The initial `supervised_composite_v1` registry exposes these high-level semantic
 - `comments.collect`
 - `comments.close`
 - `navigation.return_to_feed`
+- `navigation.return_to_source`
 - `wait.for_condition`
 - `recover.to_feed`
 - `engagement.ensure_liked`

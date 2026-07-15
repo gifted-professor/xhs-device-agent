@@ -29,6 +29,37 @@ test("repo policy routes through the unified entry and supports JSON", () => {
   assert.equal(json.args.at(-1), "--json");
 });
 
+test("capability activation stays behind exact hashes and an explicit human flag", () => {
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "capability", "accept", "--profile", "profile.json", "--evidence", "evidence.json",
+    "--confirm-profile-hash", "a".repeat(64), "--confirm-evidence-hash", "b".repeat(64),
+  ])), /confirm-human/u);
+  const dispatch = buildDispatch(parseCliArgs([
+    "capability", "accept", "--profile", "profile.json", "--evidence", "evidence.json",
+    "--confirm-profile-hash", "a".repeat(64), "--confirm-evidence-hash", "b".repeat(64), "--confirm-human",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("capability-cli.mjs")));
+  assert.equal(dispatch.args.at(-1), "--confirm-human");
+});
+
+test("task run enters through the unified dry-run planner and supervised live wrapper", () => {
+  const dispatch = buildDispatch(parseCliArgs(["task", "run", "--spec", "data/task.json", "--dry-run", "--json"]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("task-runner.mjs")));
+  assert.deepEqual(dispatch.args.slice(-4), ["--spec", "data/task.json", "--dry-run", "--json"]);
+  const live = buildDispatch(parseCliArgs([
+    "task", "run", "--spec", "data/task.json", "--confirm-plan-hash", "a".repeat(64),
+  ]));
+  assert.equal(live.executable, "powershell.exe");
+  assert.ok(live.args.some((value) => value.endsWith("Run-TaskWorkflow.ps1")));
+  assert.deepEqual(live.args.slice(-4), ["-SpecPath", "data/task.json", "-ConfirmPlanHash", "a".repeat(64)]);
+  assert.throws(
+    () => buildDispatch(parseCliArgs([
+      "task", "run", "--spec", "data/task.json", "--dry-run", "--confirm-plan-hash", "a".repeat(64),
+    ])),
+    /does not accept live configuration/u,
+  );
+});
+
 test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
   const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
   assert.equal(dispatch.executable, "powershell.exe");

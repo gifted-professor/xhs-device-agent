@@ -69,6 +69,69 @@
         }
       }
     },
+    "taskSource": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "count", "candidateCap", "maxScrollsPerItem"],
+          "properties": {
+            "type": { "const": "feed" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "candidateCap": { "type": "integer", "minimum": 1, "maximum": 20 },
+            "maxScrollsPerItem": { "type": "integer", "minimum": 0, "maximum": 10000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "queryRef", "query", "count"],
+          "properties": {
+            "type": { "const": "search_results" },
+            "queryRef": { "const": "query-001" },
+            "query": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001f\\u007f-\\u009f]+$" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "urls"],
+          "properties": {
+            "type": { "const": "url_list" },
+            "urls": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 10000,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["urlRef", "url"],
+                "properties": {
+                  "urlRef": { "type": "string", "pattern": "^url-[0-9]{3,5}$" },
+                  "url": { "type": "string", "maxLength": 2048, "pattern": "^https://(?:www\\.)?(?:xiaohongshu\\.com/(?:explore|discovery/item)/[A-Za-z0-9_-]+|xhslink\\.com/[A-Za-z0-9_-]+)(?:[?#][^\\u0000-\\u001f\\u007f-\\u009f]*)?$" }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "titleRules": {
+      "type": "array",
+      "maxItems": 10000,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["ruleRef", "operator", "value"],
+        "properties": {
+          "ruleRef": { "type": "string", "pattern": "^title-rule-[0-9]{3,5}$" },
+          "operator": { "const": "normalized_contains" },
+          "value": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001f\\u007f-\\u009f]+$" }
+        }
+      }
+    },
     "inventorySnapshotHash": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
@@ -118,27 +181,27 @@
         "targetValidVisitsPerDevice": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 10000
         },
         "maxVisitAttemptsPerDevice": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 200
+          "maximum": 20000
         },
         "maxSkippedTargetsPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 100
+          "maximum": 10000
         },
         "maxFeedScrollsPerAttempt": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 10
+          "maximum": 10000
         },
         "maxFeedScrollsTotalPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 500
+          "maximum": 100000000
         },
         "visibleCandidateCap": {
           "type": "integer",
@@ -191,12 +254,12 @@
         "ensureLikedPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 20
+          "maximum": 10000
         },
         "ensureFavoritedPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 20
+          "maximum": 10000
         },
         "eligibleVisitOrdinals": {
           "type": "object",
@@ -209,12 +272,12 @@
             "min": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 100
+              "maximum": 10000
             },
             "max": {
               "type": "integer",
               "minimum": 1,
-              "maximum": 100
+              "maximum": 10000
             }
           }
         }
@@ -242,10 +305,16 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
           },
+          "visibleName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80,
+            "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f\\u202a-\\u202e\\u2066-\\u2069]+$"
+          },
           "steps": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 10000,
+            "maxItems": 99999,
             "uniqueItems": true,
             "items": {
               "type": "object",
@@ -258,13 +327,17 @@
               "properties": {
                 "stepId": {
                   "type": "string",
-                  "pattern": "^m[0-9]{2}\\.s[0-9]{3}$"
+                  "pattern": "^m[0-9]{2}\\.s[0-9]{3,5}$"
                 },
                 "action": {
                   "enum": [
                     "feed.scroll",
                     "feed.open_visible",
+                    "search.open_results",
+                    "search.open_result",
+                    "content.open_xhs_url",
                     "detail.inspect",
+                    "detail.evaluate_title_rule",
                     "image.scroll_content",
                     "video.advance",
                     "comments.observe_count",
@@ -272,6 +345,7 @@
                     "comments.collect",
                     "comments.close",
                     "navigation.return_to_feed",
+                    "navigation.return_to_source",
                     "wait.for_condition",
                     "recover.to_feed",
                     "engagement.ensure_liked",
@@ -289,27 +363,32 @@
                   "properties": {
                     "observationRef": {
                       "type": "string",
-                      "pattern": "^m[0-9]{2}\\.s[0-9]{3}\\.(status|countBand|pageState|targetState)$"
+                      "pattern": "^m[0-9]{2}\\.s[0-9]{3,5}\\.(status|countBand|pageState|targetState)$"
                     },
                     "operator": {
                       "enum": [
                         "equals",
-                        "not_equals"
+                        "not_equals",
+                        "in"
                       ]
                     },
                     "value": {
-                      "enum": [
-                        "VERIFIED",
-                        "FAILED",
-                        "AMBIGUOUS",
-                        "ZERO",
-                        "ONE_TO_FIVE",
-                        "SIX_TO_TWENTY",
-                        "TWENTY_ONE_TO_NINETY_NINE",
-                        "HUNDRED_PLUS",
-                        "UNKNOWN",
-                        "ACTIVE",
-                        "INACTIVE"
+                      "oneOf": [
+                        {
+                          "enum": [
+                            "VERIFIED", "FAILED", "AMBIGUOUS", "ZERO", "ONE_TO_FIVE", "SIX_TO_TWENTY",
+                            "TWENTY_ONE_TO_NINETY_NINE", "HUNDRED_PLUS", "UNKNOWN", "ACTIVE", "INACTIVE"
+                          ]
+                        },
+                        {
+                          "type": "array",
+                          "minItems": 1,
+                          "maxItems": 6,
+                          "uniqueItems": true,
+                          "items": {
+                            "enum": ["ZERO", "ONE_TO_FIVE", "SIX_TO_TWENTY", "TWENTY_ONE_TO_NINETY_NINE", "HUNDRED_PLUS", "UNKNOWN"]
+                          }
+                        }
                       ]
                     }
                   }
@@ -327,7 +406,7 @@
                     "candidateCap": {
                       "type": "integer",
                       "minimum": 1,
-                      "maximum": 20
+                      "maximum": 10000
                     },
                     "fallback": {
                       "enum": [
@@ -358,17 +437,48 @@
                     "strategyId": {
                       "enum": [
                         "back_once_then_verify",
-                        "relaunch_once_then_verify"
+                        "relaunch_once_then_verify",
+                        "bounded_home_entry_v1"
                       ]
+                    },
+                    "maxBackAttemptsPerPhase": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 20
+                    },
+                    "maxLaunchAttempts": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 10
                     },
                     "targetBindingRef": {
                       "type": "string",
-                      "pattern": "^m[0-9]{2}\\.s[0-9]{3}\\.target$"
+                      "pattern": "^m[0-9]{2}\\.s[0-9]{3,5}\\.target$"
+                    },
+                    "queryRef": {
+                      "type": "string",
+                      "pattern": "^query-[0-9]{3}$"
+                    },
+                    "urlRef": {
+                      "type": "string",
+                      "pattern": "^url-[0-9]{3,5}$"
+                    },
+                    "ruleRef": {
+                      "type": "string",
+                      "pattern": "^title-rule-[0-9]{3,5}$"
+                    },
+                    "resultOrdinal": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    },
+                    "sourceType": {
+                      "enum": ["search_results"]
                     },
                     "maxScrolls": {
                       "type": "integer",
                       "minimum": 0,
-                      "maximum": 8
+                      "maximum": 10000
                     },
                     "maxItems": {
                       "type": "integer",
@@ -410,17 +520,17 @@
         "maxStateChangesTotal": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1024
+          "maximum": 2000000
         },
         "maxReadStepsTotal": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100000
+          "maximum": 10000000
         },
         "maxVisionCallsTotal": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 10000
+          "maximum": 1000000
         },
         "maxWallClockMs": {
           "type": "integer",

@@ -201,7 +201,11 @@ function compileDevice(request, context, device) {
     const visibleRank = 1 + seededIndex({
       seed, compilerVersion, stepId: openStepId, choiceKind: "visibleRank", counter: visit - 1, size: recipe.visibleCandidateCap,
     });
-    add("feed.open_visible", { visibleRank, candidateCap: recipe.visibleCandidateCap, fallback: "feed_scroll_once_then_skip" });
+    add("feed.open_visible", {
+      visibleRank, candidateCap: recipe.visibleCandidateCap,
+      maxScrolls: recipe.maxFeedScrollsPerAttempt,
+      fallback: recipe.maxFeedScrollsPerAttempt > 0 ? "feed_scroll_once_then_skip" : "skip_target",
+    });
     const detail = add("detail.inspect", {});
     const targetBindingRef = `${detail.stepId}.target`;
 

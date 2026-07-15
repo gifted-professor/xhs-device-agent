@@ -38,14 +38,18 @@
     },
     "allowedActions": {
       "type": "array",
-      "minItems": 14,
-      "maxItems": 14,
+      "minItems": 1,
+      "maxItems": 19,
       "uniqueItems": true,
       "items": {
         "enum": [
           "feed.scroll",
           "feed.open_visible",
+          "search.open_results",
+          "search.open_result",
+          "content.open_xhs_url",
           "detail.inspect",
+          "detail.evaluate_title_rule",
           "image.scroll_content",
           "video.advance",
           "comments.observe_count",
@@ -53,6 +57,7 @@
           "comments.collect",
           "comments.close",
           "navigation.return_to_feed",
+          "navigation.return_to_source",
           "wait.for_condition",
           "recover.to_feed",
           "engagement.ensure_liked",
@@ -73,7 +78,7 @@
     "maxStateChangesTotal": {
       "type": "integer",
       "minimum": 0,
-      "maximum": 1024
+      "maximum": 2000000
     },
     "maxStateChangesPerMinute": {
       "type": "integer",

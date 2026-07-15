@@ -58,13 +58,17 @@
     "actionPool": {
       "type": "array",
       "minItems": 1,
-      "maxItems": 14,
+      "maxItems": 19,
       "uniqueItems": true,
       "items": {
         "enum": [
           "feed.scroll",
           "feed.open_visible",
+          "search.open_results",
+          "search.open_result",
+          "content.open_xhs_url",
           "detail.inspect",
+          "detail.evaluate_title_rule",
           "image.scroll_content",
           "video.advance",
           "comments.observe_count",
@@ -72,6 +76,7 @@
           "comments.collect",
           "comments.close",
           "navigation.return_to_feed",
+          "navigation.return_to_source",
           "wait.for_condition",
           "recover.to_feed",
           "engagement.ensure_liked",
@@ -98,27 +103,27 @@
         "targetValidVisitsPerDevice": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 10000
         },
         "maxVisitAttemptsPerDevice": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 200
+          "maximum": 20000
         },
         "maxSkippedTargetsPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 100
+          "maximum": 10000
         },
         "maxFeedScrollsPerAttempt": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 10
+          "maximum": 10000
         },
         "maxFeedScrollsTotalPerDevice": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 500
+          "maximum": 100000000
         },
         "visibleCandidateCap": {
           "type": "integer",
@@ -189,12 +194,12 @@
             "ensureLiked": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 20
+              "maximum": 10000
             },
             "ensureFavorited": {
               "type": "integer",
               "minimum": 0,
-              "maximum": 20
+              "maximum": 10000
             },
             "eligibleVisitOrdinals": {
               "type": "object",
@@ -207,12 +212,12 @@
                 "min": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 100
+                  "maximum": 10000
                 },
                 "max": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 100
+                  "maximum": 10000
                 }
               }
             }
@@ -239,17 +244,17 @@
         "maxStateChangesTotal": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 1024
+          "maximum": 2000000
         },
         "maxReadStepsTotal": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100000
+          "maximum": 10000000
         },
         "maxVisionCallsTotal": {
           "type": "integer",
           "minimum": 0,
-          "maximum": 10000
+          "maximum": 1000000
         },
         "maxWallClockMs": {
           "type": "integer",

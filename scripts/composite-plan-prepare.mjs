@@ -30,12 +30,6 @@ export async function prepareCompositeSnapshot({ request, activeCapability, prov
   invariant(provider && typeof provider.listDevices === "function", "read-only inventory provider is required");
   invariant(typeof provider.readCapability === "function", "read-only capability provider is required");
   invariant(Number.isSafeInteger(ttlMs) && ttlMs > 0 && ttlMs <= 300000, "finite snapshot ttl is required");
-  const needsLikeAuthorization = request.actionPool.includes("engagement.ensure_liked");
-  const needsFavoriteAuthorization = request.actionPool.includes("engagement.ensure_favorited");
-  const needsInteractionAuthorization = needsLikeAuthorization || needsFavoriteAuthorization;
-  if (needsInteractionAuthorization) {
-    invariant(typeof provider.readInteractionAuthorization === "function", "interaction authorization provider is required");
-  }
   const machines = request.devices.map((entry) => entry.machine);
   invariant(machines.every((machine) => /^[0-9]{2}$/.test(machine)), "machine must use a two-digit number");
   invariant(new Set(machines).size === machines.length, "duplicate machine in preparation request");
@@ -50,16 +44,7 @@ export async function prepareCompositeSnapshot({ request, activeCapability, prov
     const device = matches[0];
     invariant(/^[a-f0-9]{64}$/.test(device.identityHash ?? ""), `machine ${selected.machine} identity hash is invalid`);
     const capability = await provider.readCapability(selected.machine);
-    const authorization = needsInteractionAuthorization
-      ? await provider.readInteractionAuthorization(selected.machine)
-      : { ensureLiked: false, ensureFavorited: false };
     invariant(capability?.actionRegistryVersion === "composite-actions/v1", `machine ${selected.machine} action registry is unsupported`);
-    if (needsLikeAuthorization) {
-      invariant(authorization?.ensureLiked === true, `machine ${selected.machine} lacks like authorization`);
-    }
-    if (needsFavoriteAuthorization) {
-      invariant(authorization?.ensureFavorited === true, `machine ${selected.machine} lacks favorite authorization`);
-    }
     resolved.push({
       machine: selected.machine,
       taskId: selected.taskId,
@@ -68,16 +53,12 @@ export async function prepareCompositeSnapshot({ request, activeCapability, prov
       appVersion: String(capability.appVersion ?? ""),
       adapterVersion: String(capability.adapterVersion ?? ""),
       actionRegistryVersion: capability.actionRegistryVersion,
-      interactionAuthorization: {
-        ensureLiked: authorization?.ensureLiked === true,
-        ensureFavorited: authorization?.ensureFavorited === true,
-      },
     });
   }
 
   const inventoryBinding = resolved.map(({ machine, taskId, visibleName, identityHash }) => ({ machine, taskId, visibleName, identityHash }));
-  const capabilityBinding = resolved.map(({ machine, appVersion, adapterVersion, actionRegistryVersion, interactionAuthorization }) => ({
-    machine, appVersion, adapterVersion, actionRegistryVersion, interactionAuthorization,
+  const capabilityBinding = resolved.map(({ machine, appVersion, adapterVersion, actionRegistryVersion }) => ({
+    machine, appVersion, adapterVersion, actionRegistryVersion,
   }));
   const inventorySnapshotHash = hash(inventoryBinding);
   const capabilitySnapshotHash = hash({

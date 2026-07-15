@@ -198,3 +198,57 @@ test("CPA fallback carries the immutable execution binding and workflow timeout"
   assert.equal(typeof request.gate.assertFastGate, "function");
   assert.equal(Object.hasOwn(request, "snapshot"), false);
 });
+
+test("unified feed open, title condition, and return use the compiled budgets and target binding", async () => {
+  const feed = snapshot("HOME_FEED", [node("feed_list", { scrollable: true })], "feed-a");
+  const detail = snapshot("IMAGE_NOTE", [
+    node("note_title", { text: "夏日 穿搭清单" }),
+    node("note_author", { text: "Public author" }),
+  ], "detail-title");
+  const queue = [feed, detail];
+  const calls = [];
+  const feedAdapter = {
+    stableUi: async () => queue.shift(),
+    assertOperable(value, expected) {
+      if (expected) assert.equal(expected.has(value.classification.state), true);
+    },
+    async openNextUnique(seen, index, options) {
+      calls.push(["open", [...seen], index, options]);
+      return { identity: "note-1", pageType: "IMAGE_NOTE" };
+    },
+    async returnToFeed(item) {
+      calls.push(["return", item.index]);
+      return { verified: true };
+    },
+  };
+  const adapter = new CompositeDeviceAdapter({
+    feedAdapter,
+    rules: {},
+    runtimeProfile: { snapshotReuseMs: 1000 },
+    assertFastGate: () => {},
+    machine: "02",
+    titleRules: [{ ruleRef: "title-rule-001", operator: "normalized_contains", value: "穿搭" }],
+  });
+  const openStep = {
+    stepId: "m02.s00001", action: "feed.open_visible",
+    params: { visibleRank: 1, candidateCap: 4, maxScrolls: 7, fallback: "feed_scroll_once_then_skip" },
+  };
+  const observedFeed = await adapter.observe(openStep);
+  const sourceBinding = await adapter.bindTarget(openStep, { observed: observedFeed });
+  const opened = await adapter.sendOnce(openStep, sourceBinding, { observed: observedFeed });
+  assert.equal(opened.status, "verified");
+  assert.deepEqual(calls[0], ["open", [], 1, { maxScrolls: 7 }]);
+
+  const detailStep = { stepId: "m02.s00002", action: "detail.inspect", params: {} };
+  await adapter.observe(detailStep);
+  const title = await adapter.observe({
+    stepId: "m02.s00003", action: "detail.evaluate_title_rule", params: { ruleRef: "title-rule-001" },
+  });
+  assert.equal(title.targetState, "ACTIVE");
+
+  const returnStep = { stepId: "m02.s00004", action: "navigation.return_to_feed", params: {} };
+  const returned = await adapter.sendOnce(returnStep, adapter.currentBinding);
+  assert.equal(returned.status, "verified");
+  assert.deepEqual(calls.at(-1), ["return", 1]);
+  assert.equal(adapter.currentBinding, null);
+});

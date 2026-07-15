@@ -7,6 +7,7 @@ const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const BOOLEAN_OPTIONS = new Set([
   "confirm",
   "confirm-external-sync",
+  "confirm-human",
   "confirm-single-device-and-sync-off",
   "dry-run",
   "generate-only",
@@ -35,6 +36,9 @@ Shell 调用：
   .\\xhs.cmd repo status [--json]
   .\\xhs.cmd repo audit [--json]
   .\\xhs.cmd repo policy [--json]
+  .\\xhs.cmd capability status [--json]
+  .\\xhs.cmd capability accept --profile config/profile.json --evidence data/evidence.json --confirm-profile-hash HASH --confirm-evidence-hash HASH --confirm-human
+  .\\xhs.cmd task run --spec data/task.json --dry-run
   .\\xhs.cmd host status
   .\\xhs.cmd host start
   .\\xhs.cmd host capture
@@ -235,6 +239,49 @@ export function buildDispatch(parsed) {
   if (area === "repo" && command === "policy") {
     assertAllowedOptions(options, ["json"], "repo policy");
     return nodeScript("repo-policy-scan.mjs", options.json ? ["--json"] : []);
+  }
+  if (area === "capability" && command === "status") {
+    assertAllowedOptions(options, ["acceptance-root", "json"], "capability status");
+    const args = ["status"];
+    appendOption(args, options, "acceptance-root", "--acceptance-root");
+    if (options.json) args.push("--json");
+    return nodeScript("capability-cli.mjs", args);
+  }
+  if (area === "capability" && command === "accept") {
+    assertAllowedOptions(options, [
+      "profile", "evidence", "acceptance-root", "confirm-profile-hash", "confirm-evidence-hash", "confirm-human", "json",
+    ], "capability accept");
+    if (!options["confirm-human"]) throw new Error("capability accept requires --confirm-human");
+    const args = [
+      "accept",
+      "--profile", String(requireOption(options, "profile")),
+      "--evidence", String(requireOption(options, "evidence")),
+      "--confirm-profile-hash", String(requireOption(options, "confirm-profile-hash")),
+      "--confirm-evidence-hash", String(requireOption(options, "confirm-evidence-hash")),
+      "--confirm-human",
+    ];
+    appendOption(args, options, "acceptance-root", "--acceptance-root");
+    if (options.json) args.push("--json");
+    return nodeScript("capability-cli.mjs", args);
+  }
+  if (area === "task" && command === "run") {
+    assertAllowedOptions(options, ["spec", "config", "output", "acceptance-root", "confirm-plan-hash", "dry-run", "json"], "task run");
+    if (options["dry-run"]) {
+      if (options.config || options["acceptance-root"] || options["confirm-plan-hash"]) {
+        throw new Error("task run --dry-run does not accept live configuration or approval options");
+      }
+      const args = ["--spec", String(requireOption(options, "spec")), "--dry-run"];
+      appendOption(args, options, "output", "--output");
+      if (options.json) args.push("--json");
+      return nodeScript("task-runner.mjs", args);
+    }
+    const args = ["-SpecPath", String(requireOption(options, "spec"))];
+    appendOption(args, options, "config", "-ConfigPath");
+    appendOption(args, options, "output", "-OutputRoot");
+    appendOption(args, options, "acceptance-root", "-AcceptanceRoot");
+    appendOption(args, options, "confirm-plan-hash", "-ConfirmPlanHash");
+    if (options.json) args.push("-Json");
+    return psScript("Run-TaskWorkflow.ps1", args);
   }
   if (area === "host" && (command === "status" || command === "start")) {
     assertAllowedOptions(options, ["config"], `host ${command}`);

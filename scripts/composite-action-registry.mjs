@@ -3,10 +3,14 @@ const PAGE = Object.freeze({
   IMAGE: "IMAGE_NOTE",
   VIDEO: "VIDEO_NOTE",
   COMMENTS: "COMMENT_PANEL",
+  SEARCH: "SEARCH_RESULTS",
   UNKNOWN: "UNKNOWN",
 });
 
-const targetBinding = { type: "string", pattern: "^m[0-9]{2}\\.s[0-9]{3}\\.target$" };
+const targetBinding = { type: "string", pattern: "^m[0-9]{2}\\.s[0-9]{3,5}\\.target$" };
+const queryRef = { type: "string", pattern: "^query-[0-9]{3}$" };
+const urlRef = { type: "string", pattern: "^url-[0-9]{3,5}$" };
+const titleRuleRef = { type: "string", pattern: "^title-rule-[0-9]{3,5}$" };
 const integer = (minimum, maximum) => ({ type: "integer", minimum, maximum });
 const enumOf = (...values) => ({ enum: values });
 const params = (required = [], properties = {}) => ({ type: "object", additionalProperties: false, required, properties });
@@ -31,14 +35,37 @@ const registry = {
   }),
   "feed.open_visible": definition({
     allowedPages: [PAGE.FEED],
-    paramsSchema: params(["visibleRank", "candidateCap", "fallback"], {
+    paramsSchema: params(["visibleRank", "candidateCap", "maxScrolls", "fallback"], {
       visibleRank: integer(1, 20), candidateCap: integer(1, 20),
+      maxScrolls: integer(0, 10000),
       fallback: enumOf("feed_scroll_once_then_skip", "skip_target"),
     }),
     expectedPostcondition: "fresh public detail with a bound target fingerprint",
   }),
+  "search.open_results": definition({
+    allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.SEARCH, PAGE.UNKNOWN],
+    paramsSchema: params(["queryRef"], { queryRef }),
+    expectedPostcondition: "fresh SEARCH_RESULTS bound to the approved query reference",
+  }),
+  "search.open_result": definition({
+    allowedPages: [PAGE.SEARCH],
+    paramsSchema: params(["resultOrdinal", "candidateCap"], {
+      resultOrdinal: integer(1, 10000), candidateCap: integer(1, 10000),
+    }),
+    expectedPostcondition: "fresh public detail opened from the exact ordered search result",
+  }),
+  "content.open_xhs_url": definition({
+    allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.SEARCH, PAGE.UNKNOWN],
+    paramsSchema: params(["urlRef"], { urlRef }),
+    expectedPostcondition: "fresh public detail matching the approved Xiaohongshu URL reference",
+  }),
   "detail.inspect": definition({
     allowedPages: [PAGE.IMAGE, PAGE.VIDEO], expectedPostcondition: "typed detail observation and immutable target binding",
+  }),
+  "detail.evaluate_title_rule": definition({
+    allowedPages: [PAGE.IMAGE, PAGE.VIDEO],
+    paramsSchema: params(["ruleRef"], { ruleRef: titleRuleRef }),
+    expectedPostcondition: "typed ACTIVE or INACTIVE result for the approved normalized title rule",
   }),
   "image.scroll_content": definition({
     allowedPages: [PAGE.IMAGE], paramsSchema: params(["targetBindingRef"], { targetBindingRef: targetBinding }),
@@ -64,6 +91,11 @@ const registry = {
   "navigation.return_to_feed": definition({
     allowedPages: [PAGE.IMAGE, PAGE.VIDEO], expectedPostcondition: "fresh HOME_FEED",
   }),
+  "navigation.return_to_source": definition({
+    allowedPages: [PAGE.IMAGE, PAGE.VIDEO],
+    paramsSchema: params(["sourceType"], { sourceType: enumOf("search_results") }),
+    expectedPostcondition: "fresh return to the exact approved search-results source",
+  }),
   "wait.for_condition": definition({
     allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.COMMENTS, PAGE.UNKNOWN],
     paramsSchema: params(["conditionId", "timeoutMs"], {
@@ -74,7 +106,11 @@ const registry = {
   }),
   "recover.to_feed": definition({
     allowedPages: [PAGE.FEED, PAGE.IMAGE, PAGE.VIDEO, PAGE.COMMENTS, PAGE.UNKNOWN],
-    paramsSchema: params(["strategyId"], { strategyId: enumOf("back_once_then_verify", "relaunch_once_then_verify") }),
+    paramsSchema: params(["strategyId"], {
+      strategyId: enumOf("back_once_then_verify", "relaunch_once_then_verify", "bounded_home_entry_v1"),
+      maxBackAttemptsPerPhase: integer(0, 20),
+      maxLaunchAttempts: integer(0, 10),
+    }),
     expectedPostcondition: "fresh HOME_FEED after one versioned bounded strategy",
   }),
   "engagement.ensure_liked": definition({
@@ -123,6 +159,9 @@ function validateParams(action, schema, supplied) {
   if (action === "feed.open_visible" && value.visibleRank > value.candidateCap) {
     throw new Error("feed.open_visible.visibleRank exceeds candidateCap");
   }
+  if (action === "search.open_result" && value.resultOrdinal > value.candidateCap) {
+    throw new Error("search.open_result.resultOrdinal exceeds candidateCap");
+  }
 }
 
 export function validateActionInvocation({ action, pageState, params: suppliedParams = {} }) {
@@ -135,7 +174,7 @@ export function validateActionInvocation({ action, pageState, params: suppliedPa
 
 function observationStepId(reference) {
   if (typeof reference !== "string") return null;
-  const match = /^(m[0-9]{2}\.s[0-9]{3})\.(status|countBand|pageState|targetState)$/.exec(reference);
+  const match = /^(m[0-9]{2}\.s[0-9]{3,5})\.(status|countBand|pageState|targetState)$/.exec(reference);
   return match?.[1] ?? null;
 }
 
@@ -156,7 +195,7 @@ export function validateCompiledSteps(steps, { maxStateChangesTotal = Number.MAX
   for (const step of steps) {
     const entry = ACTION_REGISTRY[step?.action];
     if (!entry) throw new Error(`unsupported action: ${String(step?.action)}`);
-    if (typeof step.stepId !== "string" || !/^m[0-9]{2}\.s[0-9]{3}$/.test(step.stepId)) {
+    if (typeof step.stepId !== "string" || !/^m[0-9]{2}\.s[0-9]{3,5}$/.test(step.stepId)) {
       throw new Error("stepId must be a typed machine step ID");
     }
     if (seenStepIds.has(step.stepId)) throw new Error(`duplicate stepId: ${step.stepId}`);
@@ -165,15 +204,19 @@ export function validateCompiledSteps(steps, { maxStateChangesTotal = Number.MAX
       if (!referencedStep || !seenStepIds.has(referencedStep)) {
         throw new Error(`${step.stepId} condition must reference an earlier typed observation`);
       }
-      if (!["equals", "not_equals"].includes(step.when.operator)) throw new Error("condition operator is not closed");
-      if (typeof step.when.value !== "string") throw new Error("condition value must be a typed enum string");
+      if (!["equals", "not_equals", "in"].includes(step.when.operator)) throw new Error("condition operator is not closed");
+      if (step.when.operator === "in") {
+        if (!Array.isArray(step.when.value) || step.when.value.length === 0 || !step.when.value.every((value) => typeof value === "string")) {
+          throw new Error("in condition value must be a finite typed enum array");
+        }
+      } else if (typeof step.when.value !== "string") throw new Error("condition value must be a typed enum string");
       for (const key of Object.keys(step.when)) {
         if (!["observationRef", "operator", "value"].includes(key)) throw new Error(`condition does not allow ${key}`);
       }
     }
     validateParams(step.action, entry.paramsSchema, step.params);
 
-    if (["comments.observe_count", "comments.open", "image.scroll_content"].includes(step.action) && !currentTargetBinding) {
+    if (["comments.observe_count", "comments.open", "image.scroll_content", "detail.evaluate_title_rule"].includes(step.action) && !currentTargetBinding) {
       throw new Error(`${step.action} requires a current target binding`);
     }
     if (step.action === "detail.inspect") currentTargetBinding = `${step.stepId}.target`;
@@ -186,7 +229,7 @@ export function validateCompiledSteps(steps, { maxStateChangesTotal = Number.MAX
       if (!commentPanelOpen) throw new Error("comments.close requires an open comment panel");
       commentPanelOpen = false;
     }
-    if (["video.advance", "navigation.return_to_feed"].includes(step.action) && commentPanelOpen) {
+    if (["video.advance", "navigation.return_to_feed", "navigation.return_to_source"].includes(step.action) && commentPanelOpen) {
       throw new Error(`${step.action} requires comments.close first`);
     }
     if (step.action === "video.advance") {
@@ -206,7 +249,7 @@ export function validateCompiledSteps(steps, { maxStateChangesTotal = Number.MAX
       if (engagementTargets.has(targetKey)) throw new Error("same state-changing action cannot repeat on one target binding");
       engagementTargets.add(targetKey);
     }
-    if (step.action === "navigation.return_to_feed" || step.action === "recover.to_feed") {
+    if (["navigation.return_to_feed", "navigation.return_to_source", "recover.to_feed"].includes(step.action)) {
       currentTargetBinding = null;
       commentPanelOpen = false;
     }

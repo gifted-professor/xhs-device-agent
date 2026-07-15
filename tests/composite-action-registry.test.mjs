@@ -20,9 +20,9 @@ function step(stepId, action, params = {}, extra = {}) {
   return { stepId, action, params, ...extra };
 }
 
-test("registry is immutable and contains exactly the 14 approved semantic actions", () => {
+test("registry is immutable and contains exactly the 19 approved semantic actions", () => {
   assert.deepEqual(Object.keys(ACTION_REGISTRY).sort(), [...EXPECTED_ACTIONS].sort());
-  assert.equal(Object.keys(ACTION_REGISTRY).length, 14);
+  assert.equal(Object.keys(ACTION_REGISTRY).length, 19);
   assert.ok(Object.isFrozen(ACTION_REGISTRY));
   for (const [name, definition] of Object.entries(ACTION_REGISTRY)) {
     assert.ok(Object.isFrozen(definition), name);
@@ -87,7 +87,7 @@ test("video advance invalidates the old engagement target binding", () => {
 test("per-action parameter caps and allowed page states fail closed", () => {
   assert.throws(() => validateActionInvocation({
     action: "feed.open_visible", pageState: "HOME_FEED",
-    params: { visibleRank: 21, candidateCap: 4, fallback: "feed_scroll_once_then_skip" },
+    params: { visibleRank: 21, candidateCap: 4, maxScrolls: 1, fallback: "feed_scroll_once_then_skip" },
   }), /visibleRank/);
   assert.throws(() => validateActionInvocation({
     action: "image.scroll_content", pageState: "VIDEO_NOTE", params: { targetBindingRef: "m01.s001.target" },
@@ -132,7 +132,7 @@ test("compiler output is accepted by the registry and preserves the global budge
     capabilityProfileId: capability.capabilityProfileId,
     seed: Buffer.from("registry-integration".padEnd(32, "_")).toString("base64"),
     devices: [{ machine: "02", taskId: "task-02" }, { machine: "01", taskId: "task-01" }],
-    actionPool: [...EXPECTED_ACTIONS],
+    actionPool: [...capability.allowedActions],
     recipe: {
       targetValidVisitsPerDevice: 2, maxVisitAttemptsPerDevice: 4, maxSkippedTargetsPerDevice: 2,
       maxFeedScrollsPerAttempt: 1, maxFeedScrollsTotalPerDevice: 4, visibleCandidateCap: 4,

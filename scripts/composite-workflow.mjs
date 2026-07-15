@@ -74,11 +74,12 @@ function equalIdentity(left, right) {
 
 function evaluateCondition(condition, observations) {
   if (!condition) return true;
-  const match = /^(m[0-9]{2}\.s[0-9]{3})\.([A-Za-z][A-Za-z0-9_]*)$/.exec(condition.observationRef ?? "");
+  const match = /^(m[0-9]{2}\.s[0-9]{3,5})\.([A-Za-z][A-Za-z0-9_]*)$/.exec(condition.observationRef ?? "");
   invariant(match, "condition observationRef has an invalid format");
   const actual = observations[match[1]]?.[match[2]];
   if (condition.operator === "equals") return actual === condition.value;
   if (condition.operator === "not_equals") return actual !== condition.value;
+  if (condition.operator === "in") return Array.isArray(condition.value) && condition.value.includes(actual);
   throw new Error("condition operator is not closed");
 }
 
@@ -329,7 +330,7 @@ export async function runCompositeWorkflow({
 
     lastVerifiedState = clone(verification);
     await commitStep(step, observation, risk);
-    if (["comments.close", "navigation.return_to_feed", "recover.to_feed"].includes(step.action)) {
+    if (["comments.close", "navigation.return_to_feed", "navigation.return_to_source", "recover.to_feed"].includes(step.action)) {
       await flushReadOnly("semantic_checkpoint");
     }
   }

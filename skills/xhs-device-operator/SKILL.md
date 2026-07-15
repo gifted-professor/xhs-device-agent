@@ -1,6 +1,6 @@
 ---
 name: xhs-device-operator
-description: Safely compile, review, and execute supervised composable Xiaohongshu workflows on an explicit capability-bounded set of phones, while preserving deterministic read-only research and the legacy trusted-10 acceptance lane.
+description: Safely compile, review, approve, and execute unified supervised Xiaohongshu tasks on an explicit capability-bounded set of phones while preserving deterministic read-only research and mandatory human stops.
 ---
 
 # XHS device operator
@@ -11,7 +11,7 @@ Use `xhs.cmd` as the sole entry point for every phone operation. Hermes may desc
 
 Within the implemented high-level registry, treat the exact approved task as the sole business-intent source for content source, selected machines, ordered actions, conditions, counts, finite budgets, content, and requested concurrency. Templates add defaults only and explicit task values take precedence. Capability evidence may reject an unimplemented or untested request, but no wrapper may silently narrow, reorder, or replace it.
 
-Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify that current `xhs.cmd` help exposes `plan capability accept`, `plan prepare`, `plan compile`, `plan show`, `plan approve`, `plan execute`, `plan status`, and `plan stop`; verify the corresponding contract tests pass and preflight reports every required capability. If any part is absent, retain the existing read-only or single-machine legacy path and report the missing capability.
+Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify that current `xhs.cmd` help exposes `capability status`, `capability accept`, and `task run`; verify the task compiler, preparation, approval, coordinator, workflow, Windows wrapper, and relevant device-adapter tests pass. Use `task run --spec <file> --dry-run` only for a non-executable offline candidate. A live invocation without `--confirm-plan-hash` performs selected-device read-only preparation and renders the complete plan. Only a second invocation carrying that exact rendered hash may execute. If the active capability or live adapter does not cover a compiled action, stop before device navigation and report the missing capability; do not fall back to a legacy executor.
 
 ## Common preflight
 
@@ -29,9 +29,9 @@ Choose exactly one of three formal modes and preserve its boundary:
 
 - `research_read_only`: public-content research only. Continue to require `interactionPolicy=human_final` and reject state-changing fields.
 - `feed_read_only`: existing V1.1 foreground batch. It remains strictly read-only while reachable; its historical device/count limits are legacy implementation details, not governance rules.
-- `supervised_composite_v1`: the new primary customization lane, after its full capability is implemented and enabled. It accepts an explicit finite machine list and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested capability evidence; the repository has no permanent numeric ceiling.
+- `supervised_composite_v1`: the primary customization lane. It accepts an explicit finite machine list or deterministic idle-machine selection and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested, human-accepted capability evidence; the repository has no permanent numeric ceiling.
 
-`trusted-10` is a legacy compatibility template, not a fourth formal mode. Until the composite runtime is accepted, its existing executor remains the current automated like/favorite acceptance path. In the unified lifecycle it supplies defaults only and cannot override explicit task values.
+`trusted-10` is a deprecated compatibility template, not a fourth formal mode. New work uses `task run`. Until the compatibility conversion is deleted, its defaults cannot override explicit task values and it must never be used to evade a unified-task capability rejection.
 
 Never use `feed_read_only` to execute interactions. Never silently translate an unsupported composite request into generic taps, raw swipes, or the legacy template.
 
@@ -105,7 +105,11 @@ Only these semantic actions are eligible in `supervised_composite_v1`:
 | --- | --- |
 | `feed.scroll` | Scroll only the current verified Feed container. |
 | `feed.open_visible` | Choose a seeded ordinal within the plan's finite, capability-approved set of freshly verified semantic cards; the initial default may be four. |
+| `search.open_results` | Open results only for the approved query reference after exact text-entry verification. |
+| `search.open_result` | Open the approved ordered search-result ordinal without substituting another result. |
+| `content.open_xhs_url` | Open only an approved Xiaohongshu URL reference and verify the resulting public detail binding. |
 | `detail.inspect` | Bind the current public-detail fingerprint before further action. |
+| `detail.evaluate_title_rule` | Evaluate one compiled normalized-title rule and return a typed active/inactive observation. |
 | `image.scroll_content` | Scroll only the verified image-note content container and keep the same detail identity. |
 | `video.advance` | Swipe once on a verified current video surface; require a different verified video identity afterward. |
 | `comments.observe_count` | Use the frozen perception cascade and return a typed count observation. |
@@ -113,6 +117,7 @@ Only these semantic actions are eligible in `supervised_composite_v1`:
 | `comments.collect` | Scroll only a verified comment container within a frozen budget; deidentify and deduplicate snippets. |
 | `comments.close` | Close the verified panel and prove return to the same detail. |
 | `navigation.return_to_feed` | Return and prove the Feed state. |
+| `navigation.return_to_source` | Return and prove the exact approved search-results source. |
 | `wait.for_condition` | Bounded foreground UI-state verification only. |
 | `recover.to_feed` | Bounded semantic recovery with the existing two-failure limit. |
 | `engagement.ensure_liked` | Ensure active on the currently bound target; never toggle blindly. |
@@ -185,13 +190,7 @@ This lane remains read-only even after composite execution is implemented.
 
 ### Legacy single-machine `trusted-10`
 
-Until `supervised_composite_v1` is implemented and enabled, run only:
-
-`xhs.cmd feed run --template trusted-10 --machine <two-digit-number> --task-id <new-task-id>`
-
-Its current executor remains foreground-only and explicitly approved. Treat its historical count and action positions as compatibility defaults, not permission rules. On SSH disconnect, inspect the existing checkpoint/summary/events before any continuation; do not create a replacement task to replay work.
-
-After composite capability is accepted, multi-machine trusted-10 becomes a compatibility template compiled through the new plan lifecycle. Its selected device count must fit the active capability profile. It must not be implemented by weakening `feed batch`.
+Do not select `trusted-10` for new work. While the compatibility command remains reachable, treat its count and positions as defaults only, preserve its existing checkpoint protections, and never use it after a unified task is rejected. Its removal is gated on compatibility-converter and no-device acceptance completion.
 
 ## Human-final and mandatory stops
 

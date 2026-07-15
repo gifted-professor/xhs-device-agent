@@ -463,7 +463,7 @@ export function probePackageFocus(runAdb, packageName = XHS_PACKAGE) {
 }
 
 export class AdbFeedAdapter {
-  constructor({ adbPath, serial, deviceAlias, rules, runDir, batchControl = null }) {
+  constructor({ adbPath, serial, deviceAlias, rules, runDir, batchControl = null, sendGate = () => {} }) {
     this.adbPath = adbPath;
     this.serial = serial;
     this.deviceAlias = deviceAlias;
@@ -473,6 +473,8 @@ export class AdbFeedAdapter {
     this.context = { deviceAlias, xhsVersion: "", androidSdk: "", resolution: "", dpi: "" };
     this.currentDetailSnapshot = null;
     this.batchControl = batchControl;
+    if (typeof sendGate !== "function") throw new Error("sendGate must be a function");
+    this.sendGate = sendGate;
   }
 
   sanitize(value) {
@@ -481,6 +483,7 @@ export class AdbFeedAdapter {
 
   adb(args, { binary = false, sent = false, timeout = 30000, allowFailureWithOutput = false } = {}) {
     if (sent) this.assertBatchActive();
+    this.sendGate({ sent });
     const result = spawnSync(this.adbPath, ["-s", this.serial, ...args], {
       encoding: binary ? null : "utf8",
       windowsHide: true,
@@ -693,9 +696,9 @@ export class AdbFeedAdapter {
     }
   }
 
-  async recoverHomeWithBack(snapshot, stage) {
+  async recoverHomeWithBack(snapshot, stage, maximumAttempts = STARTUP_BACK_ATTEMPTS) {
     let current = snapshot;
-    for (let attempt = 1; current && attempt <= STARTUP_BACK_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; current && attempt <= maximumAttempts; attempt += 1) {
       this.assertOperable(current);
       if (current.classification.state === "HOME_FEED") return current;
       this.adb(["shell", "input", "keyevent", "KEYCODE_BACK"], { sent: true });
@@ -747,7 +750,13 @@ export class AdbFeedAdapter {
     }
   }
 
-  async ensureFeed() {
+  async ensureFeed({ maxBackAttemptsPerPhase = STARTUP_BACK_ATTEMPTS, maxLaunchAttempts = STARTUP_LAUNCH_ATTEMPTS } = {}) {
+    if (!Number.isSafeInteger(maxBackAttemptsPerPhase) || maxBackAttemptsPerPhase < 0 || maxBackAttemptsPerPhase > 20) {
+      throw new FeedDeviceError("INVALID_RECOVERY_BUDGET", "Feed entry maxBackAttemptsPerPhase is invalid");
+    }
+    if (!Number.isSafeInteger(maxLaunchAttempts) || maxLaunchAttempts < 0 || maxLaunchAttempts > 10) {
+      throw new FeedDeviceError("INVALID_RECOVERY_BUDGET", "Feed entry maxLaunchAttempts is invalid");
+    }
     await this.initializeContext();
     let snapshot = await this.stableUiWhileStarting("feed-entry-current");
     let sawXhsPage = Boolean(snapshot);
@@ -764,7 +773,7 @@ export class AdbFeedAdapter {
         }
         return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, recovered.path) } };
       }
-      snapshot = await this.recoverHomeWithBack(snapshot, "feed-entry-current");
+      snapshot = await this.recoverHomeWithBack(snapshot, "feed-entry-current", maxBackAttemptsPerPhase);
       if (snapshot?.classification.state === "HOME_FEED") {
         return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, snapshot.path) } };
       }
@@ -776,13 +785,13 @@ export class AdbFeedAdapter {
       }
     }
 
-    for (let attempt = 1; attempt <= STARTUP_LAUNCH_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= maxLaunchAttempts; attempt += 1) {
       this.adb(["shell", "monkey", "-p", XHS_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1"], { sent: true });
       await this.pause(900);
       snapshot = await this.stableUiWhileStarting("feed-entry-launch-" + attempt);
       sawXhsPage ||= Boolean(snapshot);
       if (!snapshot) continue;
-      snapshot = await this.recoverHomeWithBack(snapshot, "feed-entry-launch-" + attempt);
+      snapshot = await this.recoverHomeWithBack(snapshot, "feed-entry-launch-" + attempt, maxBackAttemptsPerPhase);
       if (snapshot?.classification.state === "HOME_FEED") {
         return { verified: true, evidence: { feedEntry: evidencePath(this.runDir, snapshot.path) } };
       }
@@ -825,10 +834,13 @@ export class AdbFeedAdapter {
     return { snapshot: after, returnedToFeed };
   }
 
-  async openNextUnique(seen, index) {
+  async openNextUnique(seen, index, { maxScrolls = 12 } = {}) {
+    if (!Number.isSafeInteger(maxScrolls) || maxScrolls < 0 || maxScrolls > 10000) {
+      throw new FeedDeviceError("INVALID_SCROLL_BUDGET", "Feed open requires a finite non-negative scroll budget");
+    }
     let snapshot = await this.stableUi("item-" + index + "-feed");
     this.assertOperable(snapshot, new Set(["HOME_FEED"]));
-    for (let attempt = 0; attempt < 12; attempt += 1) {
+    for (let attempt = 0; attempt <= maxScrolls; attempt += 1) {
       const found = visibleFeedCards(snapshot.document);
       const candidate = found.cards.find((entry) => !seen.has(entry.identity));
       if (candidate) {
@@ -928,6 +940,7 @@ export class AdbFeedAdapter {
           },
         };
       }
+      if (attempt === maxScrolls) break;
       snapshot = await this.scrollFeed(snapshot, found.container);
       this.assertOperable(snapshot, new Set(["HOME_FEED"]));
     }
