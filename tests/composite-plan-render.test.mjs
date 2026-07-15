@@ -2,29 +2,37 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { compileCompositePlan, hashPlan } from "../scripts/composite-plan-core.mjs";
+import { hashPlan } from "../scripts/composite-plan-core.mjs";
 import { escapePlanDisplay, renderCompositePlan } from "../scripts/composite-plan-render.mjs";
+import { compileUnifiedTaskPlan } from "../scripts/task-compiler.mjs";
 
 async function planFixture() {
   const profile = JSON.parse(await readFile(new URL("./fixtures/composite-capability.synthetic-1.json", import.meta.url), "utf8"));
-  return compileCompositePlan({
-    schemaVersion: "xhs-composite-request/v1", policyProfileId: "supervised-composite-v1",
+  return compileUnifiedTaskPlan({
+    schemaVersion: "xhs-task-spec/v1",
+    taskId: "render-task",
     capabilityProfileId: profile.capabilityProfileId,
     seed: Buffer.from("render-test".padEnd(32, "_")).toString("base64"),
-    devices: [{ machine: "01", taskId: "render-task-01" }],
-    actionPool: profile.allowedActions,
-    recipe: {
-      targetValidVisitsPerDevice: 1, maxVisitAttemptsPerDevice: 2, maxSkippedTargetsPerDevice: 1,
-      maxFeedScrollsPerAttempt: 1, maxFeedScrollsTotalPerDevice: 2, visibleCandidateCap: 4,
-      imageContentScrolls: { min: 1, max: 1 }, videoAdvances: { min: 1, max: 1 },
-      comments: { policyRef: "count-adaptive-v1" },
-      engagementsPerDevice: { ensureLiked: 1, ensureFavorited: 1, eligibleVisitOrdinals: { min: 1, max: 1 } },
-    },
-    limits: { maxParallel: 1, maxStateChangesTotal: 2, maxReadStepsTotal: 40, maxVisionCallsTotal: 10, maxWallClockMs: 60000 },
+    deviceSelection: { mode: "explicit", machines: ["01"] },
+    maxParallel: 1,
+    source: { type: "feed", count: 1, candidateCap: 4, maxScrollsPerItem: 1 },
+    actions: [
+      {
+        target: { mode: "ordinal", ordinal: 1 },
+        action: "engagement.ensure_liked",
+        when: { type: "comment_band", bands: ["SIX_TO_TWENTY"] },
+      },
+      { target: { mode: "ordinal", ordinal: 1 }, action: "engagement.ensure_favorited" },
+    ],
+    maxWallClockMs: 60000,
   }, {
-    compilerVersion: "1.0.0", policyHash: "a".repeat(64), capabilityProfile: profile,
+    compilerVersion: "2.0.0", policyHash: "a".repeat(64), capabilityProfile: profile,
     capabilityProfileHash: "b".repeat(64),
-    preparationSnapshot: { inventorySnapshotHash: "c".repeat(64), capabilitySnapshotHash: "d".repeat(64) },
+    preparationSnapshot: {
+      inventorySnapshotHash: "c".repeat(64),
+      capabilitySnapshotHash: "d".repeat(64),
+      devices: [{ machine: "01" }],
+    },
   });
 }
 
@@ -33,7 +41,7 @@ test("render shows exact machines, steps, branches, budgets, runtime profile, st
   const rendered = renderCompositePlan(plan);
   for (const value of [
     plan.planId, plan.planHash, "Machine 01", "render-task-01", "comments.observe_count",
-    "not_equals", "maxStateChangesTotal", "startup_strict_runtime_light_account_state_strict",
+    "SIX_TO_TWENTY", "maxStateChangesTotal", "startup_strict_runtime_light_account_state_strict",
     "ready_subset_after_deadline", "cpaWorkflowSoftTimeoutMs", "global fuse", plan.capabilityProfileHash,
     plan.inventorySnapshotHash, plan.capabilitySnapshotHash,
   ]) assert.match(rendered, new RegExp(String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));

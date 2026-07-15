@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -27,6 +28,43 @@ test("device locks reject a second owner and can be reacquired after release", (
     ], {
       encoding: "utf8",
       env: { ...process.env, XHS_LOCK_SCRIPT: lockScript, XHS_LOCK_ROOT: temporaryRoot },
+    });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("an OS-released lock from a terminated owner is automatically reusable", async () => {
+  const temporaryRoot = mkdtempSync(path.join(tmpdir(), "xhs-dead-device-lock-"));
+  try {
+    const holder = spawn("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+      ". $env:XHS_LOCK_SCRIPT; $lock = @(Enter-DeviceLocks -ProjectRoot $env:XHS_LOCK_ROOT -DeviceAliases @('device-02')); [Console]::Out.WriteLine('LOCKED'); while ($true) { Start-Sleep -Milliseconds 100 }",
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, XHS_LOCK_SCRIPT: lockScript, XHS_LOCK_ROOT: temporaryRoot },
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("lock owner did not become ready")), 5000);
+      holder.once("error", reject);
+      holder.stdout.on("data", (chunk) => {
+        if (!String(chunk).includes("LOCKED")) return;
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
+    holder.kill();
+    await once(holder, "exit");
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+      ". $env:XHS_LOCK_SCRIPT; $lock = @(Enter-DeviceLocks -ProjectRoot $env:XHS_LOCK_ROOT -DeviceAliases @('device-02')); Exit-DeviceLocks -Handles $lock",
+    ], {
+      encoding: "utf8",
+      env: { ...process.env, XHS_LOCK_SCRIPT: lockScript, XHS_LOCK_ROOT: temporaryRoot },
+      windowsHide: true,
     });
     assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   } finally {
@@ -69,7 +107,6 @@ test("unified task wrapper holds task and selected-device locks before the execu
 test("all multi-step device entry scripts release shared locks in finally blocks", () => {
   for (const file of [
     "Invoke-MatrixAction.ps1",
-    "Run-TopicResearch.ps1",
     "Run-TaskWorkflow.ps1",
     "Open-ReviewCandidate.ps1",
     "Open-AccountRampCandidate.ps1",

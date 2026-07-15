@@ -12,6 +12,8 @@ param(
     [string]$Group,
     [string]$Text,
     [string]$ExpectText,
+    [string]$ExpectPackage,
+    [string]$ExpectResourceId,
     [string]$LocalPath,
     [string]$RemotePath = "/sdcard/Download/",
     [string]$Value,
@@ -98,6 +100,7 @@ function Test-LocalSafeTapLabel {
     $normalized = $Label.Normalize([System.Text.NormalizationForm]::FormKC).Trim().ToLowerInvariant()
     if ($normalized -in @("cancel", "close", "not now", "later", "back")) { return $true }
     $safeUnicode = @(
+        (ConvertFrom-CodePoints @(29702, 36130)),
         (ConvertFrom-CodePoints @(21462, 28040)),
         (ConvertFrom-CodePoints @(20851, 38381)),
         (ConvertFrom-CodePoints @(31245, 21518)),
@@ -146,8 +149,8 @@ if ($Action -eq "TapText") {
     if (!(Test-LocalSafeTapLabel $Text)) {
         throw "TapText is limited to a local-safe dismiss/navigation allowlist. Use a purpose-built semantic action for any other control."
     }
-    if ([string]::IsNullOrWhiteSpace($ExpectText)) {
-        throw "TapText requires -ExpectText so the target state can be verified without replay."
+    if ([string]::IsNullOrWhiteSpace($ExpectText) -and [string]::IsNullOrWhiteSpace($ExpectPackage) -and [string]::IsNullOrWhiteSpace($ExpectResourceId)) {
+        throw "TapText requires -ExpectText, -ExpectPackage, or -ExpectResourceId so the target state can be verified without replay."
     }
 }
 if ($actionRiskClass -eq "device_local_change" -and (!$ConfirmAction -or ([string]$ConfirmationReason).Trim().Length -lt 3 -or ([string]$RollbackInfo).Trim().Length -lt 3)) {
@@ -645,16 +648,22 @@ function Get-UiFingerprint {
     param([string]$XmlPath)
     if (!(Test-Path -LiteralPath $XmlPath -PathType Leaf)) { throw "UI hierarchy file was not created: $XmlPath" }
 
-    [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
     $builder = New-Object System.Text.StringBuilder
-    $attributeNames = @("class", "resource-id", "text", "content-desc", "clickable", "enabled", "checked", "selected", "scrollable")
-    foreach ($node in $doc.SelectNodes("//node")) {
-        foreach ($name in $attributeNames) {
-            $value = ([string]$node.GetAttribute($name) -replace '\s+', ' ').Trim()
-            if ($name -in @("text", "content-desc")) { $value = Normalize-UiFingerprintText $value }
-            [void]$builder.Append($name).Append("=").Append($value).Append([char]31)
+    try {
+        [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
+        $attributeNames = @("class", "resource-id", "text", "content-desc", "clickable", "enabled", "checked", "selected", "scrollable")
+        foreach ($node in $doc.SelectNodes("//node")) {
+            foreach ($name in $attributeNames) {
+                $value = ([string]$node.GetAttribute($name) -replace '\s+', ' ').Trim()
+                if ($name -in @("text", "content-desc")) { $value = Normalize-UiFingerprintText $value }
+                [void]$builder.Append($name).Append("=").Append($value).Append([char]31)
+            }
+            [void]$builder.Append([char]30)
         }
-        [void]$builder.Append([char]30)
+    } catch {
+        # Some vendor UI dumps contain malformed attribute quoting.
+        $raw = [System.IO.File]::ReadAllText($XmlPath, [System.Text.Encoding]::UTF8)
+        [void]$builder.Append((Normalize-UiFingerprintText $raw))
     }
 
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
@@ -693,12 +702,36 @@ function Wait-UiStable {
     throw "UI did not produce two identical normalized hierarchy fingerprints 500ms apart within 8 seconds"
 }
 
+function Get-UiAttribute {
+    param([string]$Tag, [string]$Name)
+    $match = [regex]::Match($Tag, '(^|\s)' + [regex]::Escape($Name) + '="([^"]*)"')
+    if ($match.Success) { return $match.Groups[2].Value }
+    return ""
+}
+
 function Get-TapPoint {
     param([string]$XmlPath, [string]$Label)
-    [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
-    $node = @($doc.SelectNodes("//node") | Where-Object { $_.text -eq $Label -or $_.'content-desc' -eq $Label } | Sort-Object { if ($_.'clickable' -eq 'true') { 0 } else { 1 } } | Select-Object -First 1)
-    if (!$node.Count -or [string]$node[0].bounds -notmatch '^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$') { return $null }
-    [pscustomobject]@{ x = [math]::Round(([int]$matches[1] + [int]$matches[3]) / 2); y = [math]::Round(([int]$matches[2] + [int]$matches[4]) / 2) }
+    $raw = [System.IO.File]::ReadAllText($XmlPath, [System.Text.Encoding]::UTF8)
+    $candidates = @(
+        [regex]::Matches($raw, '<node\b[^>]*>') |
+            ForEach-Object {
+                $tag = $_.Value
+                $text = Get-UiAttribute $tag "text"
+                $contentDescription = Get-UiAttribute $tag "content-desc"
+                if ($text -ne $Label -and $contentDescription -ne $Label) { return }
+                $bounds = [regex]::Match((Get-UiAttribute $tag "bounds"), '^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$')
+                if (!$bounds.Success) { return }
+                [pscustomobject]@{
+                    clickable = if ((Get-UiAttribute $tag "clickable") -eq "true") { 0 } else { 1 }
+                    x = [math]::Round(([int]$bounds.Groups[1].Value + [int]$bounds.Groups[3].Value) / 2)
+                    y = [math]::Round(([int]$bounds.Groups[2].Value + [int]$bounds.Groups[4].Value) / 2)
+                }
+            } |
+            Sort-Object clickable |
+            Select-Object -First 1
+    )
+    if (!$candidates.Count) { return $null }
+    $candidates[0]
 }
 
 function Find-SemanticPoint {
@@ -716,11 +749,37 @@ function Find-SemanticPoint {
 function Test-XmlText {
     param([string]$XmlPath, [string]$Label)
     if (!(Test-Path -LiteralPath $XmlPath)) { return $false }
-    [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
-    [bool]@($doc.SelectNodes("//node") | Where-Object {
-        ([string]$_.text).IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0 -or
-        ([string]$_.'content-desc').IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0
-    } | Select-Object -First 1).Count
+    $raw = [System.IO.File]::ReadAllText($XmlPath, [System.Text.Encoding]::UTF8)
+    [bool]@(
+        [regex]::Matches($raw, '<node\b[^>]*>') |
+            Where-Object {
+                (Get-UiAttribute $_.Value "text").IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0 -or
+                (Get-UiAttribute $_.Value "content-desc").IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0
+            } |
+            Select-Object -First 1
+    ).Count
+}
+
+function Test-XmlPackage {
+    param([string]$XmlPath, [string]$PackageName)
+    if (!(Test-Path -LiteralPath $XmlPath)) { return $false }
+    $raw = [System.IO.File]::ReadAllText($XmlPath, [System.Text.Encoding]::UTF8)
+    [bool]@(
+        [regex]::Matches($raw, '<node\b[^>]*>') |
+            Where-Object { (Get-UiAttribute $_.Value "package") -eq $PackageName } |
+            Select-Object -First 1
+    ).Count
+}
+
+function Test-XmlResourceId {
+    param([string]$XmlPath, [string]$ResourceId)
+    if (!(Test-Path -LiteralPath $XmlPath)) { return $false }
+    $raw = [System.IO.File]::ReadAllText($XmlPath, [System.Text.Encoding]::UTF8)
+    [bool]@(
+        [regex]::Matches($raw, '<node\b[^>]*>') |
+            Where-Object { (Get-UiAttribute $_.Value "resource-id") -eq $ResourceId } |
+            Select-Object -First 1
+    ).Count
 }
 
 function Get-CurrentFocus {
@@ -1194,8 +1253,13 @@ $results = foreach ($serial in $targets) {
                 $stable = Wait-UiStable $serial $deviceDir "tap-after"
                 $entry.detail = $stable.path
                 if ($ExpectText) {
-                    $after = $stable.path
-                    if (!(Test-XmlText $after $ExpectText)) { throw "Action ran once but expected text '$ExpectText' was not verified; the tap will not be replayed" }
+                    if (!(Test-XmlText $stable.path $ExpectText)) { throw "Action ran once but expected text '$ExpectText' was not verified; the tap will not be replayed" }
+                }
+                if ($ExpectPackage -and !(Test-XmlPackage $stable.path $ExpectPackage)) {
+                    throw "Action ran once but expected package '$ExpectPackage' was not verified; the tap will not be replayed"
+                }
+                if ($ExpectResourceId -and !(Test-XmlResourceId $stable.path $ExpectResourceId)) {
+                    throw "Action ran once but expected resource id '$ExpectResourceId' was not verified; the tap will not be replayed"
                 }
                 $entry.executionOutcome = "completed"
                 $entry.verificationOutcome = "verified"

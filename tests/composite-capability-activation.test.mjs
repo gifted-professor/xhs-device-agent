@@ -9,6 +9,7 @@ import {
   activateCapability,
   hashCapabilityDocument,
   loadActiveCapability,
+  validateCapabilityProfile,
 } from "../scripts/composite-capability-activation.mjs";
 
 async function setup(profileKind = "production_candidate") {
@@ -18,8 +19,16 @@ async function setup(profileKind = "production_candidate") {
   const acceptanceRoot = path.join(root, "active");
   const profile = {
     schemaVersion: "xhs-composite-capability/v1", capabilityProfileId: "candidate-v1", profileKind,
+    actionRegistryVersion: "composite-actions/v1",
     allowedActions: ["engagement.ensure_liked", "engagement.ensure_favorited"],
     maxDevices: 2, maxParallel: 2, maxStateChangesTotal: 4, maxStateChangesPerMinute: 4, cpaConcurrency: 2,
+    commentLiveCap: { maxScrolls: 3, maxItems: 20 },
+    cpaLimits: { providerHardTimeoutMs: 45000 },
+    runtimeProfile: {
+      validationMode: "startup_strict_runtime_light_account_state_strict",
+      startPolicy: "all_ready", readyDeadlineMs: 8000, minReady: 1, snapshotReuseMs: 1500,
+      readOnlyFlushIntervalMs: 1000, readOnlyFlushMaxEvents: 32, cpaWorkflowSoftTimeoutMs: 8000,
+    },
   };
   const evidence = { schemaVersion: "xhs-capability-evidence/v1", tests: "325/325", deviceGate: "closed" };
   await writeFile(profilePath, `${canonicalizeJson(profile)}\n`, "utf8");
@@ -47,6 +56,27 @@ test("human acceptance writes an exact ignored-state receipt and active lookup r
 
   await writeFile(state.profilePath, `${canonicalizeJson({ ...state.profile, maxParallel: 1 })}\n`, "utf8");
   await assert.rejects(() => loadActiveCapability({ acceptanceRoot: state.acceptanceRoot }), /profile hash/);
+});
+
+test("capability acceptance validates the full closed runtime profile before writing a receipt", async () => {
+  const state = await setup();
+  assert.equal(validateCapabilityProfile(state.profile), state.profile);
+  for (const [index, invalid] of [
+    { ...state.profile, maxParallel: 3 },
+    { ...state.profile, allowedActions: [...state.profile.allowedActions, "tap"] },
+    { ...state.profile, runtimeProfile: { ...state.profile.runtimeProfile, cpaWorkflowSoftTimeoutMs: 45000 } },
+    { ...state.profile, hiddenOverride: true },
+  ].entries()) {
+    const profilePath = path.join(state.root, `invalid-${index}.json`);
+    await writeFile(profilePath, `${canonicalizeJson(invalid)}\n`, "utf8");
+    await assert.rejects(() => activateCapability({
+      ...state,
+      profilePath,
+      confirmProfileHash: hashCapabilityDocument(invalid),
+      confirmEvidenceHash: hashCapabilityDocument(state.evidence),
+      confirmHuman: true,
+    }), /invalid|unsupported|exceeds|timeout|fields|allowedActions/iu);
+  }
 });
 
 test("synthetic fixtures, wrong hashes, non-human confirmation, and receipt collisions fail closed", async () => {

@@ -3,9 +3,72 @@ import { mkdir, open, readFile, rename } from "node:fs/promises";
 import path from "node:path";
 
 import { canonicalizeJson } from "./composite-plan-core.mjs";
+import { ACTION_REGISTRY } from "./composite-action-registry.mjs";
+
+const PROFILE_KEYS = Object.freeze([
+  "schemaVersion", "capabilityProfileId", "profileKind", "actionRegistryVersion", "allowedActions",
+  "maxDevices", "maxParallel", "maxStateChangesTotal", "maxStateChangesPerMinute", "cpaConcurrency",
+  "commentLiveCap", "cpaLimits", "runtimeProfile",
+]);
+const RUNTIME_KEYS = Object.freeze([
+  "validationMode", "startPolicy", "readyDeadlineMs", "minReady", "snapshotReuseMs",
+  "readOnlyFlushIntervalMs", "readOnlyFlushMaxEvents", "cpaWorkflowSoftTimeoutMs",
+]);
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function plain(value, label) {
+  invariant(value && typeof value === "object" && !Array.isArray(value), `${label} must be an object`);
+  return value;
+}
+
+function exactKeys(value, allowed, label) {
+  const keys = Object.keys(value);
+  invariant(keys.length === allowed.length && keys.every((key) => allowed.includes(key)), `${label} fields are invalid`);
+}
+
+function integer(value, label, minimum, maximum) {
+  invariant(Number.isSafeInteger(value) && value >= minimum && value <= maximum, `${label} is outside its finite bounds`);
+  return value;
+}
+
+export function validateCapabilityProfile(input) {
+  const profile = plain(input, "capability profile");
+  exactKeys(profile, PROFILE_KEYS, "capability profile");
+  invariant(profile.schemaVersion === "xhs-composite-capability/v1", "capability profile schemaVersion is invalid");
+  invariant(typeof profile.capabilityProfileId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$/u.test(profile.capabilityProfileId), "capabilityProfileId is invalid");
+  invariant(["production_candidate", "synthetic_test"].includes(profile.profileKind), "capability profile kind is invalid");
+  invariant(profile.actionRegistryVersion === "composite-actions/v1", "capability action registry version is invalid");
+  invariant(Array.isArray(profile.allowedActions) && profile.allowedActions.length > 0 && profile.allowedActions.length <= Object.keys(ACTION_REGISTRY).length, "finite allowedActions are required");
+  invariant(new Set(profile.allowedActions).size === profile.allowedActions.length && profile.allowedActions.every((action) => ACTION_REGISTRY[action]), "allowedActions contains an unsupported or duplicate action");
+  integer(profile.maxDevices, "maxDevices", 1, 64);
+  integer(profile.maxParallel, "maxParallel", 1, 64);
+  invariant(profile.maxParallel <= profile.maxDevices, "maxParallel exceeds maxDevices");
+  integer(profile.maxStateChangesTotal, "maxStateChangesTotal", 0, 2_000_000);
+  integer(profile.maxStateChangesPerMinute, "maxStateChangesPerMinute", 1, 1024);
+  integer(profile.cpaConcurrency, "cpaConcurrency", 1, 16);
+  const comment = plain(profile.commentLiveCap, "commentLiveCap");
+  exactKeys(comment, ["maxScrolls", "maxItems"], "commentLiveCap");
+  integer(comment.maxScrolls, "commentLiveCap.maxScrolls", 0, 8);
+  integer(comment.maxItems, "commentLiveCap.maxItems", 0, 50);
+  const cpa = plain(profile.cpaLimits, "cpaLimits");
+  exactKeys(cpa, ["providerHardTimeoutMs"], "cpaLimits");
+  integer(cpa.providerHardTimeoutMs, "cpaLimits.providerHardTimeoutMs", 1000, 120000);
+  const runtime = plain(profile.runtimeProfile, "runtimeProfile");
+  exactKeys(runtime, RUNTIME_KEYS, "runtimeProfile");
+  invariant(runtime.validationMode === "startup_strict_runtime_light_account_state_strict", "runtime validation mode is invalid");
+  invariant(["all_ready", "ready_subset_after_deadline"].includes(runtime.startPolicy), "runtime start policy is invalid");
+  integer(runtime.readyDeadlineMs, "runtimeProfile.readyDeadlineMs", 1000, 120000);
+  integer(runtime.minReady, "runtimeProfile.minReady", 1, 64);
+  invariant(runtime.minReady <= profile.maxDevices, "runtime minReady exceeds maxDevices");
+  integer(runtime.snapshotReuseMs, "runtimeProfile.snapshotReuseMs", 0, 10000);
+  integer(runtime.readOnlyFlushIntervalMs, "runtimeProfile.readOnlyFlushIntervalMs", 50, 60000);
+  integer(runtime.readOnlyFlushMaxEvents, "runtimeProfile.readOnlyFlushMaxEvents", 1, 1024);
+  integer(runtime.cpaWorkflowSoftTimeoutMs, "runtimeProfile.cpaWorkflowSoftTimeoutMs", 100, 119999);
+  invariant(runtime.cpaWorkflowSoftTimeoutMs < cpa.providerHardTimeoutMs, "CPA workflow timeout must be below the provider hard timeout");
+  return profile;
 }
 
 function asDate(now) {
@@ -71,11 +134,10 @@ export async function activateCapability({
   invariant(confirmHuman === true, "explicit human capability confirmation is required");
   invariant(path.isAbsolute(profilePath) && path.isAbsolute(evidencePath), "controlled absolute profile and evidence paths are required");
   invariant(path.isAbsolute(acceptanceRoot), "controlled absolute acceptance root is required");
-  const [profile, evidence] = await Promise.all([readJson(profilePath), readJson(evidencePath)]);
+  const [profileInput, evidence] = await Promise.all([readJson(profilePath), readJson(evidencePath)]);
+  const profile = validateCapabilityProfile(profileInput);
   invariant(profile.profileKind !== "synthetic_test", "synthetic capability profiles cannot be activated");
   invariant(profile.profileKind === "production_candidate", "only a production candidate can be human-accepted");
-  invariant(typeof profile.capabilityProfileId === "string", "capabilityProfileId is required");
-  invariant(Array.isArray(profile.allowedActions) && profile.allowedActions.length > 0, "finite allowedActions are required");
   const profileHash = hashCapabilityDocument(profile);
   const evidenceHash = hashCapabilityDocument(evidence);
   invariant(profileHash === confirmProfileHash, "profile hash confirmation mismatch");
@@ -115,9 +177,10 @@ export async function loadActiveCapability({ acceptanceRoot }) {
   invariant(active.schemaVersion === "xhs-active-capability/v1", "active capability record is invalid");
   invariant(/^acceptance-[a-f0-9]{16}\.json$/.test(active.receiptFile), "active receipt path is invalid");
   const receiptPath = path.join(acceptanceRoot, "receipts", active.receiptFile);
-  const [receipt, profile, evidence] = await Promise.all([
+  const [receipt, profileInput, evidence] = await Promise.all([
     readJson(receiptPath), readJson(active.sourceProfilePath), readJson(active.sourceEvidencePath),
   ]);
+  const profile = validateCapabilityProfile(profileInput);
   const acceptanceHash = hashCapabilityDocument(receipt);
   invariant(acceptanceHash === active.acceptanceHash, "acceptance receipt hash mismatch");
   const profileHash = hashCapabilityDocument(profile);
@@ -125,5 +188,6 @@ export async function loadActiveCapability({ acceptanceRoot }) {
   invariant(profileHash === receipt.capabilityProfileHash, "active profile hash changed after acceptance");
   invariant(evidenceHash === receipt.acceptanceEvidenceHash, "acceptance evidence hash changed after acceptance");
   invariant(receipt.acceptedBy === "human", "active capability is not human-accepted");
+  invariant(canonicalizeJson(receipt.acceptedLimits) === canonicalizeJson(acceptedLimits(profile)), "accepted capability limits do not match the active profile");
   return { profile, receipt, profileHash, acceptanceHash, receiptPath };
 }

@@ -100,3 +100,24 @@ test("policy scan permits legacy positional fields only inside the conversion-on
   assert.equal(scan.status, "passed");
   assert.deepEqual(scan.staleRestrictions, []);
 });
+
+test("policy scan rejects retired standalone Research and account-ramp executors", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale-research.md": "Run-TopicResearch.ps1 and xhs.cmd ramp run",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), [
+    "retired-research-executor",
+    "retired-account-ramp-automation",
+  ]);
+});
+
+test("policy scan rejects the retired Composite V1 recipe compiler", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale-composite.md": "Use composite-request.schema.json with xhs-composite-request/v1",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), ["retired-composite-v1-compiler"]);
+});

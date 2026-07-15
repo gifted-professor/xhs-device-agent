@@ -28,14 +28,14 @@ export function renderCompositePlan(plan) {
     "",
     "## Task source and compiled title rules",
     "",
-    `- Source: ${lineValue(plan.taskSource ?? { type: "legacy_composite" })}`,
+    `- Source: ${lineValue(plan.taskSource)}`,
     `- Title rules: ${lineValue(plan.titleRules ?? [])}`,
     "",
     "## Machines and exact steps",
     "",
   ];
   for (const device of plan.devices) {
-    lines.push(`### Machine ${lineValue(device.machine)}${device.visibleName ? ` — ${lineValue(device.visibleName)}` : ""} — ${lineValue(device.taskId)} — sourceCount=${lineValue(device.sourceCount ?? "legacy")}`, "");
+    lines.push(`### Machine ${lineValue(device.machine)}${device.visibleName ? ` — ${lineValue(device.visibleName)}` : ""} — ${lineValue(device.taskId)} — sourceCount=${lineValue(device.sourceCount)}`, "");
     for (const step of device.steps) {
       const risk = ACTION_REGISTRY[step.action].risk;
       lines.push(`1. ${lineValue(step.stepId)} — ${lineValue(step.action)} — risk=${lineValue(risk)}`);

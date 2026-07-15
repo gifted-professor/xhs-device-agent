@@ -8,7 +8,7 @@ import {
   validateActionInvocation,
   validateCompiledSteps,
 } from "../scripts/composite-action-registry.mjs";
-import { compileCompositePlan } from "../scripts/composite-plan-core.mjs";
+import { compileUnifiedTaskPlan } from "../scripts/task-compiler.mjs";
 
 const fixtureUrl = new URL("./fixtures/", import.meta.url);
 
@@ -127,25 +127,27 @@ test("conditions can reference only an earlier typed observation", () => {
 
 test("compiler output is accepted by the registry and preserves the global budget", async () => {
   const capability = await fixture("composite-capability.synthetic-2.json");
-  const request = {
-    schemaVersion: "xhs-composite-request/v1", policyProfileId: "supervised-composite-v1",
+  const task = {
+    schemaVersion: "xhs-task-spec/v1",
+    taskId: "registry-integration",
     capabilityProfileId: capability.capabilityProfileId,
     seed: Buffer.from("registry-integration".padEnd(32, "_")).toString("base64"),
-    devices: [{ machine: "02", taskId: "task-02" }, { machine: "01", taskId: "task-01" }],
-    actionPool: [...capability.allowedActions],
-    recipe: {
-      targetValidVisitsPerDevice: 2, maxVisitAttemptsPerDevice: 4, maxSkippedTargetsPerDevice: 2,
-      maxFeedScrollsPerAttempt: 1, maxFeedScrollsTotalPerDevice: 4, visibleCandidateCap: 4,
-      imageContentScrolls: { min: 0, max: 2 }, videoAdvances: { min: 0, max: 1 },
-      comments: { policyRef: "count-adaptive-v1" },
-      engagementsPerDevice: { ensureLiked: 1, ensureFavorited: 1, eligibleVisitOrdinals: { min: 1, max: 2 } },
-    },
-    limits: { maxParallel: 2, maxStateChangesTotal: 4, maxReadStepsTotal: 80, maxVisionCallsTotal: 20, maxWallClockMs: 900000 },
+    deviceSelection: { mode: "explicit", machines: ["02", "01"] },
+    maxParallel: 2,
+    source: { type: "feed", count: 2, candidateCap: 4 },
+    actions: [
+      { target: { mode: "ordinal", ordinal: 1 }, action: "engagement.ensure_liked" },
+      { target: { mode: "ordinal", ordinal: 2 }, action: "engagement.ensure_favorited" },
+    ],
   };
-  const plan = compileCompositePlan(request, {
-    compilerVersion: "1.0.0", policyHash: "a".repeat(64), capabilityProfile: capability,
+  const plan = compileUnifiedTaskPlan(task, {
+    compilerVersion: "2.0.0", policyHash: "a".repeat(64), capabilityProfile: capability,
     capabilityProfileHash: "b".repeat(64),
-    preparationSnapshot: { inventorySnapshotHash: "c".repeat(64), capabilitySnapshotHash: "d".repeat(64) },
+    preparationSnapshot: {
+      inventorySnapshotHash: "c".repeat(64),
+      capabilitySnapshotHash: "d".repeat(64),
+      devices: [{ machine: "02" }, { machine: "01" }],
+    },
   });
   assert.doesNotThrow(() => validateCompiledSteps(plan.devices.flatMap((device) => device.steps), plan.limits));
   assert.equal(plan.devices.flatMap((device) => device.steps).filter((entry) => ACTION_REGISTRY[entry.action].risk === "account_state").length, 4);

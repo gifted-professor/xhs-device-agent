@@ -17,7 +17,7 @@ The project has two distinct modes. Do not silently broaden one mode into anothe
 1. `research_read_only`: deterministic public-content research with no account-state changes.
 2. `supervised_composite_v1`: a foreground, human-supervised, compiled action plan for an explicit finite machine list. `maxParallel` is bounded by the current tested capability profile, not by a permanent repository-wide device ceiling.
 
-Historical `feed run` and `feed batch` commands are compatibility converters only. They produce the same unified task specification and enter the same preparation, review, approval, coordinator, ledger, and executor path; no separate Feed executor remains.
+Historical `feed run`, `feed batch`, and `research run` commands are compatibility converters only. They produce the same unified task specification and enter the same preparation, review, approval, coordinator, ledger, and executor path; no separate Feed or Research executor remains.
 
 `supervised_composite_v1` is the primary customization lane. Use `xhs.cmd task run --spec <file> --dry-run` for an offline candidate, then `xhs.cmd task run --spec <file>` for fresh read-only preparation and the complete review. Execution starts only when the exact rendered hash is resubmitted with `--confirm-plan-hash`. Device count and concurrency come from the exact task and must fit the currently active human-accepted capability evidence; the repository has no permanent numeric ceiling. A registry action that lacks a current accepted device adapter remains unavailable and must fail before approval or device navigation.
 
@@ -56,6 +56,7 @@ The initial `supervised_composite_v1` registry exposes these high-level semantic
 - `search.open_results`
 - `search.open_result`
 - `content.open_xhs_url`
+- `research.collect`
 - `detail.inspect`
 - `detail.evaluate_title_rule`
 - `image.scroll_content`
@@ -82,6 +83,7 @@ The registry is versioned and extensible. A new high-level action may be added a
 - `engagement.ensure_liked` and `engagement.ensure_favorited` are ensure-state operations, not toggles. If already active, record `noop_already_active`. If the post-state is ambiguous, never resend.
 - `video.advance` and comment scrolling are different actions. A video advance is sent once only from a verified current video surface and succeeds only when the next fresh observation remains `VIDEO_NOTE` and proves target identity changed.
 - `comments.collect` scrolls only a verified comment container, extracts deidentified public snippets, deduplicates across screens, and stops after its frozen budget, an end marker, or two consecutive no-new-comment scrolls.
+- `research.collect` executes only the exact compiled read-only machine shard. Its sources, queries, note/comment/model budgets, wall-clock lease, deterministic assignment policy, and failure behavior are frozen in the reviewed plan; it cannot add account-state actions.
 - Every plan also has finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDevice`, `maxSkippedTargetsPerDevice`, `maxFeedScrollsPerAttempt`, and `maxFeedScrollsTotalPerDevice`. Reaching an attempt/skip/scroll cap returns accurate partial completion; it never creates an implicit keep-searching loop.
 
 ## 5. Interaction and budget boundary

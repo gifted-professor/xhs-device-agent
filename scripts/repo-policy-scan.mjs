@@ -38,6 +38,12 @@ export const STALE_RESTRICTION_RULES = Object.freeze([
   Object.freeze({ id: "template-overrides-explicit-value", pattern: /Feed template .* fixes --|模板参数不允许冲突覆盖|拒绝冲突覆盖/iu }),
   Object.freeze({ id: "retired-feed-executor-reference", pattern: /Run-FeedWorkflow\.ps1|Run-FeedBatch\.ps1|feed-batch-(?:core|control|runner)\.mjs|feed-workflow\.mjs/iu }),
   Object.freeze({ id: "retired-fixed-feed-template", pattern: /trusted-10/iu }),
+  Object.freeze({ id: "retired-research-executor", pattern: /Run-TopicResearch\.ps1|run-topic-research\.mjs/iu }),
+  Object.freeze({ id: "retired-account-ramp-automation", pattern: /Run-AccountRamp\.ps1|account-ramp\.mjs|xhs\.cmd ramp run/iu }),
+  Object.freeze({
+    id: "retired-composite-v1-compiler",
+    pattern: /composite-request\.schema\.json|composite-device-runner\.mjs|xhs-composite-request\/v1|compileCompositePlan\s*\(/iu,
+  }),
 ]);
 
 const REQUIRED_CONTRACTS = Object.freeze([

@@ -6,7 +6,7 @@ function arg(name, fallback = "") {
 }
 
 async function main() {
-  throw new Error("Standalone cloud screenshot upload is disabled; use Run-TopicResearch.ps1 so the exact image receives two local OCR privacy checks and a matching hash attestation");
+  throw new Error("Standalone cloud screenshot upload is disabled; use the approved unified task research path so the exact image receives two local OCR privacy checks and a matching hash attestation");
 }
 
 if (process.argv[1] && basename(process.argv[1]) === basename(new URL(import.meta.url).pathname)) {

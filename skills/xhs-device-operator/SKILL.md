@@ -30,7 +30,7 @@ Choose exactly one of two formal modes and preserve its boundary:
 - `research_read_only`: public-content research only. Continue to require `interactionPolicy=human_final` and reject state-changing fields.
 - `supervised_composite_v1`: the primary customization lane. It accepts an explicit finite machine list or deterministic idle-machine selection and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested, human-accepted capability evidence; the repository has no permanent numeric ceiling.
 
-Historical `feed run` and `feed batch` commands are converters, not formal modes. They translate legacy fields into a unified task and enter the same preparation, review, exact-hash approval, coordinator, ledger, and executor. Fixed Feed templates and separate legacy Feed executors are removed.
+Historical `feed run`, `feed batch`, and `research run` commands are converters, not formal modes. They translate legacy fields into a unified task and enter the same preparation, review, exact-hash approval, coordinator, ledger, and executor. Fixed templates and separate legacy Feed/Research executors are removed.
 
 Never silently translate an unsupported composite request into generic taps, raw swipes, or a removed legacy executor.
 
@@ -107,6 +107,7 @@ Only these semantic actions are eligible in `supervised_composite_v1`:
 | `search.open_results` | Open results only for the approved query reference after exact text-entry verification. |
 | `search.open_result` | Open the approved ordered search-result ordinal without substituting another result. |
 | `content.open_xhs_url` | Open only an approved Xiaohongshu URL reference and verify the resulting public detail binding. |
+| `research.collect` | Execute only the exact compiled read-only shard with frozen sources, queries, note/comment/model budgets, wall-clock lease, and deterministic assignment policy. |
 | `detail.inspect` | Bind the current public-detail fingerprint before further action. |
 | `detail.evaluate_title_rule` | Evaluate one compiled normalized-title rule and return a typed active/inactive observation. |
 | `image.scroll_content` | Scroll only the verified image-note content container and keep the same detail identity. |
@@ -175,17 +176,17 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
 8. Ctrl-C opens the fuse first, revokes every execution slot, prevents new issuance, and terminates the entire process tree. A stale ticket, execution-slot lease, or parent lease makes every worker stop before its next sent action.
 9. The plan declares one finite batch-wide account-state budget, shown in the human review and enforced atomically through unique non-transferable operation slots. There is no permanent repository-wide numeric ceiling; the approved value must fit the current capability profile. Compatibility templates provide defaults only and never override explicit task values.
 
-## Existing read-only and legacy lanes
+## Read-only and compatibility lanes
 
 ### `research_read_only`
 
-Continue to run the strict research task contract and `Run-TopicResearch` path only through `xhs.cmd`. Keep AI event-driven, privacy-gated, and bounded. Comments are public observation only; no interaction controls enter the research target set.
+Translate the strict legacy research task through `xhs.cmd research run` into a unified `research_read_only` source. The resulting plan must show the exact selected machines, deterministic shards, read/comment/model budgets and `research.collect` steps, then use the same preparation, exact-hash approval, worker tickets, execution slots, fuse and terminal report as `task run`. Keep AI event-driven, privacy-gated and bounded. Comments are public observation only; no account-state action enters a research shard.
 
-### Feed compatibility converters
+### Compatibility converters
 
-Run `xhs.cmd feed run ... --dry-run` or `xhs.cmd feed batch --spec <path> --dry-run` to inspect the exact converted task. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs, and requested concurrency are preserved in the compiled plan and checked only against the active capability.
+Run `xhs.cmd feed run ... --dry-run`, `xhs.cmd feed batch --spec <path> --dry-run`, or `xhs.cmd research run --task <path> --dry-run` to inspect the exact converted task. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs and requested concurrency are preserved; Research preserves its finite public-data and AI budgets while resolving only its selected local device group.
 
-Never invoke a removed Feed script or reinterpret a compatibility failure through a different executor.
+Never invoke a removed legacy script or reinterpret a compatibility failure through a different executor.
 
 ## Human-final and mandatory stops
 

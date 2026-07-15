@@ -65,13 +65,13 @@ test("strict task validation accepts the public shape and blocks interactions", 
     (error) => error.code === "INVALID_SCHEMA");
 });
 
-test("stable assignment uses at most four devices and each device executes serially", async () => {
+test("stable assignment uses every capability-selected device and each device executes serially", async () => {
   const input = task({ taskId: "xhs-serial-001" });
   const first = buildWorkUnits(input, ["d5", "d3", "d1", "d2", "d4"]);
-  const second = buildWorkUnits(input, ["d4", "d2", "d1", "d3"]);
+  const second = buildWorkUnits(input, ["d4", "d2", "d1", "d5", "d3"]);
   assert.deepEqual(first.map(({ source, keyword, assignedDevice }) => ({ source, keyword, assignedDevice })),
     second.map(({ source, keyword, assignedDevice }) => ({ source, keyword, assignedDevice })));
-  assert.equal(first.every((unit) => ["d1", "d2", "d3", "d4"].includes(unit.assignedDevice)), true);
+  assert.equal(first.every((unit) => ["d1", "d2", "d3", "d4", "d5"].includes(unit.assignedDevice)), true);
 
   const fourUnitTask = task({
     taskId: "four-device-balanced-001",
@@ -105,7 +105,7 @@ test("stable assignment uses at most four devices and each device executes seria
   const summary = await runResearchTask(input, { provider, outputRoot: await temporaryOutput() });
   assert.equal(summary.status, "completed");
   assert.equal(overlap, false);
-  assert.deepEqual(summary.devices, ["d1", "d2", "d3", "d4"]);
+  assert.deepEqual(summary.devices, ["d1", "d2", "d3", "d4", "d5"]);
   assert.equal(summary.counts.modelCalls, 0);
 });
 

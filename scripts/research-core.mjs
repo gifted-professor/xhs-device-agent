@@ -12,7 +12,6 @@ export const RESEARCH_STATUSES = Object.freeze([
 ]);
 
 const SOURCES = new Set(["search", "suggestions", "trending", "recommended"]);
-const MAX_PARALLEL_DEVICES = 4;
 const TOP_LEVEL_KEYS = new Set([
   "schemaVersion", "taskId", "mode", "topic", "seedKeywords", "sources",
   "deviceGroup", "commentMode", "interactionPolicy", "budgets", "aiPolicy",
@@ -167,7 +166,8 @@ function normalizeAlias(device, index) {
 
 export function buildWorkUnits(taskInput, deviceAliases) {
   const task = validateResearchTask(taskInput);
-  const aliases = [...new Set(deviceAliases)].sort().slice(0, MAX_PARALLEL_DEVICES);
+  assert(Array.isArray(deviceAliases) && deviceAliases.length <= 64, "INVALID_PROVIDER", "device aliases must be a finite capability-bounded list");
+  const aliases = [...new Set(deviceAliases)].sort();
   assert(aliases.length > 0, "NO_DEVICES", "at least one device alias is required");
   const keywords = [...new Set([task.topic, ...task.seedKeywords].map((item) => item.trim()))]
     .slice(0, task.budgets.maxQueries);
@@ -399,7 +399,8 @@ export async function runResearchTask(taskInput, options = {}) {
     const alias = normalizeAlias(device, index);
     if (!deviceMap.has(alias) && device?.online !== false) deviceMap.set(alias, { alias, raw: device });
   });
-  const devices = [...deviceMap.values()].sort((a, b) => a.alias.localeCompare(b.alias)).slice(0, MAX_PARALLEL_DEVICES);
+  assert(deviceMap.size <= 64, "INVALID_PROVIDER", "provider returned more devices than the unified task protocol supports");
+  const devices = [...deviceMap.values()].sort((a, b) => a.alias.localeCompare(b.alias));
   if (devices.length === 0) {
     const summary = {
       schemaVersion: 1,

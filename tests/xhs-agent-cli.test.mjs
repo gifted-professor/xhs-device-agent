@@ -199,7 +199,7 @@ test("each command rejects options that belong to a different command", () => {
     [["api", "catalog", "--config", "config/local.psd1"], /api catalog does not support option: --config/u],
     [["device", "screen", "--device", "device-01", "--package", "com.example.app"], /device screen does not support option: --package/u],
     [["app", "list", "--device", "device-01", "--confirm"], /app list does not support option: --confirm/u],
-    [["ramp", "run", "--profile", "profile.json", "--device", "device-01"], /ramp run does not support option: --device/u],
+    [["research", "run", "--task", "task.json", "--package", "com.example.app"], /research run does not support option: --package/u],
     [["inventory", "collect", "--output", "out"], /inventory collect does not support option: --output/u],
   ];
   for (const [argv, expected] of cases) {

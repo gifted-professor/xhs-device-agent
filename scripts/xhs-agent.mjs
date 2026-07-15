@@ -10,7 +10,6 @@ const BOOLEAN_OPTIONS = new Set([
   "confirm-human",
   "confirm-single-device-and-sync-off",
   "dry-run",
-  "generate-only",
   "json",
   "sync-lark",
 ]);
@@ -397,21 +396,6 @@ export function buildDispatch(parsed) {
     const args = ["-ReviewPath", String(requireOption(options, "review")), "-ConfirmExternalSync"];
     appendOption(args, options, "config", "-ConfigPath");
     return psScript("Sync-ResearchReview.ps1", args);
-  }
-  if (area === "ramp" && command === "run") {
-    assertAllowedOptions(
-      options,
-      ["profile", "config", "output", "date", "sequence", "dry-run", "generate-only"],
-      "ramp run",
-    );
-    const args = ["-ProfilePath", String(requireOption(options, "profile"))];
-    appendOption(args, options, "config", "-ConfigPath");
-    appendOption(args, options, "output", "-OutputRoot");
-    appendOption(args, options, "date", "-TaskDate");
-    appendOption(args, options, "sequence", "-Sequence");
-    if (options["dry-run"]) args.push("-DryRun");
-    if (options["generate-only"]) args.push("-GenerateOnly");
-    return psScript("Run-AccountRamp.ps1", args);
   }
   if (area === "handoff" && command === "review") {
     assertAllowedOptions(

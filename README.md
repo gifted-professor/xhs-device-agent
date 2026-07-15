@@ -17,7 +17,7 @@
 
 任务格式见 `config/task-spec.schema.json`。当前编译器支持：
 
-- Feed、搜索结果和有序小红书 URL 列表；
+- Feed、搜索结果、有序小红书 URL 列表和只读 Research 分片；
 - 明确机器列表或按偏好确定性选择空闲机器；
 - 用户指定浏览数、每台浏览数、并发和有序动作；
 - 同一条内容连续点赞与收藏；
@@ -25,9 +25,9 @@
 - 按评论数区间或标题包含条件选择分支；
 - 一次完整复述、一次精确哈希确认。
 
-搜索与 URL 的真机执行还必须有对应的已验收能力档案和设备适配器。没有能力时会在设备导航前拒绝，不会改走旧执行器。
+搜索、URL 与 Research 的真机执行器已经接入统一票据和执行槽，但仍必须由当前人工验收的能力档案明确启用。没有已接受能力时会在设备导航前拒绝，不会改走旧执行器。
 
-## Feed 兼容命令
+## 兼容命令
 
 旧参数会转换为同一个统一任务，不再拥有独立执行器或限制：
 
@@ -41,9 +41,11 @@
   --dry-run
 
 .\xhs.cmd feed batch --spec data/legacy-batch.json --dry-run
+
+.\xhs.cmd research run --task data/research-task.json --dry-run --json
 ```
 
-兼容 Batch 会保留每台机器号、每台浏览数、每台任务 ID 和请求的 `maxParallel`。固定 Feed 模板、旧 Feed/Batch 父进程、旧屏障和独立执行器已删除。
+兼容 Batch 会保留每台机器号、每台浏览数、每台任务 ID 和请求的 `maxParallel`。兼容 Research 会保留公开数据来源和有限查询、笔记、评论、模型调用与时间预算，并按选中机器确定性分片。固定模板、旧 Feed/Batch 父进程、旧 Research 命令行执行器和独立确认链已删除。
 
 ## 能力激活
 

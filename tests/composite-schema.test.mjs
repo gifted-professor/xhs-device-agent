@@ -16,7 +16,7 @@ const ACTIONS = [
 ];
 
 const SCHEMAS = [
-  "composite-request.schema.json", "composite-plan.schema.json",
+  "composite-plan.schema.json",
   "composite-approval.schema.json", "composite-policy.schema.json",
   "composite-capability.schema.json", "composite-capability-acceptance.schema.json",
   "composite-worker-ticket.schema.json", "composite-attempt.schema.json",
@@ -88,40 +88,6 @@ const runtimeProfile = {
   cpaWorkflowSoftTimeoutMs: 8000,
 };
 
-function request() {
-  return {
-    schemaVersion: "xhs-composite-request/v1",
-    policyProfileId: "supervised-composite-v1",
-    capabilityProfileId: "composite-capability-initial-v1",
-    seed: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-    devices: [{ machine: "01", taskId: "task-01" }, { machine: "02", taskId: "task-02" }],
-    actionPool: ACTIONS,
-    recipe: {
-      targetValidVisitsPerDevice: 10,
-      maxVisitAttemptsPerDevice: 16,
-      maxSkippedTargetsPerDevice: 6,
-      maxFeedScrollsPerAttempt: 1,
-      maxFeedScrollsTotalPerDevice: 20,
-      visibleCandidateCap: 4,
-      imageContentScrolls: { min: 0, max: 2 },
-      videoAdvances: { min: 0, max: 2 },
-      comments: { policyRef: "count-adaptive-v1" },
-      engagementsPerDevice: {
-        ensureLiked: 1,
-        ensureFavorited: 1,
-        eligibleVisitOrdinals: { min: 2, max: 9 },
-      },
-    },
-    limits: {
-      maxParallel: 2,
-      maxStateChangesTotal: 4,
-      maxReadStepsTotal: 80,
-      maxVisionCallsTotal: 20,
-      maxWallClockMs: 900000,
-    },
-  };
-}
-
 function plan() {
   return {
     schemaVersion: "xhs-composite-plan/v1",
@@ -179,29 +145,6 @@ test("all composite schemas are Draft 2020-12 and close every object", async () 
     assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema", name);
     assertClosedObjects(schema, name);
   }
-});
-
-test("request schema and capability validation reject structural and cross-field escapes", async () => {
-  const [schema, capability] = await Promise.all([
-    json(configUrl, "composite-request.schema.json"),
-    json(configUrl, "composite-capability.initial-v1.json"),
-  ]);
-  const valid = request();
-  assert.deepEqual(errors("request", schema, valid, { capability }), []);
-  const invalid = [
-    { ...valid, devices: [{ machine: "01", taskId: "one" }, { machine: "01", taskId: "two" }] },
-    { ...valid, devices: [{ machine: "1", taskId: "one" }] },
-    { ...valid, limits: { ...valid.limits, maxParallel: 3 } },
-    { ...valid, limits: { ...valid.limits, maxStateChangesTotal: -1 } },
-    { ...valid, limits: { ...valid.limits, surprise: true } },
-    { ...valid, runtimeProfile },
-  ];
-  for (const value of invalid) assert.notDeepEqual(errors("request", schema, value, { capability }), []);
-
-  const threeDevices = clone(valid);
-  threeDevices.devices.push({ machine: "03", taskId: "task-03" });
-  threeDevices.limits.maxParallel = 3;
-  assert.match(errors("request", schema, threeDevices, { capability }).join("\n"), /capability/);
 });
 
 test("plan schema exposes exactly the closed action set and typed earlier-observation conditions", async () => {
