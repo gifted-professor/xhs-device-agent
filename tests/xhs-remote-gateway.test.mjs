@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildRemoteArgv,
+  commandTimeoutMs,
   createRemoteGateway,
   parseStructuredReadOutput,
   sanitizeCommandOutput,
@@ -64,6 +65,21 @@ test("remote gateway exposes only named xhs commands", () => {
   assert.throws(() => buildRemoteArgv({ command: "host.status", config: "other.psd1" }), /Unknown remote command field/u);
 });
 
+test("vision node commands receive a bounded two-observation gateway timeout", () => {
+  assert.equal(commandTimeoutMs({
+    command: "device.node.resolve",
+    selector: { sources: ["vision"] },
+  }), 270000);
+  assert.equal(commandTimeoutMs({
+    command: "device.node.activate",
+    selector: { sources: ["ocr", "vision"] },
+  }), 270000);
+  assert.equal(commandTimeoutMs({
+    command: "device.node.resolve",
+    selector: { sources: ["ocr"] },
+  }), 120000);
+});
+
 test("generic node commands carry a closed selector and never caller coordinates", () => {
   const resolve = buildRemoteArgv({
     command: "device.node.resolve", machine: "03", package: "com.tencent.mm", selector: NODE_SELECTOR,
@@ -123,6 +139,11 @@ test("structured device reads expose only their public fields", () => {
     transport: "xiaowei-api", localAdbRequired: false,
   }));
   assert.equal(resolved.node.source, "relation");
+  const visionResolved = parseStructuredReadOutput("device.node.resolve", JSON.stringify({
+    ...resolved,
+    node: { label: "我", role: "tab", group: null, ordinal: null, source: "vision", unique: true },
+  }));
+  assert.equal(visionResolved.node.source, "vision");
   assert.doesNotMatch(JSON.stringify(resolved), /"(?:serial|alias|deviceId|x|y|path|left|top|right|bottom)"/iu);
   const activated = parseStructuredReadOutput("device.node.activate", JSON.stringify({
     machine: "03", status: "verified",

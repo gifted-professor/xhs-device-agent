@@ -47,15 +47,15 @@ test("render shows exact machines, steps, branches, budgets, runtime profile, st
   ]) assert.match(rendered, new RegExp(String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 });
 
-test("render states the one-confirmation continuous-execution contract", async () => {
+test("render treats planHash as integrity binding without a second conversational approval", async () => {
   const plan = await planFixture();
   const rendered = renderCompositePlan(plan);
   for (const value of [
-    "single confirmation boundary",
-    "without intermediate confirmation",
+    "technical integrity binding",
+    "without asking for the same authorization again",
     "required by this compiled plan",
     "Other online machines do not block",
-    "must not be substituted after approval",
+    "must not be substituted after integrity binding",
     "one terminal completion or blocked report",
     "must not be rerun automatically",
   ]) assert.match(rendered, new RegExp(value, "i"));

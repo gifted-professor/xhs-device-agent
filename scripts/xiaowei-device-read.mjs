@@ -7,9 +7,11 @@ import { fileURLToPath } from "node:url";
 import { normalizeXiaoweiResponse, sendXiaoweiRequest } from "./xiaowei-transport.mjs";
 import { invokeXiaoweiPrivateCommand } from "./xiaowei-private-api.mjs";
 import { createWindowsLocalOcr } from "./local-ocr.mjs";
+import { requestCloudVision } from "./cloud-vision.mjs";
 import {
   DeviceNodeError,
   inferHorizontalOrdinalBounds,
+  parseVisionNodeResponse,
   publicNodeDescription,
   stableNodeBounds,
   validateDeviceNodeSelector,
@@ -622,6 +624,48 @@ function uniqueSemanticBounds(hierarchy, label, dimensions) {
   return unique[0] ?? null;
 }
 
+const VISION_NODE_SYSTEM_PROMPT = [
+  "Locate visible device-screen nodes and return JSON only.",
+  "The response must have exactly this shape:",
+  '{"matches":[{"left":100,"top":100,"right":102,"bottom":102}]}',
+  "For each candidate, return a 2x2 pixel marker centered on the safest activation point.",
+  "The marker must satisfy right=left+2 and bottom=top+2 in the supplied screenshot coordinate space.",
+  "Do not return the visual extent of the icon, text, button, or navigation cell.",
+  "Return every visible match. Return an empty matches array when there is no match.",
+  "Do not include explanations or additional fields.",
+].join("\n");
+
+async function locateVisionNode(options, imagePath, selector, dimensions) {
+  let response;
+  try {
+    response = await options.cloudVision({
+      imagePath,
+      promptText: VISION_NODE_SYSTEM_PROMPT,
+      instruction: [
+        `Display: ${dimensions.width}x${dimensions.height}.`,
+        `Target label: ${JSON.stringify(selector.label)}.`,
+        `Target role: ${JSON.stringify(selector.role)}.`,
+        `Visual description: ${JSON.stringify(selector.visionPrompt)}.`,
+        "Locate all visible candidates matching this target.",
+      ].join("\n"),
+    });
+  } catch (error) {
+    const message = String(error?.message ?? "");
+    if (/VISION_(?:API_URL|API_KEY|MODEL)|AI_(?:API_URL|API_KEY|MODEL)|设置|configured|configuration/iu.test(message)) {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Vision service is not configured");
+    }
+    if (/JSON|choices\[0\]|content|返回|response|shape/iu.test(message)) {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Vision service returned an invalid observation");
+    }
+    throw new DeviceNodeError("TRANSPORT_FAILED", "Vision service request failed");
+  }
+  const bounds = parseVisionNodeResponse(response?.content ?? response, dimensions);
+  if (!bounds) return null;
+  const centerX = Math.min(dimensions.width - 1, Math.max(1, Math.round((bounds.left + bounds.right) / 2)));
+  const centerY = Math.min(dimensions.height - 1, Math.max(1, Math.round((bounds.top + bounds.bottom) / 2)));
+  return { left: centerX - 1, top: centerY - 1, right: centerX + 1, bottom: centerY + 1 };
+}
+
 async function nodeObservation(target, request, deviceDirectory, options, artifactPrefix) {
   const hierarchy = await readUiHierarchy(target, options);
   if (!hierarchyContainsPackage(hierarchy, request.package)) {
@@ -633,6 +677,7 @@ async function nodeObservation(target, request, deviceDirectory, options, artifa
     throw new DeviceNodeError("LAYOUT_DRIFT", "Screenshot and physical display dimensions differ");
   }
   let ocrMiss = false;
+  let visionMiss = false;
   for (const source of request.selector.sources) {
     if (source === "accessibility") {
       const bounds = uniqueSemanticBounds(hierarchy, request.selector.label, dimensions);
@@ -654,7 +699,13 @@ async function nodeObservation(target, request, deviceDirectory, options, artifa
         }
         throw error;
       }
-    } else {
+    } else if (source === "vision") {
+      const bounds = await locateVisionNode(
+        options, screen.screenshotPath, request.selector, dimensions,
+      );
+      if (bounds) return { hierarchy, screen, dimensions, bounds, source };
+      visionMiss = true;
+    } else if (source === "relation") {
       const anchors = [];
       for (const anchor of request.selector.relation.anchors) {
         try {
@@ -684,10 +735,12 @@ async function nodeObservation(target, request, deviceDirectory, options, artifa
         bounds: inferHorizontalOrdinalBounds(anchors, request.selector.relation, dimensions),
         source,
       };
+    } else {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Configured node source is unavailable");
     }
   }
   throw new DeviceNodeError(
-    ocrMiss ? "OCR_MISS" : "NODE_NOT_FOUND",
+    ocrMiss && !visionMiss ? "OCR_MISS" : "NODE_NOT_FOUND",
     "No configured source resolved one unique node",
   );
 }
@@ -1124,6 +1177,7 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
     timeoutMs: runtime.timeoutMs ?? 15_000,
     delay: runtime.delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
     localOcr: runtime.localOcr ?? createWindowsLocalOcr(),
+    cloudVision: runtime.cloudVision ?? requestCloudVision,
     xhsRulesPath: runtime.xhsRulesPath ?? path.join(projectRoot, "config", "xhs-page-rules.json"),
   };
   const results = [];

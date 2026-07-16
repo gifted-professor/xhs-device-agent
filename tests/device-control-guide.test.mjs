@@ -19,3 +19,15 @@ test("device control catalog maps every standard failure to ordered bounded stra
   }
   await assert.rejects(() => getDeviceControlGuide("UNKNOWN_FAILURE"), /not documented/u);
 });
+
+test("current request authority and compatibility fallback do not become approval gates", async () => {
+  const sensitive = await getDeviceControlGuide("SENSITIVE_SURFACE");
+  assert.equal(sensitive.automatic, true);
+  assert.equal(sensitive.terminal, false);
+  assert.deepEqual(sensitive.next.map(({ strategy }) => strategy), ["REQUEST_SCOPED_ACTION"]);
+
+  const missing = await getDeviceControlGuide("CAPABILITY_MISSING");
+  assert.equal(missing.automatic, true);
+  assert.equal(missing.terminal, false);
+  assert.equal(missing.next[0].strategy, "PROJECT_COMPATIBILITY_ROUTE");
+});

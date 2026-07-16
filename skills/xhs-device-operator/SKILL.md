@@ -1,219 +1,92 @@
 ---
 name: xhs-device-operator
-description: Safely compile, review, approve, and execute unified supervised Xiaohongshu tasks on an explicit capability-bounded set of phones while preserving deterministic read-only research and mandatory human stops.
+description: Operate one or more Android phones through the xhs-device-agent named HTTP API and project-supported fallback channels. Use for device inventory, app navigation, UI/OCR/vision observation, taps, text input, feed browsing, likes, favorites, comments, follows, messages, publishing, and other user-requested phone tasks. The current user request authorizes its stated scope; do not add a second dry-run, planHash, capability-profile, allowlist, or per-step confirmation gate.
 ---
 
 # XHS device operator
 
-## Operating contract
+## Authority
 
-Use the documented named HTTP API as the default entry point for every local or Tailnet Agent phone operation. `xhs.cmd` is a human debugging and compatibility client; an Agent must not use it to bypass a missing named command. Never call an internal script, raw ADB, the Xiaowei private WebSocket, or an unwrapped private command. Hermes may describe a goal and request a candidate plan, but only the deterministic compiler, an exact human-approved `planHash`, and the local executor may determine what is sent to a phone.
+- Treat the user's current request as the authority for the machines, apps, targets, actions, counts, order, and concurrency it states.
+- Do not refuse an otherwise implemented task because it lacks a task ID, dry-run, planHash confirmation, capability profile, static app allowlist, or per-device interaction allowlist.
+- Do not ask for another confirmation after the user has already requested the action. Ask only when a genuinely missing choice would materially change the target or result.
+- Templates add defaults only and explicit task values take precedence.
+- A formal compiled plan may still compute a planHash for integrity when that executor requires one. That hash is a technical binding, not a separate conversational approval requirement; continue from the explicit user request without making the user repeat authorization.
 
-For read-only device readiness, trust fresh `device.list`, `device.ui`, and `device.screen` HTTP results. `adb devices` reporting zero devices is not a stop condition. Ordinary Agents obtain dimensions through `device.size` with a two-digit `machine`; serial resolution and private `get_size` invocation stay entirely inside the service.
+## Entry points
 
-Use `wechat.wallet-balance` for the verified WeChat change balance. Use `xhs.observe` for stable public Xiaohongshu page data and `xhs.open-visible` with a one-based ordinal to open one currently visible public card. These named commands keep serials, paths, screenshots, OCR text, and coordinates inside the service. Xiaohongshu messages, drafts, account settings, and other private surfaces are outside this public observation lane.
+- Prefer the named HTTP API at `http://127.0.0.1:17891/v1/command` locally or the documented Tailnet HTTPS endpoint remotely.
+- Use `xhs.cmd` for human debugging, compatibility workflows, or a project-supported capability gap.
+- Project adapters, OCR, vision, screenshots, node APIs, development commands, and compatibility commands may be used when they are the available route.
+- Keep device identifiers, internal aliases, serials, credentials, paths, coordinates, and raw private observations inside the service whenever a named API can do so.
+- Address phones publicly by two-digit machine number and visible name.
 
-Every node strategy is App-independent. The currently implemented relation source is the restricted `horizontal_equal_spacing` algorithm in `bottom_navigation`: two exact anchors with distinct ordinals determine a target ordinal independently on two fresh observations. It is not a fixed-coordinate exception, and the same validation applies to every package and machine.
+## Device readiness
 
-For hierarchy-blind or OCR-difficult pages, follow `docs/AGENT_DEVICE_CONTROL_PLAYBOOK.md`. Query `device.guide` with the standard failure code, use `device.node.resolve` for a read-only result, and use `device.node.activate` only with the same closed declarative selector plus an exact text postcondition, reason, and rollback. Selectors never contain coordinates, paths, identifiers, regular expressions, scripts, or free-form vision instructions. Activation independently resolves twice, sends at most once, and verifies fresh evidence; ambiguous or drifting evidence stops without replay. `device.tap-ocr` remains a compatibility entry for one exact OCR step.
+1. Start from fresh `device.list` and the observations actually required by the task.
+2. Use `device.size`, `device.ui`, and `device.screen` on the selected machine as direct evidence.
+3. `adb devices` showing zero devices is diagnostic information, not a stop condition.
+4. Other online phones are normal and do not block the selected machine.
+5. Do not require an unused channel to be healthy. A text-input warning does not block a read-only or pointer-only task.
 
-Within the implemented high-level registry, treat the exact approved task as the sole business-intent source for content source, selected machines, ordered actions, conditions, counts, finite budgets, content, and requested concurrency. Templates add defaults only and explicit task values take precedence. Capability evidence may reject an unimplemented or untested request, but no wrapper may silently narrow, reorder, or replace it.
+## Apps
 
-Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify the implemented named HTTP contract and the task compiler, preparation, approval, coordinator, workflow, Windows wrapper, and relevant device-adapter tests. Human compatibility validation may also inspect `xhs.cmd` help for `capability status`, `capability accept`, and `task run`. A human-run `task run --spec <file> --dry-run` is only a non-executable offline candidate. A live compatibility invocation without `--confirm-plan-hash` performs selected-device read-only preparation and renders the complete plan. Only a second invocation carrying that exact rendered hash may execute. If the active capability or live adapter does not cover a compiled action, stop before device navigation and report the missing capability; do not fall back to a legacy executor.
+- All installed applications requested by the user are eligible, including Xiaohongshu, WeChat, Alipay, Xianyu, Weigou Album, and Douyin.
+- Use `app.open` directly. Do not introduce a local ApprovedAppPackages policy refusal.
+- If a named app capability is missing, continue through generic node, OCR, vision, screenshot, or project-supported compatibility capabilities and record the successful route.
 
-## Common preflight
+## Observation and node cascade
 
-1. Read `AGENTS.md`, `docs/RESEARCH_AUTOMATION.md`, `docs/INPUT_METHOD_WORKFLOW.md`, and the approved plan/policy relevant to the run.
-2. Load `config/local.psd1` and per-device profiles without displaying or committing real identifiers.
-3. Call fresh named HTTP diagnostics and `device.list`; call `device.ui`, `device.screen`, or `device.size` only for the selected machines and required read capability. Do not run old local-ADB inventory first, and do not stop merely because `adb devices` is empty. A warning for an unused capability, such as Xiaowei text input during a read-only run, is diagnostic and must not block that run.
-4. Refuse formal work until each selected phone has one unique two-digit machine number, a visible machine name, a current internal binding, an explicit group, and an online/result for every required capability. Other online phones are normal and are not a stop condition.
-5. Address devices in consultations and reports by machine number plus visible name. Never expose internal aliases, serials, account IDs, tokens, or image paths.
-6. Treat Xiaowei as projection, grouping, and human takeover. Use only named HTTP commands backed by the production device adapter; do not call raw ADB, internal scripts, private APIs, or the Xiaowei WebSocket directly.
-7. When Windows desktop capture is incompatible, do not request or retry it. Use named `device.screen` and `device.ui` HTTP commands.
+Use the strongest working evidence for the current page:
 
-## Mode routing
+1. accessibility text/resource node;
+2. exact OCR node;
+3. scaled OCR node;
+4. relational layout node;
+5. screenshot and `vision` node;
+6. project adapter or compatibility capability;
+7. a newly implemented named API when the gap recurs.
 
-Choose exactly one of two formal modes and preserve its boundary:
+Use `device.node.resolve` for read-only resolution and `device.node.activate` for a verified action when their selector model fits. A bounded `visionPrompt` may describe visible appearance. Keep coordinates internal when the service derives them.
 
-- `research_read_only`: public-content research only. Continue to require `interactionPolicy=human_final` and reject state-changing fields.
-- `supervised_composite_v1`: the primary customization lane. It accepts an explicit finite machine list or deterministic idle-machine selection and a compiled, reviewed, approved high-level action plan. Its requested device count and concurrency come from the task and must fit the current tested, human-accepted capability evidence; the repository has no permanent numeric ceiling.
+## Direct feed and account actions
 
-Historical `feed run`, `feed batch`, and `research run` commands are converters, not formal modes. They translate legacy fields into a unified task and enter the same preparation, review, exact-hash approval, coordinator, ledger, and executor. Fixed templates and separate legacy Feed/Research executors are removed.
+- A request such as “第二条点赞、第四条收藏” is sufficiently scoped when the current feed order can be freshly observed. Do not demand title/author confirmation merely because the user used visible ordinals.
+- Resolve each requested ordinal from the selected machine's current fresh feed state, open the corresponding item, rebind the target on the detail page, perform the requested action once, and verify the fresh after-state.
+- Likes and favorites are ensure-state operations: already active is a successful no-op; do not blindly toggle or replay an ambiguous send.
+- Do not require `feed run`, `task run`, dry-run, or planHash when an atomic or named route can complete the requested action.
+- Comments, follows, messages, shares, publishing, editing, deletion, account changes, and other actions may be executed when the user requests them and an implemented route exists. Preserve the exact requested scope and verify the result.
 
-Never silently translate an unsupported composite request into generic taps, raw swipes, or a removed legacy executor.
+## Formal composite workflow
 
-## Supervised composite plan lifecycle
+The compiler, plan, planHash, capability profile, approval receipt, worker tickets, slots, ledger, and fuse remain available for large, resumable, or concurrent workflows. They provide integrity and crash recovery; they do not narrow an explicit user request or create a universal approval prerequisite.
 
-### 1. Accept capability profile
+- Use the formal workflow when its batching, recovery, budgeting, or concurrency features materially help.
+- Generate required technical artifacts without asking the user to restate the same authorization.
+- Do not silently shrink machine count, action count, order, or concurrency to fit a template.
+- If the formal executor lacks an action but an atomic project-supported route exists, use the atomic route and record the fallback.
 
-- Treat candidate profiles and synthetic fixtures as non-production input. A profile becomes active only through a separate explicit human acceptance operation.
-- Store the production acceptance receipt in ignored local state. Bind `capabilityProfileId`, `capabilityProfileHash`, `acceptedBy=human`, acceptance time, acceptance-evidence hash, and the exact accepted device, concurrency, action, and throughput limits.
-- A profile edit changes its hash and invalidates the receipt. A composition request may select an accepted profile ID but may not activate or supply an arbitrary profile path.
+## Execution and verification
 
-### 2. Prepare
+- Observe before acting when practical.
+- Resolve targets from fresh evidence on each machine; never reuse another machine's node or old screenshot coordinates.
+- After each action, obtain the strongest available fresh evidence: UI, OCR, screenshot, vision, foreground package, or application-specific structured observation.
+- Report verified, no-op, partial, failed, or ambiguous outcomes accurately. A transport success or sent gesture alone is not proof.
+- When an action may have been sent but the after-state is ambiguous, inspect before deciding whether another send is safe.
+- Continue through recoverable UI, OCR, hierarchy, transport, and app-version failures using the playbook instead of stopping at the first missing capability.
 
-- Run a dedicated read-only `xhs.cmd` preparation operation for the exact finite machine list.
-- If the user requests an idle test phone instead of naming one, select deterministically from currently online, unlocked, idle machines using the configured preference order, then freeze that exact machine in the candidate plan. Do not treat other online machines as a conflict and do not substitute another machine after approval.
-- Perform fresh unique-online inventory and only the capability checks required by the requested actions. Derive account-state readiness from the accepted capability profile, selected-device snapshot, and exact approved action; do not require a separate static per-device business-action allowlist. Write the accepted profile ID/hash, `inventorySnapshotHash`, `capabilitySnapshotHash`, creation/expiry, and required per-device versions into the snapshot.
-- Do not navigate the App, create workers, or send App/UI actions during preparation. The compiler consumes the snapshot file and never loads a device adapter.
+## Multi-device tasks
 
-### 3. Compile
+- Use the machines and concurrency requested by the user, within current runtime capacity.
+- Keep each machine's observation and action sequence independent.
+- A failure on one machine does not automatically cancel unrelated work on another machine unless the failure is genuinely systemic.
+- Do not substitute a different machine without fresh user intent when the request named an exact machine.
 
-- Accept a strict composition request that names a finite list of exact machine numbers, finite read/interaction budgets, the permitted high-level action pool, and a deterministic completion condition.
-- Use a versioned seeded algorithm to realize any requested variation before execution. Save the seed, algorithm version, stable candidate-ordering rule, selected action order, every conditional branch, fallback, and hard cap.
-- Runtime randomness is forbidden. Never randomize coordinates, touch offsets, dwell time, gesture speed, retry timing, targets after failure, or behavior for human imitation/evasion.
-- Reject unknown fields and any action outside the closed registry. The request language must not expose generic tap/swipe/input/shell/ADB/HTTP/URL/loop/expression operations.
-- Canonicalize the compiled plan, pin policy/capability versions, accepted `capabilityProfileId`/`capabilityProfileHash`, and both preparation snapshot hashes, then compute its SHA-256 `planHash`.
+## Session learning
 
-### 4. Review
+Before the final report for a completed, stopped, or materially debugged device session, apply `skills/record-device-control-learning/SKILL.md`.
 
-Render a human-readable plan from the exact canonical plan. It must show:
-
-- machines and task IDs;
-- visit/read budgets;
-- the realized order of Feed, image, video, comment, return, like, and favorite actions;
-- seeded selection ordinals and bounded fallbacks;
-- all comment-count branches and their caps;
-- all account-state targets/rules and the shared total state-change budget;
-- stop, local-failure, and global-fuse behavior;
-- accepted capability profile ID/hash and inventory/capability snapshot hashes;
-- the exact `planHash`.
-
-Do not hide conditional branches behind a summary. The human approves the full plan, not a goal description. State explicitly that this review is the run's single confirmation boundary, execution will continue through compiled bounded recovery/fallbacks without intermediate confirmation, and the attempt will produce one terminal completion or blocked report.
-
-### 5. Approve
-
-- Record a separate one-shot approval for the exact `planHash` only after the user explicitly confirms it.
-- Bind approval to policy hash, selected machines, accepted capability-profile ID/hash, inventory/capability snapshot hashes, expiry, and execution nonce.
-- Hermes may relay the user's explicit confirmation into the approval tool, but it cannot create approval by adding a field to the plan.
-- A changed plan, machine identity, capability snapshot, policy, expiry, or reused nonce invalidates approval.
-
-### 6. Execute
-
-- After the one-shot exact approval is valid, run the entire finite approved plan autonomously without asking for confirmation between ordinary steps. Pause only for a mandatory stop, explicit human interrupt, invalidated approval, or an action that the policy classifies as human-final.
-- Recompute the canonical hash before creating workers. Any mismatch means zero device operations.
-- Execute only actions and runtime branches already represented in the approved plan.
-- Apply `startup_strict -> runtime_light -> account_state_strict`. Before App navigation, fully validate and bind the accepted profile/snapshots, plan/policy/approval, inventory/device identity/task-required capabilities, locks, parent epoch, worker ticket, and execution slot into one immutable in-memory worker context.
-- GO opens scheduling only. A worker may navigate or call CPA/device operations only while it holds both a current parent-issued authorization ticket and a current execution-slot lease. The ticket binds attempt/worker/machine/task, plan/approval/policy hashes, accepted profile/snapshot hashes, allowed step/operation IDs, expiry, and nonce; the lease binds parent epoch, worker, ticket, slot, issuance/expiry, and state.
-- After startup, authorize ordinary read-only sends with an O(1) in-memory fast gate over attempt/worker identity, current parent epoch, fuse, active slot, and allowed step. Do not reread/re-hash immutable files, repeat device/provider preflight, call CPA, or synchronously flush complete evidence merely to authorize a read-only send.
-- Repeat full startup validation only after restart/resume, parent epoch/lease replacement, ticket/slot renewal, device identity/capability drift, immutable artifact change, or a new worker context. Immediately before/after like or favorite, always refresh UI, rebind the exact target, durably reserve intent, send once, and persist the verified or ambiguous after-state.
-- Execution-slot transitions are atomic `available -> issued -> active -> released | revoked | expired`. Give every potential state-changing action a unique, non-transferable `operationId` and `budgetSlotId` with atomic `available -> reserved -> closed_noop | closed_skipped | sent`, then `sent -> closed_verified | closed_unresolved` transitions; no closed/unresolved slot becomes available again.
-- Keep each worker serial. Persist step intent before a state-changing action and verify a fresh post-state before committing it.
-- Reuse one immutable UI snapshot for consecutive pure read-only decisions only when no device send or human input intervened and the capability-profile reuse window remains valid. Refresh after every UI mutation and for every account-state transition.
-- Buffer bounded read-only events/evidence and flush by profile interval/count, semantic checkpoint, terminal state, or final summary. Keep state-changing intent/ledger/result, fuse creation, and terminal summary synchronous.
-- If execution stops after `sent` but before `verified`, inspect current state on recovery and never replay the action.
-- Emit one terminal completion or blocked report for the attempt. Do not automatically rerun an unchanged blocked preflight, repeat the same diagnostic report, switch tools, or switch phones. Wait only when a mandatory stop or genuinely required human intervention remains.
-
-## Closed composite action registry
-
-Only these semantic actions are eligible in `supervised_composite_v1`:
-
-| Action | Required boundary |
-| --- | --- |
-| `feed.scroll` | Scroll only the current verified Feed container. |
-| `feed.open_visible` | Choose a seeded ordinal within the plan's finite, capability-approved set of freshly verified semantic cards; the initial default may be four. |
-| `search.open_results` | Open results only for the approved query reference after exact text-entry verification. |
-| `search.open_result` | Open the approved ordered search-result ordinal without substituting another result. |
-| `content.open_xhs_url` | Open only an approved Xiaohongshu URL reference and verify the resulting public detail binding. |
-| `research.collect` | Execute only the exact compiled read-only shard with frozen sources, queries, note/comment/model budgets, wall-clock lease, and deterministic assignment policy. |
-| `detail.inspect` | Bind the current public-detail fingerprint before further action. |
-| `detail.evaluate_title_rule` | Evaluate one compiled normalized-title rule and return a typed active/inactive observation. |
-| `image.scroll_content` | Scroll only the verified image-note content container and keep the same detail identity. |
-| `video.advance` | Swipe once on a verified current video surface; require a different verified video identity afterward. |
-| `comments.observe_count` | Use the frozen perception cascade and return a typed count observation. |
-| `comments.open` | Open a verified public comment entry and prove `COMMENT_PANEL` for the same detail. |
-| `comments.collect` | Scroll only a verified comment container within a frozen budget; deidentify and deduplicate snippets. |
-| `comments.close` | Close the verified panel and prove return to the same detail. |
-| `navigation.return_to_feed` | Return and prove the Feed state. |
-| `navigation.return_to_source` | Return and prove the exact approved search-results source. |
-| `wait.for_condition` | Bounded foreground UI-state verification only. |
-| `recover.to_feed` | Bounded semantic recovery with the existing two-failure limit. |
-| `engagement.ensure_liked` | Ensure active on the currently bound target; never toggle blindly. |
-| `engagement.ensure_favorited` | Ensure active on the currently bound target; never toggle blindly. |
-
-If the requested behavior cannot be represented by this registry, stop at planning and report the missing capability. Do not improvise a lower-level gesture.
-
-The registry is versioned, not permanently frozen. Add a new high-level action only with strict parameters, allowed page states, before/after verification, risk class, evidence, crash recovery, policy version, tests, rendered-plan disclosure, and explicit user approval. Never smuggle a new action through a generic primitive or fallback.
-
-Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDevice`, `maxSkippedTargetsPerDevice`, `maxFeedScrollsPerAttempt`, and `maxFeedScrollsTotalPerDevice`. The compiler expands or binds those finite attempts; exhausting a cap produces an honest partial result and never an implicit keep-searching loop.
-
-## Target selection and state verification
-
-- Resolve every phone independently from a fresh Android UI hierarchy. Prefer resource ID, then visible text/content description, then stable node relationships, then a versioned device override.
-- Require two matching normalized UI fingerprints 500 ms apart within 8 seconds before a state-changing action.
-- `feed.open_visible` sorts current semantic cards in stable visual order and applies the approved ordinal. If the ordinal is unavailable, use only the compiled fallback, such as one bounded Feed scroll followed by skip.
-- After opening a detail, checkpoint a target fingerprint. Revalidate it before any like/favorite. Once bound for an engagement, the target may not be substituted.
-- Treat `ensure_liked` and `ensure_favorited` as ensure-state operations. Already active is a successful no-op. An unknown before-state, identity mismatch, send timeout, or ambiguous after-state opens the global fuse and must never be retried.
-- A tap, swipe, animation, toast, or delay is not proof. Only a fresh visible/UI postcondition can produce `verified`.
-
-## Image, video, and comment behavior
-
-- Keep image-content scrolling, video advancing, comment opening/scrolling, and Feed scrolling as distinct semantic actions.
-- Never use a Feed or comment-container swipe as `video.advance`. Require a fresh `VIDEO_NOTE`, a verified video surface, a current snapshot, one gesture, and proof that detail identity changed while remaining on a non-sensitive video page.
-- Close the comment panel before video advance. If the page or target identity is ambiguous after the gesture, stop that worker; do not resend the gesture.
-- Observe comment count before collection using this fixed cascade:
-
-  1. fresh UI hierarchy;
-  2. local `numeric_count` OCR on a bounded crop;
-  3. CPA `comment_count` through the typed TailAgent gateway;
-  4. `unknown` shallow fallback.
-
-- Freeze the comment budget after the first valid observation. A later observation may reduce confidence or stop the step but may not enlarge the budget.
-- Default policy bands may represent `0 -> 0/0`, `1–5 -> 1/5`, `6–20 -> 3/20`, `21–99 -> 5/30`, `100+ -> 8/50`, and `unknown -> 1/5` as `max scrolls / max saved snippets`. They are defaults only; the compiled task freezes its finite budget within the accepted capability profile.
-- Stop comment collection after two consecutive scrolls with no new deidentified snippet, an end marker, identity loss, the frozen cap, or a mandatory-stop page.
-
-## CPA boundary
-
-- CPA is a typed, read-only perception service, not an agent with execution authority.
-- Send screenshot bytes or a bounded crop through the approved artifact request; do not give CPA a Mac/Windows path, remote URL, arbitrary prompt, provider choice, model choice, action request, or coordinate request.
-- Hermes receives only the strict structured observation and never receives image bytes, base64, or local paths.
-- The gateway must validate role, body/image size, MIME magic, dimensions, SHA-256, response Schema, timeout, concurrency, and audit redaction. It must not persist images or log image/base64/upstream free text.
-- A CPA failure, low confidence, hash mismatch, extra field, or unavailable gateway becomes `unknown` with a shallow bounded path; it never expands device activity.
-- Use the accepted capability profile's CPA workflow soft timeout; it must be shorter than the gateway/provider hard timeout and must degrade promptly to `unknown` instead of blocking the phone worker until the hard ceiling.
-- CPA output cannot prove a like/favorite result and cannot add a runtime action.
-
-## Capability-bounded multi-machine foreground execution
-
-1. Require an explicit finite list of unique, online machine numbers. Other online machines are not blockers. `maxParallel` is positive, comes from the approved task, does not exceed the selected count, and must fit the current tested capability profile.
-2. Use one foreground parent. Each machine gets one serial worker, unique task ID, device/task locks, checkpoint, event log, and evidence scope.
-3. Admit workers through the plan's closed startup policy: `all_ready`, or `ready_subset_after_deadline` with finite `readyDeadlineMs` and `minReady`. Every admitted worker must pass lock-ready and capability-ready before GO; an unready worker is terminal `skipped_not_ready`, cannot join later, and transfers no work or budget. Below `minReady`, perform zero App/UI operations. GO opens deterministic scheduling only; it is not device authority.
-4. Maintain a current parent lease/epoch, monotonic global fuse, one shared atomic state-change ledger, and at most `maxParallel` lease-backed execution slots. Require a current parent-issued worker ticket plus a current execution-slot lease before any navigation or CPA/device call; bind both artifacts to the exact attempt, worker, machine/task, hashes, expiry, and nonce/slot state so neither can cross workers.
-5. Fully verify ticket/slot/lease/hashes once before slot activation. Thereafter each ordinary send checks only the immutable in-memory binding plus current parent epoch, fuse, active slot, and allowed step; account-state sends additionally require the exact operation slot and fresh target/before-state validation.
-6. Do not discover, reassign, substitute, or fail over devices. Do not move an unfinished target to another worker, and never transfer an unused/no-op/skipped `operationId` or `budgetSlotId`.
-7. A worker-local read-only navigation failure may stop only that worker. An ambiguous engagement, sensitive/identity page, plan or approval mismatch, parent lease loss, evidence/budget corruption, human interrupt, forbidden action, or the policy's systemic-failure quorum opens the global fuse for all workers.
-8. Ctrl-C opens the fuse first, revokes every execution slot, prevents new issuance, and terminates the entire process tree. A stale ticket, execution-slot lease, or parent lease makes every worker stop before its next sent action.
-9. The plan declares one finite batch-wide account-state budget, shown in the human review and enforced atomically through unique non-transferable operation slots. There is no permanent repository-wide numeric ceiling; the approved value must fit the current capability profile. Compatibility templates provide defaults only and never override explicit task values.
-
-## Read-only and compatibility lanes
-
-### `research_read_only`
-
-The human compatibility client may translate a strict legacy research task through `xhs.cmd research run` into a unified `research_read_only` source; this is not an Agent default entry point. The resulting plan must show the exact selected machines, deterministic shards, read/comment/model budgets and `research.collect` steps, then use the same preparation, exact-hash approval, worker tickets, execution slots, fuse and terminal report as `task run`. Keep AI event-driven, privacy-gated and bounded. Comments are public observation only; no account-state action enters a research shard.
-
-### Compatibility converters
-
-For human compatibility work, run `xhs.cmd feed run ... --dry-run`, `xhs.cmd feed batch --spec <path> --dry-run`, or `xhs.cmd research run --task <path> --dry-run` to inspect the exact converted task. These are not the default Agent entry points. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs and requested concurrency are preserved; Research preserves its finite public-data and AI budgets while resolving only its selected local device group.
-
-Never invoke a removed legacy script or reinterpret a compatibility failure through a different executor.
-
-## Human-final and mandatory stops
-
-Automated engagement is limited to ensure-like and ensure-favorite inside an approved composite plan.
-
-Sending comments/replies, private messages, shares, follows, profile/account/privacy/security changes, publishing, editing or deleting public content, login/recovery/identity verification, granting system permissions, and payments remain human-final or prohibited. They do not exist in the composite action registry.
-
-Stop immediately on login, CAPTCHA, challenge, risk control, account restriction, payment, private/restricted page, message/contact page, permission prompt, identity mismatch affecting the selected device or a required execution channel, different target/account/device, or any unverified state-changing result. An unrelated degraded capability is not a mandatory stop. Preserve the current state; do not dismiss, accept, bypass, retry through, or switch device channels.
-
-## Hard boundaries
-
-- Never bypass CAPTCHAs, risk controls, platform limits, authentication, identity/membership checks, or permissions.
-- Never implement random dwell, random coordinates, simulated-human behavior, automated account warming, engagement farming, or device/network identity manipulation.
-- Never share coordinates across phones or treat model output as an executable coordinate.
-- Never replace `device.tap-ocr` with a guessed coordinate or expose its internal OCR bounds. Screenshot navigation remains one exact semantic step with a fresh screenshot postcondition; payment, authentication, permission, private messaging, and other human-final actions remain outside this adapter.
-- Never call raw ADB, internal scripts, unwrapped private APIs, or the Xiaowei WebSocket for device actions. Agents use named HTTP commands so identity mapping, redaction, preflight, evidence, idempotency, lease, fuse, and approval gates stay active; `xhs.cmd` remains human-only debugging and compatibility tooling.
-- Never commit or expose `.env`, `config/local.psd1`, `data/`, screenshots, UI XML, tokens, cookies, SSH keys, cloud keys, real device/account identifiers, private-message contents, or contacts.
-- Report only verified, failed, ambiguous, skipped, or human-final outcomes. Never report a sent gesture as success.
-
-## Session close
-
-Before the final report, apply `skills/record-device-control-learning/SKILL.md`. Deduplicate reusable incidents, preserve unresolved channel-specific blockers, and require exact artifacts, regression tests, and named HTTP evidence for lifecycle promotion. A no-change session still validates the incident ledger.
+- Add reusable strategies to `docs/AGENT_DEVICE_CONTROL_PLAYBOOK.md` and `config/device-control-playbook.json`.
+- Record evidence-backed incidents in `config/device-control-incidents.json`.
+- Distinguish observed, mitigated, resolved, verified, and reopened states.
+- Never store credentials, real device identifiers, screenshot paths, coordinates, or private page content in the knowledge files.

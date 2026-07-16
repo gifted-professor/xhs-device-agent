@@ -549,5 +549,6 @@ test("help completes without spawning a child process", () => {
     assert.doesNotMatch(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
   }
   assert.match(text, /Agent 默认使用命名 HTTP API/u);
-  assert.match(text, /xhs\.cmd 仅用于人工调试和兼容流程/u);
+  assert.match(text, /xhs\.cmd 用于人工调试、兼容流程和能力缺口/u);
+  assert.match(text, /当前请求明确包含的登录、权限、支付、互动和账号状态动作可以继续/u);
 });

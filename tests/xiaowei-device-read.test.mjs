@@ -365,6 +365,100 @@ test("device.node.resolve uses two fresh observations and exposes no coordinates
   }
 });
 
+test("device.node.resolve vision uses two fresh screenshots and keeps model bounds private", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-node-vision-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-node-vision");
+  const hierarchy = '<hierarchy><node package="com.example.app" bounds="[0,0][1080,2400]" /></hierarchy>';
+  let visionCalls = 0;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "node-resolve", package: "com.example.app",
+      selector: {
+        label: "Profile", role: "tab", sources: ["vision"],
+        visionPrompt: "person-shaped profile tab in the bottom navigation",
+      },
+      endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      sendRequest: async (request) => {
+        if (request.action === "pullFile") {
+          await writeFile(request.data.savePath, SCREEN_PNG);
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        if (request.data?.command === "uiautomator dump /dev/tty") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: hierarchy } };
+        }
+        if (request.data?.command === "wm size") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: "Physical size: 1080x2400" } };
+        }
+        if (request.data?.command?.startsWith("if [ -s")) {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: String(SCREEN_PNG.length) } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: null };
+      },
+      cloudVision: async ({ imagePath, promptText, instruction }) => {
+        visionCalls += 1;
+        assert.match(imagePath, /node-resolve-(?:before|guard)\.png$/u);
+        assert.match(promptText, /2x2 pixel marker/u);
+        assert.match(instruction, /Profile/u);
+        return { content: JSON.stringify({
+          matches: visionCalls === 1
+            ? [{ left: 810, top: 2100, right: 900, bottom: 2190 }]
+            : [{ left: 825, top: 2115, right: 885, bottom: 2175 }],
+        }) };
+      },
+      localOcr: async () => ({ matches: [], ocrAvailable: true }),
+      delay: async () => {},
+    });
+    assert.equal(visionCalls, 2);
+    assert.deepEqual(result, {
+      machine: "02", status: "resolved",
+      node: { label: "Profile", role: "tab", group: null, ordinal: null, source: "vision", unique: true },
+      evidence: { foregroundPackageVerified: true, freshObservations: 2, coordinateExposed: false },
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+    assert.doesNotMatch(JSON.stringify(result), /(?:secret-device-identifier|"(?:x|y|left|top|right|bottom|path)")/iu);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("device.node.resolve vision reports missing configuration instead of falling into relation", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-node-vision-missing-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-node-vision-missing");
+  const hierarchy = '<hierarchy><node package="com.example.app" bounds="[0,0][1080,2400]" /></hierarchy>';
+  try {
+    await assert.rejects(() => runXiaoweiDeviceRead({
+      action: "node-resolve", package: "com.example.app",
+      selector: { label: "Profile", role: "tab", sources: ["vision"] },
+      endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      sendRequest: async (request) => {
+        if (request.action === "pullFile") {
+          await writeFile(request.data.savePath, SCREEN_PNG);
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        if (request.data?.command === "uiautomator dump /dev/tty") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: hierarchy } };
+        }
+        if (request.data?.command === "wm size") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: "Physical size: 1080x2400" } };
+        }
+        if (request.data?.command?.startsWith("if [ -s")) {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: String(SCREEN_PNG.length) } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: null };
+      },
+      cloudVision: async () => { throw new Error("设置 VISION_API_URL、VISION_API_KEY、VISION_MODEL"); },
+      localOcr: async () => ({ matches: [], ocrAvailable: true }),
+      delay: async () => {},
+    }), /CAPABILITY_MISSING.*Vision service is not configured/u);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("device.node.activate re-resolves, sends one event, and verifies a fresh text postcondition", async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-node-activate-"));
   const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-node-activate");

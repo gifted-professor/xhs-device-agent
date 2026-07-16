@@ -1,5 +1,5 @@
 const SAFE_ROLES = new Set(["control", "tab", "button", "item"]);
-const SAFE_SOURCES = new Set(["accessibility", "ocr", "relation"]);
+const SAFE_SOURCES = new Set(["accessibility", "ocr", "relation", "vision"]);
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -33,10 +33,10 @@ export class DeviceNodeError extends Error {
 }
 
 export function validateDeviceNodeSelector(value) {
-  exactKeys(value, new Set(["label", "role", "sources", "relation"]), "selector");
+  exactKeys(value, new Set(["label", "role", "sources", "relation", "visionPrompt"]), "selector");
   const label = cleanText(value.label, "selector.label");
   if (!SAFE_ROLES.has(value.role)) throw new Error("selector.role is invalid");
-  if (!Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > 3
+  if (!Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > SAFE_SOURCES.size
       || value.sources.some((source) => !SAFE_SOURCES.has(source))
       || new Set(value.sources).size !== value.sources.length) {
     throw new Error("selector.sources is invalid");
@@ -71,12 +71,54 @@ export function validateDeviceNodeSelector(value) {
     throw new Error("selector.relation requires the relation source");
   }
 
+  let visionPrompt;
+  if (value.sources.includes("vision")) {
+    visionPrompt = cleanText(value.visionPrompt ?? label, "selector.visionPrompt", 4096);
+  } else if (value.visionPrompt !== undefined) {
+    throw new Error("selector.visionPrompt requires the vision source");
+  }
+
   return {
     label,
     role: value.role,
     sources: [...value.sources],
     ...(relation ? { relation } : {}),
+    ...(visionPrompt ? { visionPrompt } : {}),
   };
+}
+
+export function parseVisionNodeResponse(value, dimensions) {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try { parsed = JSON.parse(parsed); } catch {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Vision returned invalid JSON");
+    }
+  }
+  try {
+    exactKeys(parsed, new Set(["matches"]), "vision observation");
+  } catch {
+    throw new DeviceNodeError("CAPABILITY_MISSING", "Vision returned an invalid observation shape");
+  }
+  if (!Array.isArray(parsed.matches) || parsed.matches.length > 12
+      || !Number.isSafeInteger(dimensions?.width) || !Number.isSafeInteger(dimensions?.height)
+      || dimensions.width < 1 || dimensions.height < 1) {
+    throw new DeviceNodeError("CAPABILITY_MISSING", "Vision returned an invalid observation shape");
+  }
+  const matches = parsed.matches.map((match) => {
+    try {
+      exactKeys(match, new Set(["left", "top", "right", "bottom"]), "vision match");
+    } catch {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Vision returned an invalid node match");
+    }
+    if (!validBounds(match) || match.right > dimensions.width || match.bottom > dimensions.height) {
+      throw new DeviceNodeError("CAPABILITY_MISSING", "Vision returned node bounds outside the display");
+    }
+    return { left: match.left, top: match.top, right: match.right, bottom: match.bottom };
+  });
+  if (matches.length > 1) {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", "Vision exposed multiple matching nodes");
+  }
+  return matches[0] ?? null;
 }
 
 function validBounds(value) {

@@ -4,7 +4,9 @@
 
 本手册定义 Hermes 或其他 Agent 通过命名 HTTP API 控制一台或多台手机时的固定处理方法。目标不是为单个 App 累积补丁，而是把每次真实失败归类为标准故障，并沿确定性的能力阶梯解决。
 
-Agent 只调用项目命名 HTTP API。禁止裸 ADB、效卫私有 WebSocket、未经网关封装的私有命令、调用方坐标、跨设备节点复用和固定坐标补丁。
+Agent 默认调用项目命名 HTTP API。命名能力缺失时，继续使用项目已有的兼容、开发或私有适配入口完成当前任务，同时记录缺口并沉淀新的命名能力。用户当前请求中明确写出的机器、App、目标、动作、次数和顺序就是本次授权，不再追加 dry-run、planHash、白名单、能力档案或逐步确认。
+
+身份绑定、目标唯一性、新鲜证据和动作后态仍需验证。这些验证用于避免点错设备、点错节点或重复发送，不是权限审批；不能把可靠性失败改写成“需要用户再次授权”。
 
 ## 总协议
 
@@ -27,7 +29,7 @@ device.list / device.size
         v
 命名高层观察，或现有 device.ui + device.screen
         |
-        +-- 敏感、登录、验证码、权限、支付确认、私信等 --> HUMAN_REQUIRED
+        +-- 当前请求明确包含的登录、权限、支付确认、私信或状态变化 --> REQUEST_SCOPED_ACTION
         |
         +-- 唯一无障碍节点 --> ACCESSIBILITY_EXACT_NODE
         |
@@ -39,9 +41,13 @@ device.list / device.size
                 |
                 +-- 仍未找到且存在可验证布局关系 --> RELATIONAL_LAYOUT_NODE
                 |
+                +-- 需要视觉语义定位 --> VISION_NODE
+                |
                 +-- 本地图标节点已实现 --> LOCAL_ICON_NODE
                 |
-                +-- 缺失、重复或漂移 --> HUMAN_REQUIRED
+                +-- 命名能力缺失 --> PROJECT_COMPATIBILITY_ROUTE -> 记录并补命名能力
+                |
+                +-- 目标仍不唯一、动作结果不确定或确实缺少用户选择 --> HUMAN_REQUIRED
 ```
 
 机器可读版本位于 `config/device-control-playbook.json`。Agent 可调用：
@@ -88,6 +94,19 @@ device.list / device.size
 
 关系节点必须满足：锚点文字分别唯一、锚点序号不同、同一水平行、单位间距一致、目标位于受限区域、两份新鲜证据独立推导结果稳定。调用方不能提交推导结果或坐标。
 
+视觉节点：
+
+```json
+{
+  "label": "个人页",
+  "role": "tab",
+  "sources": ["accessibility", "ocr", "vision"],
+  "visionPrompt": "底部导航栏中的人形个人页图标"
+}
+```
+
+`vision` 使用服务端新鲜截图和 OpenAI-compatible 视觉服务。显式的 `VISION_*` / `AI_*` 配置优先；缺失时复用 Hermes `auxiliary.vision` 的模型、基础地址、超时和 `.env` 凭据，基础地址会在服务内部规范为 `/v1/chat/completions`。视觉返回值严格限制为零个、一个或多个像素矩形；零个继续失败处理，多个返回 `NODE_AMBIGUOUS`。单个矩形只用于推导固定大小的内部安全中心标记，第二份新鲜截图必须重新定位到稳定中心；模型外框大小变化不会伪造布局漂移，中心漂移仍会失败关闭。单次上游请求和双观察网关命令都有硬超时。公开 API 只返回语义节点和 source，不返回模型原文、截图路径或内部坐标。
+
 ## 节点 API
 
 只读解析：
@@ -133,15 +152,17 @@ device.list / device.size
 ## 标准故障处理
 
 - `UI_EMPTY`：继续本地截图感知；不是任务停止条件。
-- `NODE_NOT_FOUND`：按 OCR、放大 OCR、关系节点顺序降级。
-- `OCR_MISS`：只允许精确放大或受限关系推导，不允许近似文字点击。
-- `OCR_AMBIGUOUS` / `NODE_AMBIGUOUS`：停止；不能自动选择第一个结果。
-- `LAYOUT_DRIFT` / `FOREGROUND_DRIFT`：停止；不能复用旧节点或换坐标补点。
+- `NODE_NOT_FOUND`：按 OCR、放大 OCR、关系节点、视觉节点顺序降级。
+- `OCR_MISS`：继续精确放大、受限关系推导或视觉节点定位。
+- `OCR_AMBIGUOUS` / `NODE_AMBIGUOUS`：先用独立视觉证据消歧；仍不唯一时才询问目标，不能自动选择第一个结果。
+- `LAYOUT_DRIFT` / `FOREGROUND_DRIFT`：重新观察并换独立策略；不能复用旧节点或盲目补点。
 - `POSTCONDITION_MISS`：动作若已发送则结果不确定，禁止重放。
-- `SENSITIVE_SURFACE`：保存当前状态并交给人，不能关闭、接受或绕过。
-- `IDENTITY_DRIFT`：零设备操作，重新进行机器身份验收。
-- `CAPABILITY_MISSING`：返回未实现能力，不能退回私有命令或裸 ADB。
+- `SENSITIVE_SURFACE`：若当前请求已经明确包含该动作，直接按请求范围执行，不再追加第二次确认；只有缺少会改变结果的真实选择时才询问。
+- `IDENTITY_DRIFT`：刷新设备清单并使用项目适配通道重新绑定机器；在绑定唯一前不发送动作。
+- `CAPABILITY_MISSING`：自动转入项目现有兼容、开发或私有适配入口完成任务，并把缺口沉淀为新的命名能力。
 - `TRANSPORT_FAILED`：保守停止；若无法证明未发送，不得重试动作。
+
+`HUMAN_REQUIRED` 只表示：任务目标本身缺少关键选择，或所有有界通道都已耗尽而必须人工接管。它不能用于要求重复授权、planHash、应用白名单、任务编号或逐步确认。
 
 ## 多设备规则
 
@@ -159,7 +180,7 @@ device.list / device.size
 3. 一个不包含真实设备标识和私域内容的回归测试样本；
 4. 手册、机器可读目录、API 校验和测试的同步更新。
 
-只有四项齐全，才算形成系统能力。
+只有四项齐全，才算形成系统能力。若当前仅通过真实 HTTP 验收完成临时绕行，但缺少通用修复和回归测试，必须记录为 `mitigated`，并在 `resolution` 或 `evidence.tests` 中留下补齐测试的明确路径，方便后续接手者继续推进到 `resolved`/`verified`。
 
 ## 会话收尾与故障生命周期
 

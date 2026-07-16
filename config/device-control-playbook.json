@@ -7,7 +7,10 @@
     "OCR_EXACT_NODE",
     "OCR_SCALED_EXACT_NODE",
     "RELATIONAL_LAYOUT_NODE",
+    "VISION_NODE",
     "LOCAL_ICON_NODE",
+    "PROJECT_COMPATIBILITY_ROUTE",
+    "REQUEST_SCOPED_ACTION",
     "HUMAN_REQUIRED"
   ],
   "strategies": [
@@ -40,6 +43,13 @@
       "description": "Infer one node from exact anchors using a closed layout algorithm and restricted region."
     },
     {
+      "id": "VISION_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve a visual node through explicit or Hermes auxiliary vision configuration, normalize model extents to an internal safe center, recheck it on a second fresh screenshot within bounded time, and keep coordinates internal."
+    },
+    {
       "id": "LOCAL_ICON_NODE",
       "status": "not_implemented",
       "readCommand": null,
@@ -47,11 +57,25 @@
       "description": "Resolve a locally classified icon without cloud upload or caller coordinates."
     },
     {
+      "id": "PROJECT_COMPATIBILITY_ROUTE",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Continue through an existing project-wrapped compatibility, development, or private adapter when a named high-level capability is missing; then capture the gap for a reusable named API."
+    },
+    {
+      "id": "REQUEST_SCOPED_ACTION",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Treat an action explicitly included in the current user request as authorized without adding a second approval, dry-run, plan hash, allowlist, or per-step confirmation gate."
+    },
+    {
       "id": "HUMAN_REQUIRED",
       "status": "implemented",
       "readCommand": "device.guide",
       "writeCommand": null,
-      "description": "Stop without a send and preserve current state for a human."
+      "description": "Ask only when a genuinely missing target or user choice changes the requested outcome, or when every bounded route is exhausted and physical takeover is required; never use this as a second approval gate."
     }
   ],
   "failureCodes": [
@@ -60,55 +84,55 @@
       "stage": "observe",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE"],
-      "stopConditions": ["SENSITIVE_SURFACE", "FOREGROUND_DRIFT"]
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
     },
     {
       "code": "NODE_NOT_FOUND",
       "stage": "resolve",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "LOCAL_ICON_NODE"],
-      "stopConditions": ["SENSITIVE_SURFACE", "CAPABILITY_MISSING"]
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE"],
+      "stopConditions": ["NODE_AMBIGUOUS"]
     },
     {
       "code": "OCR_MISS",
       "stage": "resolve",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "LOCAL_ICON_NODE"],
-      "stopConditions": ["OCR_AMBIGUOUS", "SENSITIVE_SURFACE"]
+      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE"],
+      "stopConditions": ["OCR_AMBIGUOUS"]
     },
     {
       "code": "OCR_AMBIGUOUS",
       "stage": "resolve",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["VISION_NODE", "HUMAN_REQUIRED"],
       "stopConditions": ["OCR_AMBIGUOUS"]
     },
     {
       "code": "NODE_AMBIGUOUS",
       "stage": "resolve",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["VISION_NODE", "HUMAN_REQUIRED"],
       "stopConditions": ["NODE_AMBIGUOUS"]
     },
     {
       "code": "LAYOUT_DRIFT",
       "stage": "recheck",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["ACCESSIBILITY_EXACT_NODE", "OCR_EXACT_NODE", "VISION_NODE", "HUMAN_REQUIRED"],
       "stopConditions": ["LAYOUT_DRIFT"]
     },
     {
       "code": "FOREGROUND_DRIFT",
       "stage": "recheck",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["ACCESSIBILITY_EXACT_NODE", "PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
       "stopConditions": ["FOREGROUND_DRIFT"]
     },
     {
@@ -122,26 +146,26 @@
     {
       "code": "SENSITIVE_SURFACE",
       "stage": "observe",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
-      "stopConditions": ["SENSITIVE_SURFACE"]
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["REQUEST_SCOPED_ACTION"],
+      "stopConditions": ["TARGET_UNSPECIFIED"]
     },
     {
       "code": "IDENTITY_DRIFT",
       "stage": "preflight",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
       "stopConditions": ["IDENTITY_DRIFT"]
     },
     {
       "code": "CAPABILITY_MISSING",
       "stage": "resolve",
-      "automatic": false,
-      "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
-      "stopConditions": ["CAPABILITY_MISSING"]
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
+      "stopConditions": ["TARGET_UNSPECIFIED"]
     },
     {
       "code": "TRANSPORT_FAILED",

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   inferHorizontalOrdinalBounds,
+  parseVisionNodeResponse,
   publicNodeDescription,
   stableNodeBounds,
   validateDeviceNodeSelector,
@@ -34,6 +35,43 @@ test("node selector accepts only closed exact strategies", () => {
   ]) {
     assert.throws(() => validateDeviceNodeSelector(selector), /unsupported|invalid|relation/u);
   }
+});
+
+test("node selector accepts vision and validates its prompt contract", () => {
+  assert.deepEqual(validateDeviceNodeSelector({
+    label: "Profile", role: "tab", sources: ["accessibility", "ocr", "relation", "vision"],
+    relation: relationSelector.relation,
+    visionPrompt: "person-shaped profile tab in the bottom navigation",
+  }), {
+    label: "Profile", role: "tab", sources: ["accessibility", "ocr", "relation", "vision"],
+    relation: relationSelector.relation,
+    visionPrompt: "person-shaped profile tab in the bottom navigation",
+  });
+  assert.deepEqual(validateDeviceNodeSelector({
+    label: "Profile", role: "tab", sources: ["vision"],
+  }), {
+    label: "Profile", role: "tab", sources: ["vision"], visionPrompt: "Profile",
+  });
+  assert.throws(() => validateDeviceNodeSelector({
+    label: "Profile", role: "tab", sources: ["ocr"], visionPrompt: "profile icon",
+  }), /requires the vision source/u);
+});
+
+test("vision node response requires one unique in-display integer rectangle", () => {
+  assert.deepEqual(parseVisionNodeResponse(JSON.stringify({
+    matches: [{ left: 810, top: 2100, right: 900, bottom: 2190 }],
+  }), { width: 1080, height: 2400 }), {
+    left: 810, top: 2100, right: 900, bottom: 2190,
+  });
+  assert.equal(parseVisionNodeResponse({ matches: [] }, { width: 1080, height: 2400 }), null);
+  assert.throws(() => parseVisionNodeResponse({ matches: [
+    { left: 10, top: 10, right: 20, bottom: 20 },
+    { left: 30, top: 30, right: 40, bottom: 40 },
+  ] }, { width: 1080, height: 2400 }), /NODE_AMBIGUOUS/u);
+  assert.throws(() => parseVisionNodeResponse({
+    matches: [{ left: 0, top: 0, right: 1081, bottom: 2400 }],
+  }, { width: 1080, height: 2400 }), /CAPABILITY_MISSING/u);
+  assert.throws(() => parseVisionNodeResponse('{"bounds":[]}', { width: 1080, height: 2400 }), /CAPABILITY_MISSING/u);
 });
 
 test("horizontal equal-spacing inference is generic and fail closed", () => {

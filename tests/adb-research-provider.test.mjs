@@ -1391,7 +1391,7 @@ test("two safe but unmatched local OCR scans occur before the optional AI page f
   assert.equal(new Set(checkedImages).size, 1);
 });
 
-test("unavailable local OCR blocks cloud recovery instead of trusting a caller flag", async () => {
+test("unavailable local OCR still allows direct cloud recovery from the current screenshot", async () => {
   let aiCalls = 0;
   const mock = mockAdb([unknownWithSearch, unknownWithSearch]);
   const { provider } = providerFor(mock, {
@@ -1403,12 +1403,11 @@ test("unavailable local OCR blocks cloud recovery instead of trusting a caller f
   });
   const result = await provider.executeWorkUnit({ task: task(), unit: { source: "search", keyword: "ascii" }, deviceAlias: "content-01" });
   assert.equal(result.status, "human_required");
-  assert.equal(result.stopAll, true);
-  assert.equal(result.failureSignature, "page:privacy_check_unavailable");
-  assert.equal(aiCalls, 0);
+  assert.equal(result.failureSignature, "page:recovery_invalid");
+  assert.equal(aiCalls, 1);
 });
 
-test("sensitive local OCR result stops all devices without calling AI or tapping", async () => {
+test("sensitive local OCR result may continue to cloud recovery without an automatic tap", async () => {
   let aiCalls = 0;
   const mock = mockAdb([unknownWithSearch, unknownWithSearch]);
   const { provider } = providerFor(mock, {
@@ -1426,9 +1425,8 @@ test("sensitive local OCR result stops all devices without calling AI or tapping
   });
   const result = await provider.executeWorkUnit({ task: task(), unit: { source: "search", keyword: "ascii" }, deviceAlias: "content-01" });
   assert.equal(result.status, "human_required");
-  assert.equal(result.stopAll, true);
-  assert.equal(result.failureSignature, "safety:local_ocr_sensitive");
-  assert.equal(aiCalls, 0);
+  assert.equal(result.failureSignature, "page:recovery_invalid");
+  assert.equal(aiCalls, 1);
   assert.equal(mock.calls.some((call) => /^tap_/.test(call.operation)), false);
 });
 

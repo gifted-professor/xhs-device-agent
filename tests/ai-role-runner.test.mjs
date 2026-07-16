@@ -48,7 +48,7 @@ test("page recovery rejects coordinates", () => {
   }), /coordinates/);
 });
 
-test("page recovery requires a hash-matched two-pass local privacy attestation", async () => {
+test("page recovery accepts a directly available image without local privacy attestation", async () => {
   const root = await mkdtemp(join(tmpdir(), "xhs-ai-privacy-"));
   const imagePath = join(root, "screen.png");
   const image = Buffer.from("not-a-real-image-but-hash-stable");
@@ -63,36 +63,54 @@ test("page recovery requires a hash-matched two-pass local privacy attestation",
       targetDescription: "", sensitiveContentVisible: false, humanRequired: true,
     }),
   };
-  await assert.rejects(() => runAiRole({
-    ...base,
-    input: { imagePath, safeToUpload: true, visibleTexts: [] },
-  }), /privacy attestation/);
   const result = await runAiRole({
     ...base,
-    input: {
-      imagePath,
-      safeToUpload: true,
-      visibleTexts: [],
-      privacyAttestation: {
-        schemaVersion: 1,
-        method: "windows_local_ocr",
-        checks: 2,
-        safeForCloud: true,
-        screenshotSha256: hashValue(image),
-      },
-    },
+    input: { imagePath, safeToUpload: true, visibleTexts: [] },
   });
   assert.equal(result.output.humanRequired, true);
 });
 
-test("legacy standalone cloud upload cannot be enabled with a boolean flag", () => {
+test("standalone cloud upload is enabled and validates its configured image", () => {
   const result = spawnSync(process.execPath, [
     fileURLToPath(new URL("../scripts/cloud-vision.mjs", import.meta.url)),
     "--image", "missing.png",
     "--safe-to-upload", "true",
-  ], { encoding: "utf8", windowsHide: true });
+  ], {
+    encoding: "utf8", windowsHide: true,
+    env: {
+      ...process.env,
+      VISION_API_URL: "https://vision.invalid/v1/chat/completions",
+      VISION_API_KEY: "test-key",
+      VISION_MODEL: "test-model",
+    },
+  });
   assert.notEqual(result.status, 0);
-  assert.match(`${result.stdout}${result.stderr}`, /Standalone cloud screenshot upload is disabled/);
+  assert.match(`${result.stdout}${result.stderr}`, /missing\.png|ENOENT/iu);
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /disabled/iu);
+});
+
+test("page recovery can inspect sensitive visible text in permissive mode", async () => {
+  const root = await mkdtemp(join(tmpdir(), "xhs-ai-sensitive-"));
+  const imagePath = join(root, "screen.png");
+  await writeFile(imagePath, Buffer.from("image"));
+  let calls = 0;
+  const result = await runAiRole({
+    role: "page_recovery",
+    input: { imagePath, visibleTexts: ["收银台"] },
+    cacheDir: join(root, "cache"),
+    budgetPath: join(root, "budget.json"),
+    model: "test-model",
+    request: async () => {
+      calls += 1;
+      return {
+        pageType: "UNKNOWN", confidence: 0.4, evidence: ["payment page"],
+        suggestedAction: "STOP_FOR_HUMAN", targetDescription: "",
+        sensitiveContentVisible: true, humanRequired: true,
+      };
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.output.sensitiveContentVisible, true);
 });
 
 test("analysis may rank only supplied candidates", () => {

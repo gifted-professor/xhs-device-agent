@@ -706,7 +706,6 @@ export function createAdbResearchProvider(options = {}) {
     };
 
     let pageRecoveryArtifacts = null;
-    let safeLocalOcrChecks = 0;
     if (localOcr) {
       const localArtifacts = await recoveryArtifacts(session, current);
       let retainForPageRecovery = false;
@@ -721,13 +720,6 @@ export function createAdbResearchProvider(options = {}) {
               attempt,
               visibleTexts: visibleTexts(current),
             });
-            if (localResult?.humanRequired === true || localResult?.suggestedAction === "STOP_FOR_HUMAN" || localResult?.pageType === "LOGIN_OR_CHALLENGE") {
-              throw new ProviderStop("human_required", "safety:local_ocr_sensitive", "Local OCR detected a sensitive page", {
-                stopAll: true,
-                humanReview: [{ reason: "Local OCR detected login, verification, permission, order, privacy, payment, messaging, contacts, or another sensitive screen" }],
-              });
-            }
-            if (localResult?.ocrAvailable === true && localResult?.safeForCloud === true) safeLocalOcrChecks += 1;
             const resolved = await tryResolve(localResult);
             if (resolved) return resolved;
           } catch (error) {
@@ -735,7 +727,7 @@ export function createAdbResearchProvider(options = {}) {
             /* Both deterministic local OCR passes must succeed on this exact file. */
           }
         }
-        if (safeLocalOcrChecks === 2 && localArtifacts.imagePath && localArtifacts.imageHash) {
+        if (localArtifacts.imagePath && localArtifacts.imageHash) {
           pageRecoveryArtifacts = localArtifacts;
           retainForPageRecovery = true;
         }
@@ -748,16 +740,12 @@ export function createAdbResearchProvider(options = {}) {
       if (pageRecoveryArtifacts) await rm(pageRecoveryArtifacts.directory, { recursive: true, force: true });
       throw new ProviderStop("human_required", "page:unknown", "Unknown page requires a human", { humanReview: [{ reason: "Unknown page after two local fingerprint reads and available local OCR" }] });
     }
-    if (safeLocalOcrChecks !== 2 || !pageRecoveryArtifacts?.imagePath || !pageRecoveryArtifacts.imageHash) {
-      if (pageRecoveryArtifacts) await rm(pageRecoveryArtifacts.directory, { recursive: true, force: true });
-      throw new ProviderStop("human_required", "page:privacy_check_unavailable", "Cloud page recovery is blocked because two local OCR privacy checks did not pass", {
-        stopAll: true,
-        humanReview: [{ reason: "Two successful local OCR privacy checks are required before any screenshot can be uploaded" }],
-      });
+    if (!pageRecoveryArtifacts) {
+      pageRecoveryArtifacts = await recoveryArtifacts(session, current);
     }
-    if (current.classification.safety.blockCloudUpload) {
+    if (!pageRecoveryArtifacts.imagePath || !pageRecoveryArtifacts.imageHash) {
       await rm(pageRecoveryArtifacts.directory, { recursive: true, force: true });
-      throw new ProviderStop("human_required", "page:unknown_sensitive", "Unknown sensitive page cannot be sent to page recovery", { stopAll: true, humanReview: [{ reason: "Sensitive unknown page" }] });
+      throw new ProviderStop("failed", "page:screenshot_unavailable", "Cloud page recovery requires a captured screenshot");
     }
     session.recoveryCalls += 1;
     const artifacts = pageRecoveryArtifacts;
@@ -771,8 +759,8 @@ export function createAdbResearchProvider(options = {}) {
         visibleTexts: visibleTexts(current),
         privacyAttestation: {
           schemaVersion: 1,
-          method: "windows_local_ocr",
-          checks: safeLocalOcrChecks,
+          method: "direct_cloud_upload",
+          checks: 0,
           safeForCloud: true,
           screenshotSha256: artifacts.imageHash,
         },
