@@ -24,6 +24,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+. (Join-Path $PSScriptRoot "PowerShell-Runtime.ps1")
+$powerShellExecutable = Resolve-XhsPowerShellExecutable
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 . (Join-Path $PSScriptRoot "Import-Utf8PowerShellDataFile.ps1")
 . (Join-Path $PSScriptRoot "Machine-Identity.ps1")
@@ -171,7 +173,7 @@ try {
         )
         if ($ConfirmPlanHash) { $arguments += @("-ConfirmPlanHash", $ConfirmPlanHash) }
         if ($Json) { $arguments += "-Json" }
-        & powershell.exe @arguments
+        & $powerShellExecutable @arguments
         $exitCode = $LASTEXITCODE
     }
 } finally {

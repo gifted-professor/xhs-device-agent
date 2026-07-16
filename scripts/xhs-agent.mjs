@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { POWERSHELL_EXECUTABLE } from "./powershell-runtime.mjs";
+
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const BOOLEAN_OPTIONS = new Set([
@@ -12,6 +14,7 @@ const BOOLEAN_OPTIONS = new Set([
   "dry-run",
   "json",
   "sync-lark",
+  "all",
 ]);
 const REPEATABLE_OPTIONS = new Set(["machine", "device"]);
 
@@ -42,12 +45,32 @@ const HELP = `XHS Device Agent 统一入口
   .\\xhs.cmd doctor
   .\\xhs.cmd host status
   .\\xhs.cmd host start
+  .\\xhs.cmd host refresh
+  .\\xhs.cmd host restart-adb
+  .\\xhs.cmd host enable-private-api
+  .\\xhs.cmd host private-api-status
+  .\\xhs.cmd host disable-private-api
+  .\\xhs.cmd remote start
+  .\\xhs.cmd remote status
+  .\\xhs.cmd remote stop
+  .\\xhs.cmd remote install
+  .\\xhs.cmd remote uninstall
   .\\xhs.cmd device list
+  .\\xhs.cmd device size --machine 02
   .\\xhs.cmd device screen --machine 02
   .\\xhs.cmd device ui --machine 02
   .\\xhs.cmd device tap-text --machine 02 --text <text> --expect-package <package> --confirm --reason <reason> --rollback <rollback>
+  .\\xhs.cmd device tap-ocr --machine 04 --package <package> --text <text> --expect-text <text> --confirm --reason <reason> --rollback <rollback>
+  .\\xhs.cmd wechat wallet-balance --machine 04
+  .\\xhs.cmd xhs observe --machine 04
   .\\xhs.cmd device open-xhs --machine 02
   .\\xhs.cmd app list --machine 02
+
+开发验收通道（要求 config/local.psd1 中 Xiaowei.Api.DevelopmentMode = $true）：
+  .\\xhs.cmd dev invoke --action <效卫action> --machine 04 --data-file data/xiaowei-request-data.json
+  .\\xhs.cmd dev invoke --action adb --machine 04 --data-json '{"command":"devices"}'
+  .\\xhs.cmd dev invoke --action adb_shell --machine 04 --data-json '{"command":"getprop"}'
+  .\\xhs.cmd dev private-invoke --command <Tauri命令> --args-json '{}'
 
 选择器：
   --machine NUMBER    两位机器号，可重复
@@ -55,7 +78,7 @@ const HELP = `XHS Device Agent 统一入口
   --group NAME        本地配置组
   --config PATH       本地配置路径
 
-设备动作只允许从 xhs.cmd 进入。统一任务先完整审阅一次，再用完全相同的 planHash 确认一次。
+Agent 默认使用命名 HTTP API；xhs.cmd 仅用于人工调试和兼容流程。统一任务先完整审阅一次，再用完全相同的 planHash 确认一次。
 验证码、登录/身份验证、支付、系统权限、平台风控、目标漂移和无法验证的状态会停止任务。
 `;
 
@@ -130,7 +153,7 @@ function assertAllowedOptions(options, allowed, commandLabel) {
 
 function psScript(name, args = []) {
   return {
-    executable: "powershell.exe",
+    executable: POWERSHELL_EXECUTABLE,
     args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", path.join(SCRIPT_DIR, name), ...args],
   };
 }
@@ -186,6 +209,37 @@ function matrixDispatch(action, options, { targetRequired = true, packageRequire
     appendConfirmation(args, options);
   }
   return psScript("Invoke-MatrixAction.ps1", args);
+}
+
+function xiaoweiReadDispatch(action, options, {
+  targetRequired = true, packageRequired = false, tapText = false, tapOcr = false, nodeSelector = false,
+  nodeActivate = false, ordinal = false, confirmation = false,
+} = {}) {
+  const args = ["-Action", action];
+  appendOption(args, options, "config", "-ConfigPath");
+  appendTargets(args, options, { required: targetRequired });
+  if (packageRequired) args.push("-PackageName", String(requireOption(options, "package")));
+  if (tapText) {
+    args.push("-Text", String(requireOption(options, "text")));
+    if (!options["expect-text"] && !options["expect-package"] && !options["expect-resource-id"]) {
+      throw new Error("device tap-text requires --expect-text, --expect-package, or --expect-resource-id");
+    }
+    appendOption(args, options, "expect-text", "-ExpectText");
+    appendOption(args, options, "expect-package", "-ExpectPackage");
+    appendOption(args, options, "expect-resource-id", "-ExpectResourceId");
+  }
+  if (tapOcr) {
+    args.push("-Text", String(requireOption(options, "text")));
+    args.push("-ExpectText", String(requireOption(options, "expect-text")));
+  }
+  if (nodeSelector) args.push("-SelectorBase64", String(requireOption(options, "selector-base64")));
+  if (nodeActivate) args.push("-ExpectText", String(requireOption(options, "expect-text")));
+  if (ordinal) args.push("-Ordinal", String(requireOption(options, "ordinal")));
+  if (confirmation) {
+    if (!options.confirm) throw new Error("This device-local change requires --confirm, --reason, and --rollback");
+    appendConfirmation(args, options);
+  }
+  return psScript("Invoke-XiaoweiDeviceRead.ps1", args);
 }
 
 export function buildDispatch(parsed) {
@@ -258,9 +312,17 @@ export function buildDispatch(parsed) {
     if (options.json) args.push("-Json");
     return psScript("Run-TaskWorkflow.ps1", args);
   }
-  if (area === "host" && (command === "status" || command === "start")) {
+  if (area === "host" && [
+    "status", "start", "refresh", "restart-adb", "private-api-status", "enable-private-api", "disable-private-api",
+  ].includes(command)) {
     assertAllowedOptions(options, ["config"], `host ${command}`);
-    const args = ["-Action", command === "start" ? "Start" : "Status"];
+    const action = command === "start" ? "Start"
+      : command === "status" ? "Status"
+        : command === "refresh" ? "Refresh"
+          : command === "restart-adb" ? "RestartAdb"
+            : command === "private-api-status" ? "PrivateApiStatus"
+              : command === "enable-private-api" ? "EnablePrivateApi" : "DisablePrivateApi";
+    const args = ["-Action", action];
     appendOption(args, options, "config", "-ConfigPath");
     return psScript("Manage-XiaoweiHost.ps1", args);
   }
@@ -276,21 +338,66 @@ export function buildDispatch(parsed) {
     assertAllowedOptions(options, [], "api catalog");
     return nodeScript("xiaowei-api.mjs", ["catalog"]);
   }
+  if (area === "api" && command === "private-catalog") {
+    assertAllowedOptions(options, [], "api private-catalog");
+    return nodeScript("xiaowei-private-api.mjs", ["catalog"]);
+  }
+  if (area === "remote" && ["start", "status", "stop", "install", "uninstall"].includes(command)) {
+    assertAllowedOptions(options, [], `remote ${command}`);
+    const action = command[0].toUpperCase() + command.slice(1);
+    return psScript("Manage-XhsRemoteGateway.ps1", ["-Action", action]);
+  }
   if (area === "api" && (command === "probe" || command === "status")) {
     assertAllowedOptions(options, ["config"], `api ${command}`);
     const args = ["-ProbeApi"];
     appendOption(args, options, "config", "-ConfigPath");
     return psScript("Matrix-Preflight.ps1", args);
   }
+  if (area === "dev" && command === "invoke") {
+    assertAllowedOptions(options, [
+      "action", "config", "machine", "machine-name", "device", "group", "devices", "data-file", "data-json", "endpoint", "all",
+    ], "dev invoke");
+    const args = ["-Action", String(requireOption(options, "action"))];
+    appendOption(args, options, "config", "-ConfigPath");
+    appendTargets(args, options, { required: false });
+    appendOption(args, options, "devices", "-DevicesCsv");
+    if (options.all) args.push("-All");
+    appendOption(args, options, "data-file", "-DataFile");
+    appendOption(args, options, "data-json", "-DataJson");
+    appendOption(args, options, "endpoint", "-Endpoint");
+    return psScript("Invoke-XiaoweiDev.ps1", args);
+  }
+  if (area === "dev" && command === "private-invoke") {
+    assertAllowedOptions(options, ["command", "args-json", "args-base64", "config", "endpoint"], "dev private-invoke");
+    if (options["args-json"] !== undefined && options["args-base64"] !== undefined) {
+      throw new Error("dev private-invoke accepts args-json or args-base64, not both");
+    }
+    const args = ["-Command", String(requireOption(options, "command"))];
+    appendOption(args, options, "args-json", "-ArgsJson");
+    appendOption(args, options, "args-base64", "-ArgsBase64");
+    appendOption(args, options, "config", "-ConfigPath");
+    appendOption(args, options, "endpoint", "-Endpoint");
+    return psScript("Invoke-XiaoweiPrivateDev.ps1", args);
+  }
   if (area === "device") {
+    if (command === "guide") {
+      assertAllowedOptions(options, ["failure-code"], "device guide");
+      return nodeScript("device-control-guide.mjs", ["--code", String(requireOption(options, "failure-code"))]);
+    }
     const actions = new Map([
-      ["list", ["Inventory", { targetRequired: false }]],
-      ["ui", ["DumpUi", {}]],
-      ["screen", ["Screenshot", {}]],
-      ["tap-text", ["TapText", { confirmation: true, tapText: true }]],
+      ["list", ["List", { targetRequired: false, noTargetOptions: true, xiaoweiRead: true }]],
+      ["size", ["Size", { xiaoweiRead: true }]],
+      ["ui", ["Ui", { xiaoweiRead: true }]],
+      ["screen", ["Screen", { xiaoweiRead: true }]],
+      ["tap-text", ["TapText", { confirmation: true, tapText: true, xiaoweiRead: true }]],
+      ["tap-ocr", ["TapOcr", { confirmation: true, tapOcr: true, packageRequired: true, xiaoweiRead: true }]],
+      ["node-resolve", ["NodeResolve", { nodeSelector: true, packageRequired: true, xiaoweiRead: true }]],
+      ["node-activate", ["NodeActivate", {
+        nodeSelector: true, nodeActivate: true, confirmation: true, packageRequired: true, xiaoweiRead: true,
+      }]],
       ["open-xhs", ["OpenXhs", {}]],
       ["open-profile", ["OpenProfile", {}]],
-      ["home", ["Home", {}]],
+      ["home", ["Home", { xiaoweiRead: true }]],
       ["back", ["Back", {}]],
       ["screen-off", ["ScreenOff", { confirmation: true }]],
       ["screen-on", ["ScreenOn", { confirmation: true }]],
@@ -298,10 +405,14 @@ export function buildDispatch(parsed) {
     ]);
     const entry = actions.get(command);
     if (!entry) throw new Error(`Unknown device command: ${command || "(missing)"}`);
-    const allowed = ["config", "machine", "machine-name", "device", "group"];
+    const allowed = entry[1].noTargetOptions ? ["config"] : ["config", "machine", "machine-name", "device", "group"];
     if (entry[1].tapText) allowed.push("text", "expect-text", "expect-package", "expect-resource-id");
+    if (entry[1].tapOcr) allowed.push("package", "text", "expect-text");
+    if (entry[1].nodeSelector) allowed.push("package", "selector-base64");
+    if (entry[1].nodeActivate) allowed.push("expect-text");
     if (entry[1].confirmation) allowed.push("confirm", "reason", "rollback");
     assertAllowedOptions(options, allowed, `device ${command}`);
+    if (entry[1].xiaoweiRead) return xiaoweiReadDispatch(entry[0], options, entry[1]);
     return matrixDispatch(entry[0], options, entry[1]);
   }
   if (area === "app") {
@@ -311,7 +422,7 @@ export function buildDispatch(parsed) {
     }
     if (command === "open") {
       assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "group", "package"], "app open");
-      return matrixDispatch("StartApp", options, { packageRequired: true });
+      return xiaoweiReadDispatch("OpenApp", options, { packageRequired: true });
     }
     if (command === "stop") {
       assertAllowedOptions(
@@ -322,6 +433,18 @@ export function buildDispatch(parsed) {
       return matrixDispatch("StopApp", options, { packageRequired: true, confirmation: true });
     }
     throw new Error(`Unknown app command: ${command || "(missing)"}`);
+  }
+  if (area === "wechat" && command === "wallet-balance") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device"], "wechat wallet-balance");
+    return xiaoweiReadDispatch("WeChatWalletBalance", options);
+  }
+  if (area === "xhs" && command === "observe") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device"], "xhs observe");
+    return xiaoweiReadDispatch("XhsObserve", options);
+  }
+  if (area === "xhs" && command === "open-visible") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "ordinal"], "xhs open-visible");
+    return xiaoweiReadDispatch("XhsOpenVisible", options, { ordinal: true });
   }
   if (["like", "favorite", "collect", "follow", "comment", "publish", "delete"].includes(area)) {
     throw new Error(`${area} is retired as a direct command; use an implemented approved workflow through xhs.cmd`);

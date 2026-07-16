@@ -160,6 +160,30 @@ test("privileged, catalog-only, and opaque automation actions cannot be accepted
   }
 });
 
+test("explicit development mode can invoke privileged actions and all-device selectors", async () => {
+  const calls = [];
+  const client = createXiaoweiClient({
+    endpoint,
+    developmentMode: true,
+    acceptedActions: ["adb", "adb_shell"],
+  }, {
+    sendRequest: async (request) => {
+      calls.push(request);
+      return { code: 10000, message: "SUCCESS", data: null };
+    },
+  });
+  await client.invoke("adb", { devices: "all", data: { command: "devices" } }, {
+    authorization: { mode: "development" },
+  });
+  await client.invoke("adb_shell", { devices: "test-device,other-device", data: { command: "getprop" } }, {
+    authorization: { mode: "development" },
+  });
+  assert.deepEqual(calls, [
+    { action: "adb", devices: "all", data: { command: "devices" } },
+    { action: "adb_shell", devices: "test-device,other-device", data: { command: "getprop" } },
+  ]);
+});
+
 test("send-timeout errors preserve an unknown outcome", async () => {
   const client = createXiaoweiClient({ endpoint, acceptedActions: ["apkList"] }, {
     sendRequest: async () => { throw new Error("Xiaowei API timed out after the request was sent; device outcome is unknown"); },

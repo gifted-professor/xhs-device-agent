@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { POWERSHELL_EXECUTABLE } from "./powershell-runtime.mjs";
+
 const DEFAULT_MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 const CROP_SCRIPT = fileURLToPath(new URL("./Crop-ImageArtifact.ps1", import.meta.url));
 
@@ -21,7 +23,7 @@ function validateBounds(bounds) {
 function runCropper({ imagePath, bounds }) {
   const outputPath = path.join(os.tmpdir(), `xhs-cpa-crop-${randomUUID()}.png`);
   return new Promise((resolve, reject) => {
-    execFile("powershell.exe", [
+    execFile(POWERSHELL_EXECUTABLE, [
       "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", CROP_SCRIPT,
       "-ImagePath", imagePath, "-OutputPath", outputPath,
       "-CropX", String(bounds.left), "-CropY", String(bounds.top),

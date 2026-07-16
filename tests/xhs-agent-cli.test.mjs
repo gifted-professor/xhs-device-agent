@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildDispatch, parseCliArgs, runCli } from "../scripts/xhs-agent.mjs";
+import { POWERSHELL_EXECUTABLE } from "../scripts/powershell-runtime.mjs";
 
 test("long help flag remains a positional help command", () => {
   assert.deepEqual(parseCliArgs(["--help"]), { positional: ["--help"], options: Object.create(null) });
@@ -29,6 +30,12 @@ test("repo policy routes through the unified entry and supports JSON", () => {
   assert.equal(json.args.at(-1), "--json");
 });
 
+test("private API catalog is available to remote agents through xhs", () => {
+  const dispatch = buildDispatch(parseCliArgs(["api", "private-catalog"]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("xiaowei-private-api.mjs")));
+  assert.equal(dispatch.args.at(-1), "catalog");
+});
+
 test("capability activation stays behind exact hashes and an explicit human flag", () => {
   assert.throws(() => buildDispatch(parseCliArgs([
     "capability", "accept", "--profile", "profile.json", "--evidence", "evidence.json",
@@ -49,7 +56,7 @@ test("task run enters through the unified dry-run planner and supervised live wr
   const live = buildDispatch(parseCliArgs([
     "task", "run", "--spec", "data/task.json", "--confirm-plan-hash", "a".repeat(64),
   ]));
-  assert.equal(live.executable, "powershell.exe");
+  assert.equal(live.executable, POWERSHELL_EXECUTABLE);
   assert.ok(live.args.some((value) => value.endsWith("Run-TaskWorkflow.ps1")));
   assert.deepEqual(live.args.slice(-4), ["-SpecPath", "data/task.json", "-ConfirmPlanHash", "a".repeat(64)]);
   assert.throws(
@@ -62,9 +69,74 @@ test("task run enters through the unified dry-run planner and supervised live wr
 
 test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
   const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
-  assert.equal(dispatch.executable, "powershell.exe");
+  assert.equal(dispatch.executable, POWERSHELL_EXECUTABLE);
   assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
   assert.deepEqual(dispatch.args.slice(-4), ["-Action", "OpenXhs", "-MachineNumber", "04"]);
+});
+
+test("device UI and screen use the Xiaowei API read adapter instead of local ADB", () => {
+  for (const [command, action] of [["ui", "Ui"], ["screen", "Screen"]]) {
+    const dispatch = buildDispatch(parseCliArgs(["device", command, "--machine", "02"]));
+    assert.equal(dispatch.executable, POWERSHELL_EXECUTABLE);
+    assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+    assert.deepEqual(dispatch.args.slice(-4), ["-Action", action, "-MachineNumber", "02"]);
+    assert.ok(!dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+  }
+});
+
+test("device list and size use the Xiaowei read adapter without local ADB inventory", () => {
+  const list = buildDispatch(parseCliArgs(["device", "list"]));
+  assert.ok(list.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(list.args.slice(-2), ["-Action", "List"]);
+  assert.ok(!list.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+
+  const size = buildDispatch(parseCliArgs(["device", "size", "--machine", "02"]));
+  assert.ok(size.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(size.args.slice(-4), ["-Action", "Size", "-MachineNumber", "02"]);
+  assert.ok(!size.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+});
+
+test("device guide and generic node commands route through their bounded adapters", () => {
+  const guide = buildDispatch(parseCliArgs(["device", "guide", "--failure-code", "UI_EMPTY"]));
+  assert.ok(guide.args.some((value) => value.endsWith("device-control-guide.mjs")));
+  assert.deepEqual(guide.args.slice(-2), ["--code", "UI_EMPTY"]);
+
+  const selector = Buffer.from(JSON.stringify({
+    label: "我", role: "tab", sources: ["ocr"],
+  }), "utf8").toString("base64");
+  const resolve = buildDispatch(parseCliArgs([
+    "device", "node-resolve", "--machine", "03", "--package", "com.tencent.mm",
+    "--selector-base64", selector,
+  ]));
+  assert.deepEqual(resolve.args.slice(-8), [
+    "-Action", "NodeResolve", "-MachineNumber", "03", "-PackageName", "com.tencent.mm",
+    "-SelectorBase64", selector,
+  ]);
+  const activate = buildDispatch(parseCliArgs([
+    "device", "node-activate", "--machine", "03", "--package", "com.tencent.mm",
+    "--selector-base64", selector, "--expect-text", "服务", "--confirm",
+    "--reason", "open verified node", "--rollback", "return to previous page",
+  ]));
+  assert.deepEqual(activate.args.slice(-15), [
+    "-Action", "NodeActivate", "-MachineNumber", "03", "-PackageName", "com.tencent.mm",
+    "-SelectorBase64", selector, "-ExpectText", "服务", "-ConfirmAction", "-ConfirmationReason",
+    "open verified node", "-RollbackInfo", "return to previous page",
+  ]);
+  assert.equal(activate.args.some((value) => /serial|deviceId|coordinate|^-x$|^-y$/iu.test(value)), false);
+});
+
+test("device home and app open use the Xiaowei API adapter without local ADB", () => {
+  const home = buildDispatch(parseCliArgs(["device", "home", "--machine", "02"]));
+  assert.ok(home.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(home.args.slice(-4), ["-Action", "Home", "-MachineNumber", "02"]);
+
+  const open = buildDispatch(parseCliArgs([
+    "app", "open", "--machine", "02", "--package", "com.example.approved",
+  ]));
+  assert.ok(open.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(open.args.slice(-6), [
+    "-Action", "OpenApp", "-MachineNumber", "02", "-PackageName", "com.example.approved",
+  ]);
 });
 
 test("manual safe-label tap requires one machine, confirmation, and a postcondition", () => {
@@ -79,7 +151,8 @@ test("manual safe-label tap requires one machine, confirmation, and a postcondit
     "--expect-package", "com.xingin.xhs",
     "--confirm", "--reason", "dismiss local overlay", "--rollback", "press back",
   ]));
-  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.ok(!dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
   assert.ok(dispatch.args.includes("-ConfirmAction"));
   assert.deepEqual(dispatch.args.slice(-13), [
     "-Action", "TapText", "-MachineNumber", "02", "-Text", "Cancel",
@@ -88,12 +161,113 @@ test("manual safe-label tap requires one machine, confirmation, and a postcondit
   ]);
 });
 
+test("OCR tap routes through the Xiaowei adapter without exposing coordinates or device identifiers", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "device", "tap-ocr", "--machine", "04", "--package", "com.tencent.mm",
+    "--text", "我", "--expect-text", "服务", "--confirm",
+    "--reason", "open verified account tab", "--rollback", "return to previous page",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-15), [
+    "-Action", "TapOcr", "-MachineNumber", "04", "-PackageName", "com.tencent.mm",
+    "-Text", "我", "-ExpectText", "服务", "-ConfirmAction", "-ConfirmationReason",
+    "open verified account tab", "-RollbackInfo", "return to previous page",
+  ]);
+  assert.equal(dispatch.args.some((value) => /serial|coordinate|^-x$|^-y$/iu.test(value)), false);
+});
+
+test("WeChat wallet balance is a named read-only machine command", () => {
+  const dispatch = buildDispatch(parseCliArgs(["wechat", "wallet-balance", "--machine", "04"]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "WeChatWalletBalance", "-MachineNumber", "04"]);
+  assert.equal(dispatch.args.some((value) => /serial|screenshot|coordinate/iu.test(value)), false);
+  assert.throws(
+    () => buildDispatch(parseCliArgs(["wechat", "wallet-balance", "--machine", "04", "--text", "x"])),
+    /does not support option/u,
+  );
+});
+
+test("XHS observation is a named read-only machine command", () => {
+  const dispatch = buildDispatch(parseCliArgs(["xhs", "observe", "--machine", "04"]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "XhsObserve", "-MachineNumber", "04"]);
+  assert.equal(dispatch.args.some((value) => /serial|coordinate|message|private/iu.test(value)), false);
+  assert.throws(
+    () => buildDispatch(parseCliArgs(["xhs", "observe", "--machine", "04", "--text", "x"])),
+    /does not support option/u,
+  );
+});
+
+test("XHS visible-card opening accepts only a machine and ordinal", () => {
+  const dispatch = buildDispatch(parseCliArgs(["xhs", "open-visible", "--machine", "04", "--ordinal", "2"]));
+  assert.deepEqual(dispatch.args.slice(-6), ["-Action", "XhsOpenVisible", "-MachineNumber", "04", "-Ordinal", "2"]);
+  assert.equal(dispatch.args.some((value) => /serial|coordinate/iu.test(value)), false);
+  assert.throws(
+    () => buildDispatch(parseCliArgs(["xhs", "open-visible", "--machine", "04"])),
+    /ordinal is required/u,
+  );
+});
+
 test("host status and start remain available through the unified entry", () => {
   for (const command of ["status", "start"]) {
     const dispatch = buildDispatch(parseCliArgs(["host", command]));
     assert.ok(dispatch.args.some((value) => value.endsWith("Manage-XiaoweiHost.ps1")));
     assert.equal(dispatch.args.at(-1), command === "start" ? "Start" : "Status");
   }
+});
+
+test("host refresh and restart-adb route through the host wrapper", () => {
+  for (const [command, action] of [["refresh", "Refresh"], ["restart-adb", "RestartAdb"]]) {
+    const dispatch = buildDispatch(parseCliArgs(["host", command]));
+    assert.ok(dispatch.args.some((value) => value.endsWith("Manage-XiaoweiHost.ps1")));
+    assert.equal(dispatch.args.at(-1), action);
+  }
+});
+
+test("Xiaowei private API setup and status stay behind the host wrapper", () => {
+  for (const [command, action] of [
+    ["enable-private-api", "EnablePrivateApi"],
+    ["private-api-status", "PrivateApiStatus"],
+    ["disable-private-api", "DisablePrivateApi"],
+  ]) {
+    const dispatch = buildDispatch(parseCliArgs(["host", command]));
+    assert.ok(dispatch.args.some((value) => value.endsWith("Manage-XiaoweiHost.ps1")));
+    assert.equal(dispatch.args.at(-1), action);
+  }
+});
+
+test("remote gateway lifecycle stays behind the unified entry", () => {
+  for (const [command, action] of [
+    ["start", "Start"], ["status", "Status"], ["stop", "Stop"], ["install", "Install"], ["uninstall", "Uninstall"],
+  ]) {
+    const dispatch = buildDispatch(parseCliArgs(["remote", command]));
+    assert.ok(dispatch.args.some((value) => value.endsWith("Manage-XhsRemoteGateway.ps1")));
+    assert.deepEqual(dispatch.args.slice(-2), ["-Action", action]);
+  }
+});
+
+test("development invoke routes through the explicit Xiaowei development wrapper", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "dev", "invoke", "--action", "adb", "--machine", "04", "--data-file", "data/adb.json",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDev.ps1")));
+  assert.deepEqual(dispatch.args.slice(-6), [
+    "-Action", "adb", "-MachineNumber", "04", "-DataFile", "data/adb.json",
+  ]);
+});
+
+test("private Tauri development invoke routes through the version-gated wrapper", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "dev", "private-invoke", "--command", "reconnect_device", "--args-json", "{}",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiPrivateDev.ps1")));
+  assert.deepEqual(dispatch.args.slice(-4), ["-Command", "reconnect_device", "-ArgsJson", "{}"]);
+
+  const encoded = Buffer.from(JSON.stringify({ nested: { value: "quoted text" } }), "utf8").toString("base64");
+  const remote = buildDispatch(parseCliArgs([
+    "dev", "private-invoke", "--command", "get_size", "--args-base64", encoded,
+  ]));
+  assert.deepEqual(remote.args.slice(-4), ["-Command", "get_size", "-ArgsBase64", encoded]);
 });
 
 test("config paths containing spaces stay one argument and split shell values fail closed", () => {
@@ -129,7 +303,7 @@ test("internal device bindings remain compatible but cannot be combined with a g
   const dispatch = buildDispatch(parseCliArgs([
     "device", "ui", "--device", "device-01", "--device", "device-02",
   ]));
-  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "DumpUi", "-DeviceAliasesCsv", "device-01,device-02"]);
+  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "Ui", "-DeviceAliasesCsv", "device-01,device-02"]);
   assert.throws(
     () => buildDispatch(parseCliArgs([
       "device", "ui", "--device", "device-01", "--device", "device-02", "--group", "content",
@@ -142,12 +316,12 @@ test("machine numbers are repeatable and visible names stay a single unambiguous
   const multiple = buildDispatch(parseCliArgs([
     "device", "ui", "--machine", "01", "--machine", "03",
   ]));
-  assert.deepEqual(multiple.args.slice(-4), ["-Action", "DumpUi", "-MachineNumbersCsv", "01,03"]);
+  assert.deepEqual(multiple.args.slice(-4), ["-Action", "Ui", "-MachineNumbersCsv", "01,03"]);
 
   const named = buildDispatch(parseCliArgs([
     "device", "screen", "--machine-name", "VISIBLE_NAME",
   ]));
-  assert.deepEqual(named.args.slice(-4), ["-Action", "Screenshot", "-MachineName", "VISIBLE_NAME"]);
+  assert.deepEqual(named.args.slice(-4), ["-Action", "Screen", "-MachineName", "VISIBLE_NAME"]);
 
   assert.throws(
     () => buildDispatch(parseCliArgs([
@@ -256,7 +430,7 @@ test("research review sync uses the unified entry and explicit external confirma
     "research", "sync-review", "--review", "queue.jsonl", "--confirm-external-sync",
     "--config", "config/local.psd1",
   ]));
-  assert.equal(dispatch.executable, "powershell.exe");
+  assert.equal(dispatch.executable, POWERSHELL_EXECUTABLE);
   assert.ok(dispatch.args.some((value) => value.endsWith("Sync-ResearchReview.ps1")));
   assert.deepEqual(dispatch.args.slice(-5), [
     "-ReviewPath", "queue.jsonl", "-ConfirmExternalSync", "-ConfigPath", "config/local.psd1",
@@ -374,5 +548,6 @@ test("help completes without spawning a child process", () => {
   for (const command of ["like", "favorite", "follow", "comment", "publish", "delete"]) {
     assert.doesNotMatch(text, new RegExp(`xhs\\.cmd ${command}`, "u"));
   }
-  assert.match(text, /设备动作只允许从 xhs\.cmd 进入/u);
+  assert.match(text, /Agent 默认使用命名 HTTP API/u);
+  assert.match(text, /xhs\.cmd 仅用于人工调试和兼容流程/u);
 });

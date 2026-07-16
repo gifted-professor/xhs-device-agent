@@ -7,21 +7,29 @@ description: Safely compile, review, approve, and execute unified supervised Xia
 
 ## Operating contract
 
-Use `xhs.cmd` as the sole entry point for every phone operation. Hermes may describe a goal and request a candidate plan, but only the deterministic compiler, an exact human-approved `planHash`, and the local executor may determine what is sent to a phone.
+Use the documented named HTTP API as the default entry point for every local or Tailnet Agent phone operation. `xhs.cmd` is a human debugging and compatibility client; an Agent must not use it to bypass a missing named command. Never call an internal script, raw ADB, the Xiaowei private WebSocket, or an unwrapped private command. Hermes may describe a goal and request a candidate plan, but only the deterministic compiler, an exact human-approved `planHash`, and the local executor may determine what is sent to a phone.
+
+For read-only device readiness, trust fresh `device.list`, `device.ui`, and `device.screen` HTTP results. `adb devices` reporting zero devices is not a stop condition. Ordinary Agents obtain dimensions through `device.size` with a two-digit `machine`; serial resolution and private `get_size` invocation stay entirely inside the service.
+
+Use `wechat.wallet-balance` for the verified WeChat change balance. Use `xhs.observe` for stable public Xiaohongshu page data and `xhs.open-visible` with a one-based ordinal to open one currently visible public card. These named commands keep serials, paths, screenshots, OCR text, and coordinates inside the service. Xiaohongshu messages, drafts, account settings, and other private surfaces are outside this public observation lane.
+
+Every node strategy is App-independent. The currently implemented relation source is the restricted `horizontal_equal_spacing` algorithm in `bottom_navigation`: two exact anchors with distinct ordinals determine a target ordinal independently on two fresh observations. It is not a fixed-coordinate exception, and the same validation applies to every package and machine.
+
+For hierarchy-blind or OCR-difficult pages, follow `docs/AGENT_DEVICE_CONTROL_PLAYBOOK.md`. Query `device.guide` with the standard failure code, use `device.node.resolve` for a read-only result, and use `device.node.activate` only with the same closed declarative selector plus an exact text postcondition, reason, and rollback. Selectors never contain coordinates, paths, identifiers, regular expressions, scripts, or free-form vision instructions. Activation independently resolves twice, sends at most once, and verifies fresh evidence; ambiguous or drifting evidence stops without replay. `device.tap-ocr` remains a compatibility entry for one exact OCR step.
 
 Within the implemented high-level registry, treat the exact approved task as the sole business-intent source for content source, selected machines, ordered actions, conditions, counts, finite budgets, content, and requested concurrency. Templates add defaults only and explicit task values take precedence. Capability evidence may reject an unimplemented or untested request, but no wrapper may silently narrow, reorder, or replace it.
 
-Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify that current `xhs.cmd` help exposes `capability status`, `capability accept`, and `task run`; verify the task compiler, preparation, approval, coordinator, workflow, Windows wrapper, and relevant device-adapter tests pass. Use `task run --spec <file> --dry-run` only for a non-executable offline candidate. A live invocation without `--confirm-plan-hash` performs selected-device read-only preparation and renders the complete plan. Only a second invocation carrying that exact rendered hash may execute. If the active capability or live adapter does not cover a compiled action, stop before device navigation and report the missing capability; do not fall back to a legacy executor.
+Do not infer that a planned command exists. Before using `supervised_composite_v1`, verify the implemented named HTTP contract and the task compiler, preparation, approval, coordinator, workflow, Windows wrapper, and relevant device-adapter tests. Human compatibility validation may also inspect `xhs.cmd` help for `capability status`, `capability accept`, and `task run`. A human-run `task run --spec <file> --dry-run` is only a non-executable offline candidate. A live compatibility invocation without `--confirm-plan-hash` performs selected-device read-only preparation and renders the complete plan. Only a second invocation carrying that exact rendered hash may execute. If the active capability or live adapter does not cover a compiled action, stop before device navigation and report the missing capability; do not fall back to a legacy executor.
 
 ## Common preflight
 
 1. Read `AGENTS.md`, `docs/RESEARCH_AUTOMATION.md`, `docs/INPUT_METHOD_WORKFLOW.md`, and the approved plan/policy relevant to the run.
 2. Load `config/local.psd1` and per-device profiles without displaying or committing real identifiers.
-3. Run fresh `xhs.cmd doctor`, `xhs.cmd host status`, and `xhs.cmd device list` checks. Evaluate readiness only against capabilities required by the selected mode and exact compiled actions. A warning for an unused capability, such as Xiaowei text input during a read-only run, is diagnostic and must not block that run.
+3. Call fresh named HTTP diagnostics and `device.list`; call `device.ui`, `device.screen`, or `device.size` only for the selected machines and required read capability. Do not run old local-ADB inventory first, and do not stop merely because `adb devices` is empty. A warning for an unused capability, such as Xiaowei text input during a read-only run, is diagnostic and must not block that run.
 4. Refuse formal work until each selected phone has one unique two-digit machine number, a visible machine name, a current internal binding, an explicit group, and an online/result for every required capability. Other online phones are normal and are not a stop condition.
 5. Address devices in consultations and reports by machine number plus visible name. Never expose internal aliases, serials, account IDs, tokens, or image paths.
-6. Treat Xiaowei as projection, grouping, and human takeover. Use the production device adapter only through `xhs.cmd`; do not call raw ADB, internal scripts, private APIs, or the Xiaowei WebSocket directly.
-7. When Windows desktop capture is incompatible, do not request or retry it. Use the approved phone screenshot and fresh Android UI hierarchy path through `xhs.cmd`.
+6. Treat Xiaowei as projection, grouping, and human takeover. Use only named HTTP commands backed by the production device adapter; do not call raw ADB, internal scripts, private APIs, or the Xiaowei WebSocket directly.
+7. When Windows desktop capture is incompatible, do not request or retry it. Use named `device.screen` and `device.ui` HTTP commands.
 
 ## Mode routing
 
@@ -180,11 +188,11 @@ Every plan declares finite `targetValidVisitsPerDevice`, `maxVisitAttemptsPerDev
 
 ### `research_read_only`
 
-Translate the strict legacy research task through `xhs.cmd research run` into a unified `research_read_only` source. The resulting plan must show the exact selected machines, deterministic shards, read/comment/model budgets and `research.collect` steps, then use the same preparation, exact-hash approval, worker tickets, execution slots, fuse and terminal report as `task run`. Keep AI event-driven, privacy-gated and bounded. Comments are public observation only; no account-state action enters a research shard.
+The human compatibility client may translate a strict legacy research task through `xhs.cmd research run` into a unified `research_read_only` source; this is not an Agent default entry point. The resulting plan must show the exact selected machines, deterministic shards, read/comment/model budgets and `research.collect` steps, then use the same preparation, exact-hash approval, worker tickets, execution slots, fuse and terminal report as `task run`. Keep AI event-driven, privacy-gated and bounded. Comments are public observation only; no account-state action enters a research shard.
 
 ### Compatibility converters
 
-Run `xhs.cmd feed run ... --dry-run`, `xhs.cmd feed batch --spec <path> --dry-run`, or `xhs.cmd research run --task <path> --dry-run` to inspect the exact converted task. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs and requested concurrency are preserved; Research preserves its finite public-data and AI budgets while resolving only its selected local device group.
+For human compatibility work, run `xhs.cmd feed run ... --dry-run`, `xhs.cmd feed batch --spec <path> --dry-run`, or `xhs.cmd research run --task <path> --dry-run` to inspect the exact converted task. These are not the default Agent entry points. A live compatibility invocation follows the same review and `--confirm-plan-hash` lifecycle as `task run`. Legacy Batch machine counts, per-machine visit counts, task IDs and requested concurrency are preserved; Research preserves its finite public-data and AI budgets while resolving only its selected local device group.
 
 Never invoke a removed legacy script or reinterpret a compatibility failure through a different executor.
 
@@ -201,6 +209,11 @@ Stop immediately on login, CAPTCHA, challenge, risk control, account restriction
 - Never bypass CAPTCHAs, risk controls, platform limits, authentication, identity/membership checks, or permissions.
 - Never implement random dwell, random coordinates, simulated-human behavior, automated account warming, engagement farming, or device/network identity manipulation.
 - Never share coordinates across phones or treat model output as an executable coordinate.
-- Never call raw ADB, internal scripts, private APIs, or the Xiaowei WebSocket for device actions; use `xhs.cmd` so preflight, evidence, idempotency, lease, fuse, and approval gates stay active.
+- Never replace `device.tap-ocr` with a guessed coordinate or expose its internal OCR bounds. Screenshot navigation remains one exact semantic step with a fresh screenshot postcondition; payment, authentication, permission, private messaging, and other human-final actions remain outside this adapter.
+- Never call raw ADB, internal scripts, unwrapped private APIs, or the Xiaowei WebSocket for device actions. Agents use named HTTP commands so identity mapping, redaction, preflight, evidence, idempotency, lease, fuse, and approval gates stay active; `xhs.cmd` remains human-only debugging and compatibility tooling.
 - Never commit or expose `.env`, `config/local.psd1`, `data/`, screenshots, UI XML, tokens, cookies, SSH keys, cloud keys, real device/account identifiers, private-message contents, or contacts.
 - Report only verified, failed, ambiguous, skipped, or human-final outcomes. Never report a sent gesture as success.
+
+## Session close
+
+Before the final report, apply `skills/record-device-control-learning/SKILL.md`. Deduplicate reusable incidents, preserve unresolved channel-specific blockers, and require exact artifacts, regression tests, and named HTTP evidence for lifecycle promotion. A no-change session still validates the incident ledger.

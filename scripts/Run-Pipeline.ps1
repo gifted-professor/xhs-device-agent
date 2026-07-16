@@ -6,6 +6,8 @@
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+. (Join-Path $PSScriptRoot "PowerShell-Runtime.ps1")
+$powerShellExecutable = Resolve-XhsPowerShellExecutable
 if (!$ConfigPath) { $ConfigPath = Join-Path $projectRoot "config\local.psd1" }
 $dataDir = Join-Path $projectRoot "data"
 $rawDir = Join-Path $dataDir "device_inventory"
@@ -56,7 +58,7 @@ try {
     # Keep raw hardware identifiers out of the long-lived child process command line.
     $env:XHS_LOCKED_DEVICE_SERIALS_CSV = $onlineSerials -join ","
     $env:XHS_LOCKED_DEVICE_ALIASES_CSV = $inventoryAliases -join ","
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Collect-PhoneAssets.ps1") -AdbPath $config.AdbPath -OutputDir $rawDir -OpenXhsProfile
+    & $powerShellExecutable -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Collect-PhoneAssets.ps1") -AdbPath $config.AdbPath -OutputDir $rawDir -OpenXhsProfile
     if ($LASTEXITCODE -ne 0) { throw "手机资产采集失败" }
 } finally {
     if ($null -eq $previousLockedSerials) { Remove-Item Env:XHS_LOCKED_DEVICE_SERIALS_CSV -ErrorAction SilentlyContinue } else { $env:XHS_LOCKED_DEVICE_SERIALS_CSV = $previousLockedSerials }
@@ -117,7 +119,7 @@ if ($SyncLark) {
     try {
         $env:LARK_BASE_TOKEN = [string]$config.BaseToken
         $env:LARK_TABLE_ID = [string]$config.TableId
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Sync-LarkBase.ps1") -InventoryCsv $safeLarkCsv -ApprovedAliasesCsv $approvedAliasesCsv
+        & $powerShellExecutable -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Sync-LarkBase.ps1") -InventoryCsv $safeLarkCsv -ApprovedAliasesCsv $approvedAliasesCsv
         if ($LASTEXITCODE -ne 0) { throw "飞书同步失败" }
     } finally {
         if ($null -eq $previousBaseToken) { Remove-Item Env:LARK_BASE_TOKEN -ErrorAction SilentlyContinue } else { $env:LARK_BASE_TOKEN = $previousBaseToken }

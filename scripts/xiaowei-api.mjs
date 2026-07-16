@@ -6,15 +6,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { listXiaoweiActions } from "./xiaowei-action-catalog.mjs";
+import { POWERSHELL_EXECUTABLE } from "./powershell-runtime.mjs";
 import { createXiaoweiClient } from "./xiaowei-client.mjs";
 import { sendXiaoweiRequest } from "./xiaowei-transport.mjs";
 
 const HELP = `Xiaowei API internal capability tool
 
   node scripts/xiaowei-api.mjs catalog
+  node scripts/xiaowei-api.mjs dev-invoke --development-mode --request-file <file>
 
 The unified public entry is .\\xhs.cmd. Device actions are routed through its
-policy and verification layer; raw WebSocket actions are not a public command.
+policy and verification layer. The dev-invoke command is an explicit local
+development escape hatch and is not part of the ordinary operator surface.
 `;
 
 const INTERNAL_OPERATOR_ACTIONS = new Set(["screen", "pushEvent", "apkList", "startApk", "stopApk"]);
@@ -53,7 +56,7 @@ function inspectWindowsParentProcess(parentPid) {
     "[Console]::Out.Write([char]0)",
     "[Console]::Out.Write([string]$p.CommandLine)",
   ].join(";");
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", query], {
+  const result = spawnSync(POWERSHELL_EXECUTABLE, ["-NoProfile", "-NonInteractive", "-Command", query], {
     encoding: "utf8",
     windowsHide: true,
     timeout: 5_000,
@@ -72,7 +75,7 @@ async function requireTrustedGatewayParent(command, runtime) {
   const trustedScripts = TRUSTED_GATEWAY_PARENTS[command] ?? [];
   const inspectParentProcess = runtime.inspectParentProcess ?? inspectWindowsParentProcess;
   const parent = await inspectParentProcess(process.ppid);
-  const trusted = parent?.name?.toLowerCase() === "powershell.exe"
+  const trusted = new Set(["powershell.exe", "pwsh.exe"]).has(parent?.name?.toLowerCase())
     && trustedScripts.some((scriptPath) => commandLineRunsExactScript(parent.commandLine, scriptPath));
   if (!trusted) {
     throw new Error("Xiaowei internal gateway requires the canonical unified PowerShell wrapper");
@@ -97,6 +100,38 @@ function parseInternalOptions(argv) {
     options[key] = String(argv[index]);
   }
   return options;
+}
+
+function parseDevelopmentOptions(argv) {
+  const options = {};
+  const allowed = new Set(["--development-mode", "--request-file", "--endpoint"]);
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = String(argv[index]);
+    if (!allowed.has(token)) throw new Error(`Unknown Xiaowei development option: ${token}`);
+    if (token === "--development-mode") {
+      if (options.developmentMode) throw new Error("--development-mode may be provided only once");
+      options.developmentMode = true;
+      continue;
+    }
+    index += 1;
+    if (index >= argv.length || String(argv[index]).startsWith("--")) {
+      throw new Error(`${token} requires a value`);
+    }
+    const key = token === "--request-file" ? "requestFile" : "endpoint";
+    if (options[key]) throw new Error(`${token} may be provided only once`);
+    options[key] = String(argv[index]);
+  }
+  return options;
+}
+
+async function readDevelopmentRequest(filePath) {
+  if (!filePath) throw new Error("Xiaowei development request file is required");
+  const source = await readFile(filePath);
+  if (source.byteLength > 1024 * 1024) throw new Error("Xiaowei development request is too large");
+  let request;
+  try { request = JSON.parse(source.toString("utf8")); } catch { throw new Error("Xiaowei development request is not valid JSON"); }
+  if (!isPlainObject(request)) throw new Error("Xiaowei development request must be a JSON object");
+  return request;
 }
 
 async function resolveTemporaryOutputPath(filePath) {
@@ -277,6 +312,26 @@ export async function runXiaoweiCli(argv = process.argv.slice(2), runtime = {}) 
   }
   if (command === "catalog") {
     output.write(`${JSON.stringify({ schemaVersion: 1, actions: publicCatalog() }, null, 2)}\n`);
+    return;
+  }
+  if (command === "dev-invoke") {
+    const options = parseDevelopmentOptions(argv.slice(1));
+    if (options.developmentMode !== true || !options.requestFile) {
+      throw new Error("Xiaowei dev-invoke requires --development-mode and --request-file");
+    }
+    const request = await readDevelopmentRequest(options.requestFile);
+    const payload = {};
+    if (Object.hasOwn(request, "devices")) payload.devices = request.devices;
+    if (Object.hasOwn(request, "data")) payload.data = request.data;
+    const client = createXiaoweiClient({
+      endpoint: options.endpoint || process.env.XIAOWEI_API_URL || "ws://127.0.0.1:22222/",
+      acceptedActions: [request.action],
+      developmentMode: true,
+    }, { sendRequest: runtime.sendRequest });
+    const result = await client.invoke(request.action, payload, {
+      authorization: { mode: "development" },
+    });
+    output.write(`${JSON.stringify(result, null, 2)}\n`);
     return;
   }
   if (command === "list") {
