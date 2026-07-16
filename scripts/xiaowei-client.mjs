@@ -35,14 +35,14 @@ function fail(code, message, details) {
   throw new XiaoweiClientError(code, message, details);
 }
 
-function validateAcceptedActions(actions) {
+function validateAcceptedActions(actions, { developmentMode = false } = {}) {
   if (!Array.isArray(actions)) throw new Error("Xiaowei acceptedActions must be an array");
   const result = [];
   for (const action of actions) {
     const definition = getXiaoweiAction(action);
     if (!definition) throw new Error(`Unknown accepted Xiaowei action: ${String(action)}`);
-    if (definition.blockedByDefault || definition.risk === "privileged"
-        || !ORDINARY_ACCEPTED_CAPABILITIES.has(action)) {
+    if (!developmentMode && (definition.blockedByDefault || definition.risk === "privileged"
+        || !ORDINARY_ACCEPTED_CAPABILITIES.has(action))) {
       throw new Error(`Xiaowei action ${action} cannot be enabled as an ordinary accepted capability`);
     }
     if (!result.includes(action)) result.push(action);
@@ -58,7 +58,8 @@ function requireSessionConfirmation(definition, authorization) {
   }
 }
 
-function requireSingleDevice(definition, request) {
+function requireSingleDevice(definition, request, { developmentMode = false } = {}) {
+  if (developmentMode) return;
   if (definition.devices !== "required") return;
   if (typeof request.devices !== "string" || request.devices.includes(",")
       || request.devices.toLowerCase() === "all") {
@@ -85,10 +86,11 @@ function isWithinWindowsRoot(candidate, root) {
   return relative === "" || (!relative.startsWith("..") && !path.win32.isAbsolute(relative));
 }
 
-function validateAuthorization(definition, request, authorization = {}) {
+function validateAuthorization(definition, request, authorization = {}, { developmentMode = false } = {}) {
   if (!authorization || typeof authorization !== "object" || Array.isArray(authorization)) {
     fail("AUTHORIZATION_REQUIRED", `${definition.action} requires a structured authorization`, { action: definition.action });
   }
+  if (developmentMode) return;
   if (definition.risk === "privileged") {
     fail("PRIVILEGED_BLOCKED", `${definition.action} is not available through the ordinary Xiaowei client`, { action: definition.action });
   }
@@ -161,7 +163,8 @@ export function createXiaoweiClient(config = {}, runtime = {}) {
     throw new Error("Xiaowei client config must be an object");
   }
   const endpoint = validateXiaoweiEndpoint(config.endpoint ?? "ws://127.0.0.1:22222/");
-  const acceptedActions = validateAcceptedActions(config.acceptedActions ?? []);
+  const developmentMode = config.developmentMode === true;
+  const acceptedActions = validateAcceptedActions(config.acceptedActions ?? [], { developmentMode });
   const accepted = new Set(acceptedActions);
   const sendRequest = runtime.sendRequest ?? sendXiaoweiRequest;
   const now = runtime.now ?? (() => Date.now());
@@ -169,6 +172,7 @@ export function createXiaoweiClient(config = {}, runtime = {}) {
   return Object.freeze({
     endpoint,
     acceptedActions,
+    developmentMode,
     catalog() {
       return listXiaoweiActions();
     },
@@ -209,9 +213,11 @@ export function createXiaoweiClient(config = {}, runtime = {}) {
       if (!accepted.has(action)) {
         fail("CAPABILITY_NOT_ACCEPTED", `Xiaowei action ${action} has not passed local per-action acceptance`, { action });
       }
-      const request = buildXiaoweiRequest(action, payload);
-      requireSingleDevice(definition, request);
-      validateAuthorization(definition, request, execution.authorization ?? {});
+      const request = buildXiaoweiRequest(action, payload, developmentMode ? {
+        unsafeInternal: { allowAllDevices: true, allowOpaqueAutomation: true },
+      } : {});
+      requireSingleDevice(definition, request, { developmentMode });
+      validateAuthorization(definition, request, execution.authorization ?? {}, { developmentMode });
       const startedAt = now();
       let raw;
       try {

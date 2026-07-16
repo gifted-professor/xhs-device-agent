@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { classifyLocalOcrText, createWindowsLocalOcr } from "../scripts/local-ocr.mjs";
+import { POWERSHELL_EXECUTABLE } from "../scripts/powershell-runtime.mjs";
 
 test("local OCR classifier requires multiple page signals", () => {
   assert.equal(classifyLocalOcrText("搜索"), null);
@@ -44,7 +45,7 @@ test("Windows OCR adapter parses compact JSON and returns semantic hints only", 
     },
   });
   const result = await localOcr({ imagePath: "C:\\temp\\screen.png" });
-  assert.equal(invocation.file, "powershell.exe");
+  assert.equal(invocation.file, POWERSHELL_EXECUTABLE);
   assert.equal(invocation.args.at(-1), "C:\\temp\\screen.png");
   assert.deepEqual(result, {
     pageType: "NETWORK_ERROR",
@@ -117,7 +118,7 @@ test("exact local OCR passes only semantic crop coordinates and a normalized has
   const result = await localOcr(input);
   const args = invocations[0].args;
   assert.deepEqual(args.slice(args.indexOf("-CropX"), args.indexOf("-ExpectedTextHash")), [
-    "-CropX", "166", "-CropY", "95", "-CropWidth", "610", "-CropHeight", "121",
+    "-CropX", "166", "-CropY", "95", "-CropWidth", "610", "-CropHeight", "121", "-RequireChinese",
   ]);
   const digest = args.at(-1);
   assert.match(digest, /^[a-f0-9]{64}$/u);
@@ -182,6 +183,55 @@ test("exact local OCR fails closed for invalid requests or raw-text payloads", a
   }), null);
 });
 
+test("locate-text OCR returns only typed bounds and never passes plaintext to the host script", async () => {
+  let invocation;
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async (input) => {
+      invocation = input;
+      return {
+        exitCode: 0,
+        stdout: '{"available":true,"matches":[{"left":810,"top":2100,"right":850,"bottom":2140}]}',
+      };
+    },
+  });
+  const result = await localOcr({ mode: "locate_text", imagePath: "screen.png", expectedText: "我" });
+  assert.deepEqual(result, {
+    matches: [{ left: 810, top: 2100, right: 850, bottom: 2140 }],
+    matchMode: "normalized_exact",
+    ocrAvailable: true,
+    source: "windows_local_ocr",
+    safeForCloud: false,
+  });
+  assert.ok(invocation.args.includes("locate_text"));
+  assert.ok(invocation.args.includes("-RequireChinese"));
+  assert.equal(invocation.args.includes("我"), false);
+  assert.match(invocation.args.at(-1), /^[a-f0-9]{64}$/u);
+  assert.doesNotMatch(JSON.stringify(result), /screen\.png|我/u);
+});
+
+test("locate-text OCR merges overlapping line and word boxes but preserves separate duplicate targets", async () => {
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({
+        available: true,
+        matches: [
+          { left: 800, top: 2100, right: 860, bottom: 2160 },
+          { left: 805, top: 2105, right: 855, bottom: 2155 },
+          { left: 100, top: 100, right: 160, bottom: 160 },
+        ],
+      }),
+    }),
+  });
+  const result = await localOcr({ mode: "locate_text", imagePath: "screen.png", expectedText: "我" });
+  assert.deepEqual(result.matches, [
+    { left: 800, top: 2100, right: 860, bottom: 2160 },
+    { left: 100, top: 100, right: 160, bottom: 160 },
+  ]);
+});
+
 test("numeric-count OCR uses a bounded crop and returns only a typed count observation", async () => {
   let invocation;
   const localOcr = createWindowsLocalOcr({
@@ -243,4 +293,28 @@ test("numeric-count OCR fails closed for malformed requests, conflicts, and payl
   assert.equal(await leaking({
     mode: "numeric_count", imagePath: "screen.png", bounds: { left: 1, top: 1, right: 20, bottom: 20 },
   }), null);
+});
+
+test("currency OCR returns one typed CNY minor-unit value without raw page text", async () => {
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async () => ({
+      exitCode: 0,
+      stdout: JSON.stringify({ available: true, candidates: ["¥12.30", "12.30元"] }),
+    }),
+  });
+  const result = await localOcr({ mode: "currency_amount", imagePath: "wallet.png" });
+  assert.deepEqual(result, {
+    currencyAmounts: [{ currency: "CNY", amountMinor: 1230 }],
+    ocrAvailable: true,
+    source: "windows_local_ocr",
+    safeForCloud: false,
+  });
+  assert.doesNotMatch(JSON.stringify(result), /wallet\.png|¥|元/u);
+
+  const malformed = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async () => ({ exitCode: 0, stdout: '{"available":true,"candidates":["12:30"]}' }),
+  });
+  assert.equal(await malformed({ mode: "currency_amount", imagePath: "wallet.png" }), null);
 });

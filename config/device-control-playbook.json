@@ -1,0 +1,155 @@
+{
+  "schemaVersion": 1,
+  "protocol": "observe_resolve_recheck_execute_verify",
+  "description": "Machine-readable failure taxonomy and deterministic fallback ladder for named device APIs.",
+  "decisionOrder": [
+    "ACCESSIBILITY_EXACT_NODE",
+    "OCR_EXACT_NODE",
+    "OCR_SCALED_EXACT_NODE",
+    "RELATIONAL_LAYOUT_NODE",
+    "LOCAL_ICON_NODE",
+    "HUMAN_REQUIRED"
+  ],
+  "strategies": [
+    {
+      "id": "ACCESSIBILITY_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one exact visible accessibility node and recheck it before one send."
+    },
+    {
+      "id": "OCR_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one exact local OCR node without returning OCR text or coordinates."
+    },
+    {
+      "id": "OCR_SCALED_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Retry exact local OCR on bounded two-times tiles and map the result back internally."
+    },
+    {
+      "id": "RELATIONAL_LAYOUT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Infer one node from exact anchors using a closed layout algorithm and restricted region."
+    },
+    {
+      "id": "LOCAL_ICON_NODE",
+      "status": "not_implemented",
+      "readCommand": null,
+      "writeCommand": null,
+      "description": "Resolve a locally classified icon without cloud upload or caller coordinates."
+    },
+    {
+      "id": "HUMAN_REQUIRED",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Stop without a send and preserve current state for a human."
+    }
+  ],
+  "failureCodes": [
+    {
+      "code": "UI_EMPTY",
+      "stage": "observe",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE"],
+      "stopConditions": ["SENSITIVE_SURFACE", "FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "NODE_NOT_FOUND",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "LOCAL_ICON_NODE"],
+      "stopConditions": ["SENSITIVE_SURFACE", "CAPABILITY_MISSING"]
+    },
+    {
+      "code": "OCR_MISS",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "LOCAL_ICON_NODE"],
+      "stopConditions": ["OCR_AMBIGUOUS", "SENSITIVE_SURFACE"]
+    },
+    {
+      "code": "OCR_AMBIGUOUS",
+      "stage": "resolve",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["OCR_AMBIGUOUS"]
+    },
+    {
+      "code": "NODE_AMBIGUOUS",
+      "stage": "resolve",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["NODE_AMBIGUOUS"]
+    },
+    {
+      "code": "LAYOUT_DRIFT",
+      "stage": "recheck",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["LAYOUT_DRIFT"]
+    },
+    {
+      "code": "FOREGROUND_DRIFT",
+      "stage": "recheck",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "POSTCONDITION_MISS",
+      "stage": "verify",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["POSTCONDITION_MISS"]
+    },
+    {
+      "code": "SENSITIVE_SURFACE",
+      "stage": "observe",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["SENSITIVE_SURFACE"]
+    },
+    {
+      "code": "IDENTITY_DRIFT",
+      "stage": "preflight",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["IDENTITY_DRIFT"]
+    },
+    {
+      "code": "CAPABILITY_MISSING",
+      "stage": "resolve",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["CAPABILITY_MISSING"]
+    },
+    {
+      "code": "TRANSPORT_FAILED",
+      "stage": "transport",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["TRANSPORT_FAILED"]
+    }
+  ]
+}

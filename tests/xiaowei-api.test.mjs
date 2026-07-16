@@ -14,6 +14,10 @@ const inspectTrustedMatrixParent = async () => ({
   name: "powershell.exe",
   commandLine: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "${path.resolve("scripts", "Invoke-MatrixAction.ps1")}" -Action ListApps`,
 });
+const inspectTrustedPwshParent = async () => ({
+  name: "pwsh.exe",
+  commandLine: `pwsh.exe -NoProfile -ExecutionPolicy Bypass -File "${path.resolve("scripts", "Invoke-MatrixAction.ps1")}" -Action ListApps`,
+});
 const TEST_GATEWAY_KEY = Buffer.alloc(32, 7).toString("base64");
 
 function writeSignedGatewayFiles(directory, request, options = {}) {
@@ -64,6 +68,44 @@ test("internal list writes identifiers only to a temporary result file", async (
     await assert.rejects(() => runXiaoweiCli(["list"], {
       sendRequest: async () => { throw new Error("must not send"); },
     }), /internal to the verified device gateway/u);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("internal gateway accepts the canonical wrapper when it runs under PowerShell 7", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "xhs-xiaowei-cli-"));
+  try {
+    const resultFile = path.join(directory, "result.json");
+    await runXiaoweiCli(["list", "--internal-gateway", "--result-file", resultFile], {
+      inspectParentProcess: inspectTrustedPwshParent,
+      sendRequest: async () => ({ code: 10000, message: "SUCCESS", data: [] }),
+    });
+    assert.deepEqual(JSON.parse(readFileSync(resultFile, "utf8")).data, []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("development invoke can send privileged actions and all-device selectors only with the explicit flag", async () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "xhs-xiaowei-dev-"));
+  try {
+    const requestFile = path.join(directory, "request.json");
+    writeFileSync(requestFile, JSON.stringify({ action: "adb_shell", devices: "all", data: { command: "getprop" } }));
+    let sent;
+    let stdout = "";
+    await runXiaoweiCli(["dev-invoke", "--development-mode", "--request-file", requestFile], {
+      output: { write(value) { stdout += value; } },
+      sendRequest: async (request) => {
+        sent = request;
+        return { code: 10000, message: "SUCCESS", data: null };
+      },
+    });
+    assert.deepEqual(sent, { action: "adb_shell", devices: "all", data: { command: "getprop" } });
+    assert.equal(JSON.parse(stdout).vendor.code, 10000);
+    await assert.rejects(() => runXiaoweiCli(["dev-invoke", "--request-file", requestFile], {
+      sendRequest: async () => { throw new Error("must not send"); },
+    }), /requires --development-mode/u);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

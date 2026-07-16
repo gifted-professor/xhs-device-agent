@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+
+import { POWERSHELL_EXECUTABLE } from "./powershell-runtime.mjs";
 import { parseCommentCount, resolveCommentCount } from "./detail-perception.mjs";
 
 const DEFAULT_SCRIPT_PATH = fileURLToPath(new URL("./windows-ocr.ps1", import.meta.url));
@@ -17,6 +19,33 @@ function compactHanSpacing(value) {
 
 function exactTextHash(value) {
   return createHash("sha256").update(compactHanSpacing(value), "utf8").digest("hex");
+}
+
+function requiresChineseRecognizer(value) {
+  return /\p{Script=Han}/u.test(String(value ?? ""));
+}
+
+function coalesceOverlappingMatches(matches) {
+  const result = [];
+  for (const candidate of matches) {
+    const candidateArea = (candidate.right - candidate.left) * (candidate.bottom - candidate.top);
+    const existing = result.find((entry) => {
+      const intersectionWidth = Math.max(0, Math.min(entry.right, candidate.right) - Math.max(entry.left, candidate.left));
+      const intersectionHeight = Math.max(0, Math.min(entry.bottom, candidate.bottom) - Math.max(entry.top, candidate.top));
+      const intersection = intersectionWidth * intersectionHeight;
+      const entryArea = (entry.right - entry.left) * (entry.bottom - entry.top);
+      return intersection / Math.min(entryArea, candidateArea) >= 0.8;
+    });
+    if (existing) {
+      existing.left = Math.min(existing.left, candidate.left);
+      existing.top = Math.min(existing.top, candidate.top);
+      existing.right = Math.max(existing.right, candidate.right);
+      existing.bottom = Math.max(existing.bottom, candidate.bottom);
+    } else {
+      result.push({ ...candidate });
+    }
+  }
+  return result;
 }
 
 function exactCropArguments(input) {
@@ -36,6 +65,19 @@ function exactCropArguments(input) {
     "-CropY", String(top),
     "-CropWidth", String(right - left),
     "-CropHeight", String(bottom - top),
+    ...(requiresChineseRecognizer(expectedText) ? ["-RequireChinese"] : []),
+    "-ExpectedTextHash", exactTextHash(expectedText),
+  ];
+}
+
+function locateTextArguments(input) {
+  if (input.mode !== "locate_text") return null;
+  const expectedText = String(input.expectedText ?? "");
+  if (!expectedText || [...expectedText].length > 256 || /[\u0000-\u001f\u007f]/u.test(expectedText)
+      || input.bounds !== undefined) return null;
+  return [
+    "-Mode", "locate_text",
+    ...(requiresChineseRecognizer(expectedText) ? ["-RequireChinese"] : []),
     "-ExpectedTextHash", exactTextHash(expectedText),
   ];
 }
@@ -56,6 +98,16 @@ function numericCropArguments(input) {
     "-CropWidth", String(right - left),
     "-CropHeight", String(bottom - top),
   ];
+}
+
+function parseCurrencyAmount(value) {
+  const normalized = String(value ?? "").normalize("NFKC").replace(/\s+/gu, "").replace(/,/gu, "");
+  const match = /^(?:[¥￥])(\d{1,12})(?:\.(\d{1,2}))?$|^(\d{1,12})(?:\.(\d{1,2}))?元$/u.exec(normalized);
+  if (!match) return null;
+  const whole = match[1] ?? match[3];
+  const fraction = (match[2] ?? match[4] ?? "").padEnd(2, "0");
+  const amountMinor = Number(whole) * 100 + Number(fraction);
+  return Number.isSafeInteger(amountMinor) ? { currency: "CNY", amountMinor } : null;
 }
 
 function includesAny(text, values) {
@@ -201,21 +253,25 @@ export function classifyLocalOcrText(value) {
 export function createWindowsLocalOcr(options = {}) {
   const commandRunner = options.commandRunner ?? defaultCommandRunner;
   const scriptPath = options.scriptPath ?? DEFAULT_SCRIPT_PATH;
-  const powershellPath = options.powershellPath ?? "powershell.exe";
+  const powershellPath = options.powershellPath ?? POWERSHELL_EXECUTABLE;
   const enabled = options.enabled ?? process.platform === "win32";
 
   return async function windowsLocalOcr(input = {}) {
     if (!enabled || !input.imagePath) return null;
     const mode = input.mode ?? "page_safety";
-    if (!["page_safety", "exact_text", "numeric_count"].includes(mode)) return null;
+    if (!["page_safety", "exact_text", "locate_text", "numeric_count", "currency_amount"].includes(mode)) return null;
     if (mode === "page_safety" && input.bounds !== undefined) return null;
     const exactArgs = mode === "exact_text" ? exactCropArguments(input) : [];
     if (mode === "exact_text" && !exactArgs) return null;
+    const locateArgs = mode === "locate_text" ? locateTextArguments(input) : [];
+    if (mode === "locate_text" && !locateArgs) return null;
     const numericArgs = mode === "numeric_count" ? numericCropArguments(input) : [];
     if (mode === "numeric_count" && !numericArgs) return null;
     let result;
     try {
-      const modeArgs = mode === "numeric_count" ? [...numericArgs, "-Mode", "numeric_count"] : exactArgs;
+      const modeArgs = mode === "numeric_count" ? [...numericArgs, "-Mode", "numeric_count"]
+        : mode === "currency_amount" ? ["-Mode", "currency_amount", "-RequireChinese"]
+        : mode === "locate_text" ? locateArgs : exactArgs;
       result = await commandRunner({
         file: powershellPath,
         args: [
@@ -253,6 +309,44 @@ export function createWindowsLocalOcr(options = {}) {
       if (keys.some((key) => !["available", "matched"].includes(key)) || typeof payload.matched !== "boolean") return null;
       return {
         exactTextMatch: payload.matched,
+        matchMode: "normalized_exact",
+        ocrAvailable: true,
+        source: "windows_local_ocr",
+        safeForCloud: false,
+      };
+    }
+    if (mode === "currency_amount") {
+      const keys = Object.keys(payload);
+      if (keys.some((key) => !["available", "candidates"].includes(key))
+          || !Array.isArray(payload.candidates) || payload.candidates.length === 0 || payload.candidates.length > 16
+          || payload.candidates.some((candidate) => typeof candidate !== "string" || candidate.length > 32)) return null;
+      const amounts = payload.candidates.map(parseCurrencyAmount);
+      if (amounts.some((amount) => amount === null)) return null;
+      const unique = [...new Map(amounts.map((amount) => [`${amount.currency}:${amount.amountMinor}`, amount])).values()];
+      return {
+        currencyAmounts: unique,
+        ocrAvailable: true,
+        source: "windows_local_ocr",
+        safeForCloud: false,
+      };
+    }
+    if (mode === "locate_text") {
+      const keys = Object.keys(payload);
+      if (keys.some((key) => !["available", "matches"].includes(key))
+          || !Array.isArray(payload.matches) || payload.matches.length > 16) return null;
+      const matches = payload.matches.map((match) => {
+        if (!match || typeof match !== "object" || Array.isArray(match)
+            || Object.keys(match).some((key) => !["left", "top", "right", "bottom"].includes(key))) return null;
+        const bounds = {
+          left: Number(match.left), top: Number(match.top), right: Number(match.right), bottom: Number(match.bottom),
+        };
+        if (!Object.values(bounds).every(Number.isSafeInteger)
+            || bounds.left < 0 || bounds.top < 0 || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return null;
+        return bounds;
+      });
+      if (matches.some((match) => match === null)) return null;
+      return {
+        matches: coalesceOverlappingMatches(matches),
         matchMode: "normalized_exact",
         ocrAvailable: true,
         source: "windows_local_ocr",

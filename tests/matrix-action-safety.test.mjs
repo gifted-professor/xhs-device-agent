@@ -8,10 +8,35 @@ import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const actionScript = join(root, "scripts", "Invoke-MatrixAction.ps1");
+const deviceReadScript = join(root, "scripts", "Invoke-XiaoweiDeviceRead.ps1");
 const collectScript = join(root, "scripts", "Collect-PhoneAssets.ps1");
 const exampleConfig = join(root, "config", "matrix.example.psd1");
 const missingConfig = join(tmpdir(), `xhs-missing-${process.pid}.psd1`);
 const windowsOnly = { skip: process.platform !== "win32" };
+
+test("temporary relaxed named commands are explicit and locally reversible", async () => {
+  const [matrixSource, readSource, configSource] = await Promise.all([
+    readFile(actionScript, "utf8"),
+    readFile(deviceReadScript, "utf8"),
+    readFile(exampleConfig, "utf8"),
+  ]);
+  assert.match(configSource, /TemporaryRelaxedNamedCommands\s*=\s*\$false/u);
+  for (const source of [matrixSource, readSource]) {
+    assert.match(source, /TemporaryRelaxedNamedCommands/u);
+    assert.match(source, /!\$temporaryRelaxed/u);
+    assert.match(source, /ApprovedAppPackages allowlist/u);
+  }
+  assert.match(readSource, /!\$temporaryRelaxed -and \$safeLabels/u);
+});
+
+test("screenshot OCR has a bounded two-times small-text fallback with inverse coordinate mapping", async () => {
+  const source = await readFile(join(root, "scripts", "windows-ocr.ps1"), "utf8");
+  assert.match(source, /\$scale\s*=\s*2/u);
+  assert.match(source, /HighQualityBicubic/u);
+  assert.match(source, /-Scale\s+\$scale/u);
+  assert.match(source, /BoundingRect\.X[^\r\n]+\/\s*\$Scale/u);
+  assert.doesNotMatch(source, /\$scale\s*=\s*[3-9]/u);
+});
 
 function runAction(args) {
   return spawnSync("powershell.exe", [
@@ -113,7 +138,8 @@ test("TapText interaction labels cannot be confirmed or grouped through", window
     "-ConfirmationReason", "test-only", "-RollbackInfo", "go back", "-ExpectText", "Home",
   ]);
   assert.notEqual(financialPage.status, 0);
-  assert.match(`${financialPage.stdout}${financialPage.stderr}`, /allowlist/);
+  assert.doesNotMatch(`${financialPage.stdout}${financialPage.stderr}`, /allowlist/);
+  assert.match(`${financialPage.stdout}${financialPage.stderr}`, /Config not found/);
 
   const groupedSafeLabel = runAction([
     "-Action", "TapText", "-Text", "Cancel", "-Group", "all", "-ConfirmAction",

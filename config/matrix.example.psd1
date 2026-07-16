@@ -12,6 +12,13 @@
         # acceptance procedure for the installed Xiaowei version.
         Api = @{
             Enabled = $false
+            # Local acceptance-only escape hatch. When true, xhs.cmd dev invoke
+            # may send every catalog action, including adb and adb_shell.
+            DevelopmentMode = $false
+            # Development-only bridge to Xiaowei's embedded Tauri IPC. Enable
+            # it with `xhs.cmd host enable-private-api`, restart Xiaowei once,
+            # and remove it later with `xhs.cmd host disable-private-api`.
+            PrivateApiDebuggerEndpoint = "http://127.0.0.1:9223"
             AcceptedXiaoweiVersion = ""
             # Acceptance is per device profile. A canary result must never
             # authorize another phone implicitly.
@@ -25,8 +32,12 @@
             }
         }
 
-        # Arbitrary app launch/stop is not exposed. Add only packages that were
-        # explicitly approved for this local device matrix.
+        # Temporary local relaxation switch. Keep false in normal operation.
+        # When true, named app.open/app.stop accept any syntactically valid
+        # package while identity, confirmation, and post-state checks remain.
+        TemporaryRelaxedNamedCommands = $false
+
+        # Used when TemporaryRelaxedNamedCommands is false.
         ApprovedAppPackages = @("com.xingin.xhs")
 
         # Optional direct Unicode text adapter. It temporarily selects an

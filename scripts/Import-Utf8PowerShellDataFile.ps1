@@ -5,6 +5,14 @@ function Import-Utf8PowerShellDataFile {
         [string]$LiteralPath
     )
 
+    if (!(Get-Command -Name Import-PowerShellDataFile -ErrorAction SilentlyContinue)) {
+        $utilityModule = Join-Path $PSHOME "Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1"
+        if (!(Test-Path -LiteralPath $utilityModule -PathType Leaf)) {
+            throw "The PowerShell data-file module is unavailable in this runtime"
+        }
+        Import-Module -Name $utilityModule -ErrorAction Stop
+    }
+
     $resolved = (Resolve-Path -LiteralPath $LiteralPath).Path
     $bytes = [System.IO.File]::ReadAllBytes($resolved)
     $hasUtf8Bom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF

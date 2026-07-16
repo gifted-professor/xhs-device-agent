@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 1,
+  "incidents": [
+    {
+      "fingerprint": "xiaowei-text-input-identity-gate",
+      "title": "效卫文本输入仍依赖独立在线身份交叉验证",
+      "scope": "text_input",
+      "category": "identity",
+      "failureCode": "IDENTITY_DRIFT",
+      "state": "open",
+      "observation": "效卫文本输入要求选中设备同时通过独立在线清单和效卫当前清单验证;本机 ADB 为空时该输入通道仍可能停止。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "文本输入适配器在发送前交叉核对选中设备的独立在线身份与效卫当前身份。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-text-input.mjs",
+            "claim": "实现选中设备的独立在线身份与效卫身份交叉验证。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-api.test.mjs",
+            "name": "身份不一致时在输入前停止且不调用输入动作"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0001",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-15",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-hermes-retrospective"
+      ]
+    },
+    {
+      "fingerprint": "caller-device-primitive-injection",
+      "title": "调用方尝试注入坐标、路径或设备覆盖字段",
+      "scope": "gateway_contract",
+      "category": "safety",
+      "failureCode": null,
+      "state": "resolved",
+      "observation": "通用节点请求必须拒绝调用方坐标、文件路径、内部设备覆盖字段和自由表达式。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "开放请求字段会绕过服务端的新鲜节点解析和身份绑定。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": null,
+        "summary": "网关和节点选择器使用精确字段集合,并在服务内部解析设备和节点。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "拒绝命名节点请求中的未知字段。"
+          },
+          {
+            "path": "scripts/device-node-engine.mjs",
+            "claim": "只接受封闭的语义节点选择器。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xhs-remote-gateway.test.mjs",
+            "name": "拒绝坐标、路径、表达式和设备覆盖字段"
+          },
+          {
+            "path": "tests/device-node-engine.test.mjs",
+            "name": "节点选择器只接受封闭精确策略"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0002",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-15",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-hermes-retrospective"
+      ]
+    },
+    {
+      "fingerprint": "app-specific-navigation-fragmentation",
+      "title": "App 专用导航规则造成能力碎片化",
+      "scope": "navigation",
+      "category": "architecture",
+      "failureCode": "OCR_MISS",
+      "state": "mitigated",
+      "observation": "孤立短文本识别失败曾通过 App 专用锚点逻辑处理,难以迁移到其他页面。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "旧兼容入口把布局关系绑定到固定 App 语义,而不是封闭的通用关系算法。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "RELATIONAL_LAYOUT_NODE",
+        "summary": "新增通用节点 API 和受限底部等距关系算法;旧兼容分支暂时仍保留。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/device-node-engine.mjs",
+            "claim": "实现与 App 无关的受限关系节点算法。"
+          },
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "通用节点解析与激活使用统一关系引擎。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/device-node-engine.test.mjs",
+            "name": "通用水平等距推导并在布局漂移时失败关闭"
+          },
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "通用节点解析和激活重新采集证据"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "不同选中机器均返回 HTTP 200 和唯一脱敏节点。"
+          }
+        ]
+      },
+      "id": "DCI-0003",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-15",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-hermes-retrospective"
+      ]
+    },
+    {
+      "fingerprint": "local-icon-node-missing",
+      "title": "纯图标页面缺少本地图标节点解析",
+      "scope": "perception",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "open",
+      "observation": "当无障碍、精确 OCR 和可验证布局关系都不可用时,系统尚不能解析纯图标目标。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "本地图标策略仍被明确标记为未实现。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "config/device-control-playbook.json",
+            "claim": "本地图标节点策略状态为未实现。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0004",
+      "evidenceLevel": "inspected",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-hermes-retrospective"
+      ]
+    },
+    {
+      "fingerprint": "cross-machine-node-reuse",
+      "title": "跨机器复用节点会造成目标漂移",
+      "scope": "multi_device",
+      "category": "identity",
+      "failureCode": "IDENTITY_DRIFT",
+      "state": "verified",
+      "observation": "不同机器不能共享另一次请求产生的节点位置或观察证据。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "节点位置依赖当前机器、前台包、页面、尺寸和新鲜观察。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "ACCESSIBILITY_EXACT_NODE",
+        "summary": "每个节点请求按机器独立解析;激活时再次独立采集两份证据且不接受节点令牌。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "节点解析和激活绑定单台机器并重新采集证据。"
+          },
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "公开节点请求只接受两位机器号和封闭选择器。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "节点激活重新解析、只发送一次并验证新后态"
+          },
+          {
+            "path": "tests/xhs-remote-gateway.test.mjs",
+            "name": "节点命令不接受调用方设备覆盖字段"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "两台选中机器分别独立返回 HTTP 200 和两份新鲜观察。"
+          }
+        ]
+      },
+      "id": "DCI-0005",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-15",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-hermes-retrospective"
+      ]
+    },
+    {
+      "fingerprint": "powershell-runtime-selection-and-cross-version-compatibility",
+      "title": "PowerShell 运行时硬编码导致设备控制入口无法平滑升级",
+      "scope": "runtime",
+      "category": "compatibility",
+      "failureCode": null,
+      "state": "verified",
+      "observation": "设备控制入口和内部包装器曾硬编码 Windows PowerShell 5.1;切换到 PowerShell 7 后又暴露父进程识别、配置模块自动发现和 CMD 参数边界差异。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "项目缺少统一的 PowerShell 运行时解析层,并把包装器身份和部分启动语义绑定到 powershell.exe。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": null,
+        "summary": "新增统一运行时选择器,设备动作优先使用 pwsh 并回退 5.1;规范包装器接受 pwsh,配置加载器显式恢复模块,CMD 仅保留参数兼容启动壳。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/powershell-runtime.mjs",
+            "claim": "Node 调度统一选择 PowerShell 7 并提供 5.1 回退。"
+          },
+          {
+            "path": "scripts/PowerShell-Runtime.ps1",
+            "claim": "PowerShell 管理脚本共享同一运行时选择规则。"
+          },
+          {
+            "path": "scripts/xhs-agent.mjs",
+            "claim": "设备动作调度使用统一 PowerShell 运行时。"
+          },
+          {
+            "path": "scripts/xiaowei-api.mjs",
+            "claim": "效卫内部网关接受规范的 pwsh 父包装器。"
+          },
+          {
+            "path": "scripts/Import-Utf8PowerShellDataFile.ps1",
+            "claim": "跨版本配置加载不依赖继承的模块搜索路径。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/powershell-runtime.test.mjs",
+            "name": "PowerShell 运行时优先 7 并在不可用时回退 5.1"
+          },
+          {
+            "path": "tests/xiaowei-api.test.mjs",
+            "name": "规范内部网关接受 PowerShell 7 包装器"
+          },
+          {
+            "path": "tests/xhs-entry-wrapper.test.mjs",
+            "name": "CMD、PowerShell 与 Git Bash 保持 Unicode 和空格参数边界"
+          },
+          {
+            "path": "tests/task-windows-wrapper.test.mjs",
+            "name": "Windows 任务包装器在跨版本模块环境中完成只读准备"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.list",
+            "outcome": "网关重载后返回 HTTP 200,公开机器清单无设备标识字段。"
+          }
+        ]
+      },
+      "id": "DCI-0006",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-powershell7-runtime-adaptation"
+      ]
+    }
+  ]
+}
