@@ -349,27 +349,27 @@ test("unsupported coordinate selectors are ignored", () => {
   });
 });
 
-test("login/challenge and other sensitive screens always require a human and block cloud upload", () => {
+test("sensitive screens remain classified while cloud vision stays available", () => {
   const login = classifyPage(stateFixtures.LOGIN_OR_CHALLENGE, rules);
   assert.equal(login.safety.sensitive, true);
   assert.equal(login.safety.challenge, true);
   assert.equal(login.safety.requiresHuman, true);
-  assert.equal(login.safety.blockCloudUpload, true);
+  assert.equal(login.safety.blockCloudUpload, false);
 
   const payment = classifySafety(hierarchy(node({ text: "收银台" })), rules, "UNKNOWN");
   assert.deepEqual(payment.reasons, ["payment-screen"]);
   assert.equal(payment.requiresHuman, true);
-  assert.equal(payment.blockCloudUpload, true);
+  assert.equal(payment.blockCloudUpload, false);
 
   const permission = classifySafety(hierarchy(node({ text: "仅在使用时允许" })), rules, "UNKNOWN");
   assert.deepEqual(permission.reasons, ["permission-prompt"]);
   assert.equal(permission.challenge, true);
   assert.equal(permission.requiresHuman, true);
-  assert.equal(permission.blockCloudUpload, true);
+  assert.equal(permission.blockCloudUpload, false);
 
   const privateAccount = classifySafety(hierarchy(node({ text: "订单详情" })), rules, "UNKNOWN");
   assert.deepEqual(privateAccount.reasons, ["orders-account-or-private-screen"]);
-  assert.equal(privateAccount.blockCloudUpload, true);
+  assert.equal(privateAccount.blockCloudUpload, false);
 });
 
 test("device overrides only activate for the exact calibrated app version", () => {

@@ -308,6 +308,791 @@
       "sessionIds": [
         "2026-07-16-powershell7-runtime-adaptation"
       ]
+    },
+    {
+      "fingerprint": "alipay-assets-structured-read-api-missing",
+      "title": "支付宝总资产缺少结构化高层读取命令",
+      "scope": "financial_read",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "open",
+      "observation": "命名 API 能打开支付宝并唯一解析理财导航,但普通 Agent 没有返回已验证总资产的结构化命令,现有公开 UI 结果也不提供金额。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "远程网关没有注册 finance.alipay-assets,现有流程仍依赖多个动作和内部 UI 证据完成金额提取。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "公开命令注册表没有支付宝资产读取命令。"
+          },
+          {
+            "path": "docs/TAILSCALE_REMOTE_CONTROL.md",
+            "claim": "高层支付宝资产读取仍列为后续能力。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "app.open",
+            "outcome": "目标机器返回 HTTP 200 并验证支付宝前台。"
+          },
+          {
+            "command": "device.node.resolve",
+            "outcome": "理财节点返回 HTTP 200 和两份新鲜脱敏证据,但没有结构化金额读取命令。"
+          }
+        ]
+      },
+      "id": "DCI-0007",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-machine01-wallet-flow-trial"
+      ]
+    },
+    {
+      "fingerprint": "named-node-failure-without-standard-code",
+      "title": "节点 API 失败未返回标准故障码",
+      "scope": "gateway_contract",
+      "category": "diagnostics",
+      "failureCode": null,
+      "state": "open",
+      "observation": "节点激活和后续只读解析失败时只返回通用 HTTP 502,普通 Agent 无法确定应传给 device.guide 的标准故障码。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "远程网关将非零子进程结果映射为通用 502 包装,没有把内部节点失败归一化为公开故障码。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "非零命名命令结果使用通用 502 响应且没有标准 failureCode 字段。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.node.activate",
+            "outcome": "单次激活返回 HTTP 502,公开响应没有标准故障码,动作未重放。"
+          },
+          {
+            "command": "device.node.resolve",
+            "outcome": "目标和独立锚点的只读解析均返回 HTTP 502,公开响应没有标准故障码。"
+          }
+        ]
+      },
+      "id": "DCI-0008",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-machine01-wallet-flow-trial"
+      ]
+    },
+    {
+      "fingerprint": "vision-node-source-runtime-branch-missing",
+      "title": "视觉节点已进入选择器但缺少运行时分支",
+      "scope": "perception",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "verified",
+      "observation": "视觉来源曾只通过选择器校验而未贯通设备读取和公开命名 API。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "选择器、执行器和公开响应校验没有同步扩展视觉来源。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "视觉来源现已贯通双截图解析、内部稳定性复核和公开命名响应。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/device-node-engine.mjs",
+            "claim": "验证视觉选择器并严格解析零个或一个有效屏内节点矩形。"
+          },
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "运行时独立处理 vision source 并在两份新鲜观察上复核。"
+          },
+          {
+            "path": "scripts/cloud-vision.mjs",
+            "claim": "提供可注入的 OpenAI-compatible 视觉请求实现。"
+          },
+          {
+            "path": "config/device-control-playbook.json",
+            "claim": "将 VISION_NODE 登记为已实现通用策略。"
+          },
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "独立执行视觉观察并复核两份新鲜证据。"
+          },
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "公开结构化节点响应接受视觉来源。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/device-node-engine.test.mjs",
+            "name": "视觉节点响应只接受唯一屏内整数矩形"
+          },
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "视觉节点解析使用两份新鲜截图且不公开模型坐标"
+          },
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "视觉配置缺失返回标准能力错误而不进入关系分支"
+          },
+          {
+            "path": "tests/xhs-remote-gateway.test.mjs",
+            "name": "结构化节点响应接受视觉来源"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "HTTP 200,返回唯一脱敏视觉节点和两份新鲜证据。"
+          }
+        ]
+      },
+      "id": "DCI-0009",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 2,
+      "sessionIds": [
+        "2026-07-16-vision-node-runtime-integration",
+        "2026-07-16-kimi-vision-named-api"
+      ]
+    },
+    {
+      "fingerprint": "vision-service-runtime-configuration-missing",
+      "title": "视觉节点运行环境尚未配置服务连接",
+      "scope": "perception",
+      "category": "configuration",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "verified",
+      "observation": "项目进程原先只读取独立视觉环境变量,无法复用已存在的 Hermes 辅助视觉配置。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "视觉适配器没有读取 Hermes auxiliary.vision 及其环境凭据。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "显式视觉配置缺失时复用 Hermes 辅助视觉模型、OpenAI-compatible 基础地址、超时和凭据。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/cloud-vision.mjs",
+            "claim": "默认适配器读取 VISION 或 AI 前缀的服务配置。"
+          },
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "缺少视觉服务配置时返回 CAPABILITY_MISSING。"
+          },
+          {
+            "path": "scripts/cloud-vision.mjs",
+            "claim": "读取 Hermes 辅助视觉配置并规范化 OpenAI-compatible chat completions 端点。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "视觉配置缺失返回标准能力错误而不进入关系分支"
+          },
+          {
+            "path": "tests/cloud-vision.test.mjs",
+            "name": "复用 Hermes Kimi 视觉模型和环境凭据"
+          },
+          {
+            "path": "tests/cloud-vision.test.mjs",
+            "name": "OpenAI-compatible v1 基础地址扩展到 chat completions"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "HTTP 200,当前运行环境通过复用配置完成视觉节点解析。"
+          }
+        ]
+      },
+      "id": "DCI-0010",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 2,
+      "sessionIds": [
+        "2026-07-16-vision-node-runtime-integration",
+        "2026-07-16-kimi-vision-named-api"
+      ]
+    },
+    {
+      "fingerprint": "random-feed-browse-with-occasional-back-timeout",
+      "title": "首页随机点击+滑动循环流程成功跑通,偶发返回后态验证超时",
+      "scope": "navigation",
+      "category": "stability",
+      "failureCode": null,
+      "state": "mitigated",
+      "observation": "使用 xhs.open-visible 进入帖子、device.back 返回、pointerEvent type=6 向上滑动的组合循环在 01 号机跑通 6 轮;其中 1 轮 device.back 返回后 UI 指纹在 8 秒内未稳定,但后续观察仍显示已回到首页,循环继续完成。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "device.back 后服务端要求两份间隔 500ms 的归一化 UI 指纹一致以完成验证,但帖子页返回首页后的过渡动画或加载使 8 秒窗口内指纹未稳定。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": null,
+        "summary": "将 device.back 的超时或稳定性检查放宽到更长窗口,或在后续 xhs.observe 仍能读到 HOME_FEED 时允许循环继续。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "device.back 在发送后通过 UI 指纹验证后态。"
+          },
+          {
+            "path": "docs/TAILSCALE_REMOTE_CONTROL.md",
+            "claim": "pointerEvent type=6 为方向性上滑,不接收 x/y 坐标。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "xhs.open-visible",
+            "outcome": "6 轮中均成功进入 IMAGE_NOTE 或 VIDEO_NOTE 详情页。"
+          },
+          {
+            "command": "device.back",
+            "outcome": "5/6 轮成功验证返回后态;1 轮因 UI 指纹 8 秒内未稳定返回失败。"
+          },
+          {
+            "command": "dev.invoke",
+            "outcome": "pointerEvent type=6 每轮均成功触发上滑,xhs.observe 随后能读到新的首页卡片。"
+          }
+        ]
+      },
+      "id": "DCI-0011",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-random-feed-browse-01"
+      ]
+    },
+    {
+      "fingerprint": "telegram-slash-xw-bridge-missing",
+      "title": "Telegram /xw 命令无法触发 record-device-control-learning 复盘",
+      "scope": "interaction",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "open",
+      "observation": "用户希望用 Telegram /xw 命令直接触发 record-device-control-learning 技能进行复盘,但当前项目缺少 Telegram slash 命令注册、消息路由和 skill 调用桥接。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "Telegram slash 命令需要在 BotFather 注册,并由 Hermes 或项目网关解析消息后映射到本地 skill 脚本;项目当前没有这层命令网关。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "skills/record-device-control-learning/SKILL.md",
+            "claim": "该 skill 只提供 CLI 形式的 record-learning.mjs 入口。"
+          },
+          {
+            "path": "skills/record-device-control-learning/scripts/record-learning.mjs",
+            "claim": "脚本通过 --candidate-base64 接收候选事件,没有监听 Telegram 消息的能力。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0012",
+      "evidenceLevel": "inspected",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-telegram-slash-xw-request"
+      ]
+    },
+    {
+      "fingerprint": "vision-provider-request-missing-hard-timeout",
+      "title": "视觉上游请求缺少硬超时会长期占用设备队列",
+      "scope": "transport",
+      "category": "stability",
+      "failureCode": "TRANSPORT_FAILED",
+      "state": "verified",
+      "observation": "远端视觉请求曾长期不返回并持续占用串行设备命令队列。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "视觉 fetch 没有 AbortSignal 硬超时,网关总时限也短于双观察视觉调用的有界最坏时间。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "单次视觉请求使用可中断硬超时,包含视觉来源的节点命令使用覆盖两次观察的独立有界总时限。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/cloud-vision.mjs",
+            "claim": "通过 AbortController 限制单次视觉请求。"
+          },
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "视觉节点命令获得独立有界总时限。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/cloud-vision.test.mjs",
+            "name": "视觉传输在有界超时到期时中断"
+          },
+          {
+            "path": "tests/xhs-remote-gateway.test.mjs",
+            "name": "视觉节点命令获得双观察有界网关时限"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "HTTP 200,双观察请求完成且命令队列释放。"
+          }
+        ]
+      },
+      "id": "DCI-0013",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-kimi-vision-named-api"
+      ]
+    },
+    {
+      "fingerprint": "vision-node-model-extent-instability",
+      "title": "视觉模型外框范围波动造成虚假布局漂移",
+      "scope": "perception",
+      "category": "stability",
+      "failureCode": "LAYOUT_DRIFT",
+      "state": "verified",
+      "observation": "同一视觉目标在两份新鲜截图中被返回为不同大小的外框,旧稳定性规则将其误判为节点漂移。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "点击目标只需要安全中心,但稳定性比较同时绑定了模型不稳定的视觉外框宽高。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "服务内部将唯一视觉矩形规范为固定大小的安全中心标记,并继续对两次中心位置执行严格漂移校验。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "将视觉矩形内部规范为固定大小安全中心标记。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "不同外框范围但稳定中心的双视觉观察可以解析"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "HTTP 200,同一语义节点通过两份新鲜视觉观察。"
+          }
+        ]
+      },
+      "id": "DCI-0014",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-kimi-vision-named-api"
+      ]
+    },
+    {
+      "fingerprint": "vision-node-public-source-validation-missing",
+      "title": "公开节点响应校验遗漏视觉来源",
+      "scope": "gateway_contract",
+      "category": "compatibility",
+      "failureCode": null,
+      "state": "verified",
+      "observation": "设备读取已成功返回视觉节点,但网关结构化响应校验拒绝 source 为 vision 的合法结果。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "公开节点来源允许集合没有与执行层新增视觉来源同步。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "公开结构化响应校验接受 vision,同时保持坐标、路径和设备标识不可见。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "公开节点来源集合包含 vision 并继续执行精确字段校验。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xhs-remote-gateway.test.mjs",
+            "name": "结构化节点响应接受视觉来源"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "HTTP 200,公开响应仅包含脱敏语义节点和证据字段。"
+          }
+        ]
+      },
+      "id": "DCI-0015",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-kimi-vision-named-api"
+      ]
+    },
+    {
+      "fingerprint": "device-back-postcondition-fingerprint-timeout",
+      "title": "device.back 后 UI 指纹 8 秒内未稳定导致验证失败",
+      "scope": "navigation",
+      "category": "stability",
+      "failureCode": "POSTCONDITION_MISS",
+      "state": "open",
+      "observation": "在 01 号机小红书首页随机点击循环中,6 轮里有 1 轮 device.back 返回后服务端报告 UI did not produce two identical normalized hierarchy fingerprints 500ms apart within 8 seconds,但后续 xhs.observe 仍能读到 HOME_FEED。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "帖子详情页退出到首页存在过渡动画或组件重绘,使 500ms 间隔的两次 hierarchy 指纹在 8 秒窗口内不一致。"
+      },
+      "resolution": {
+        "kind": "none",
+        "strategyId": null,
+        "summary": null
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "device.back 后服务端验证 8 秒内 500ms 间隔的 hierarchy 指纹一致性。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.back",
+            "outcome": "5/6 轮成功返回;1 轮在 8 秒内未得到稳定指纹,返回 HTTP 200 但 code=2。"
+          }
+        ]
+      },
+      "id": "DCI-0016",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-device-back-timeout-01"
+      ]
+    },
+    {
+      "fingerprint": "named-device-back-fails-when-local-adb-selector-empty",
+      "title": "命名 device.back 在本机 ADB 选择器为空时失败",
+      "scope": "navigation",
+      "category": "compatibility",
+      "failureCode": "TRANSPORT_FAILED",
+      "state": "mitigated",
+      "observation": "当命名 HTTP 请求 device.back 到达网关后,底层 PowerShell 选择器因本机 ADB 未枚举到设备而抛 None of the selected devices are online,即使 Xiaowei API 设备清单显示目标机器在线且 device.ui/device.screen 正常。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "device.back 的执行路径仍依赖本地 ADB 枚举来选择目标设备,而不是复用 Xiaowei API 的在线映射。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": "ACCESSIBILITY_EXACT_NODE",
+        "summary": "使用 dev.invoke action=adb_shell 通过 Xiaowei API 直接发送返回键;该路径需要开发模式并标记为 privileged。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/Invoke-MatrixAction.ps1",
+            "claim": "device.back 等命名动作在 PowerShell 层选择目标时依赖本地 ADB 枚举。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.back",
+            "outcome": "ok=false, stderr contains None of the selected devices are online"
+          },
+          {
+            "command": "dev.invoke.adb-shell",
+            "outcome": "ok=true, adb_shell keyevent 4 sent through xiaowei-api and returned to feed"
+          }
+        ]
+      },
+      "id": "DCI-0017",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-xhs-feed-like-favorite-02"
+      ]
+    },
+    {
+      "fingerprint": "device-tap-text-engagement-verification-method",
+      "title": "device.tap-text 点赞/收藏后可通过描述前缀变化验证",
+      "scope": "verification",
+      "category": "method",
+      "failureCode": "POSTCONDITION_MISS",
+      "state": "mitigated",
+      "observation": "在小红书笔记详情页,device.tap-text 点击点赞或收藏后,再次读取 device.ui 可看到按钮描述从 点赞 N 变为 已点赞N+1,或从 收藏N 变为 已收藏N+1,从而验证状态变化完成。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "XHS 详情页按钮的 content-desc 或 text 会同步反映用户的点赞/收藏计数和状态。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": "ACCESSIBILITY_EXACT_NODE",
+        "summary": "将动作后 UI 读取与描述前缀变化断言结合,作为可复用的社交互动验证方法,但尚未纳入自动回归测试。"
+      },
+      "evidence": {
+        "artifacts": [],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.tap-text",
+            "outcome": "like button changed from 点赞 6 to 已点赞7 after tap"
+          },
+          {
+            "command": "device.tap-text",
+            "outcome": "favorite button changed from 收藏656 to 已收藏657 after tap"
+          }
+        ]
+      },
+      "id": "DCI-0018",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-xhs-feed-like-favorite-02"
+      ]
+    },
+    {
+      "fingerprint": "agent-policy-authority-divergence-across-rule-sources",
+      "title": "Agent policy authority diverged across repository and runtime rule sources",
+      "scope": "operator_contract",
+      "category": "policy",
+      "failureCode": null,
+      "state": "resolved",
+      "observation": "A permissive top-level contract coexisted with stale approval and stop gates in operator guidance, runtime memory, help text, and the machine-readable device guide, so a refreshed session could behave differently from an older session.",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "Multiple independently loaded authority sources were not governed by one regression-enforced current-request contract."
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": null,
+        "summary": "Aligned repository and runtime authority sources, made current-request and compatibility fallback explicit, and added policy regressions that reject reintroduced approval and universal stop gates."
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "skills/xhs-device-operator/SKILL.md",
+            "claim": "Defines the current user request as task authority without a second approval gate."
+          },
+          {
+            "path": "docs/HERMES_RUN_CONTRACT.md",
+            "claim": "Defines the permanent permissive runtime contract."
+          },
+          {
+            "path": "config/device-control-playbook.json",
+            "claim": "Routes requested state changes and missing capabilities without universal human gates."
+          },
+          {
+            "path": "scripts/repo-policy-scan.mjs",
+            "claim": "Rejects stale approval and universal stop contracts across tracked sources."
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/repo-policy-scan.test.mjs",
+            "name": "rejects reintroduced approval and universal stop gates"
+          },
+          {
+            "path": "tests/device-control-guide.test.mjs",
+            "name": "current request authority and compatibility fallback do not become approval gates"
+          },
+          {
+            "path": "tests/xhs-agent-cli.test.mjs",
+            "name": "help completes without spawning a child process"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0019",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-policy-authority-alignment"
+      ]
+    },
+    {
+      "fingerprint": "enter-author-profile-from-detail-page",
+      "title": "帖子详情页点击作者名可进入博主主页",
+      "scope": "navigation",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "mitigated",
+      "observation": "从帖子详情页顶部点击作者名(如七七.)可成功进入博主主页,页面出现头像、关注/粉丝/获赞与收藏、笔记/收藏标签等结构性证据。当前仅有真实HTTP验收,缺少回归测试。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "缺少显式的 device.enter-author-profile 命名命令;当前可通过 device.tap-text 在正确上下文命中作者名节点实现。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": "REQUEST_SCOPED_ACTION",
+        "summary": "在详情页使用 device.tap-text 点击作者名,后读取 UI 验证出现头像、关注、粉丝、获赞与收藏等主页元素。后续需补充回归测试:给定帖子详情页,模拟 device.tap-text 点击作者名并断言后态 UI 包含 头像、关注、粉丝、获赞与收藏 结构,以从 live_verified 提升到 verified。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "device.tap-text 可在详情页通过语义文本命中作者名节点并触发跳转。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.tap-text",
+            "outcome": "from note detail page, tapping author name 七七. navigated to profile with 头像,七七., 168关注, 151粉丝, 101获赞与收藏, 笔记/收藏 tabs"
+          }
+        ]
+      },
+      "id": "DCI-0020",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-xhs-author-profile-avatar-02"
+      ]
+    },
+    {
+      "fingerprint": "feed-author-name-enters-note-not-profile",
+      "title": "feed 卡片中点击作者名进入帖子详情而非博主主页",
+      "scope": "navigation",
+      "category": "behavior",
+      "failureCode": "NODE_AMBIGUOUS",
+      "state": "mitigated",
+      "observation": "在发现页 feed 卡片中直接点击作者名(如七七.)会进入对应帖子详情,而不是博主主页;需先进入详情页再点击顶部作者名。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "同一段作者名文本在 feed 卡片和帖子详情页对应不同的 clickable 父节点,语义随上下文变化。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": "REQUEST_SCOPED_ACTION",
+        "summary": "将进入博主主页拆分为两步:先进入帖子详情,再点击详情页顶部作者名。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "device.tap-text 在 feed 卡片中命中的是帖子详情入口,不是作者主页入口。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.tap-text",
+            "outcome": "from feed card, tapping author name 七七. opened the note detail page instead of profile"
+          }
+        ]
+      },
+      "id": "DCI-0021",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-xhs-author-profile-avatar-02"
+      ]
+    },
+    {
+      "fingerprint": "device-node-api-selector-field-gap",
+      "title": "device.node API 的 selector 字段集与文档/预期不匹配",
+      "scope": "node_api",
+      "category": "capability",
+      "failureCode": "CAPABILITY_MISSING",
+      "state": "mitigated",
+      "observation": "device.node.resolve 和 device.node.activate 不支持 text、class、resourceId、bounds、contentDescription 等常见 selector 字段,导致无法通过节点 API 直接定位头像或作者名;仅能依赖 device.tap-text 语义命中。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "节点引擎的公开 selector 字段集被限制,缺少对文本和类名等无障碍属性的直接支持。"
+      },
+      "resolution": {
+        "kind": "workaround",
+        "strategyId": "PROJECT_COMPATIBILITY_ROUTE",
+        "summary": "节点 API 定位失败时,通过 device.tap-text 语义命中目标,并记录缺口。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/device-node-engine.mjs",
+            "claim": "selector 字段集只接受有限属性,text/class/resourceId/bounds/contentDescription 等被拒绝。"
+          }
+        ],
+        "tests": [],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "returned error for selectors containing text, class, resourceId, bounds, contentDescription fields"
+          }
+        ]
+      },
+      "id": "DCI-0022",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-16",
+      "lastObservedOn": "2026-07-16",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-16-xhs-author-profile-avatar-02"
+      ]
     }
   ]
 }

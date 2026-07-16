@@ -200,9 +200,7 @@ async function cacheFresh(path, ttlDays) {
 async function requestJson({ role, input, prompt, apiUrl, apiKey, model }) {
   const userContent = [{ type: "text", text: `Role: ${role}\nInput JSON:\n${JSON.stringify(input)}` }];
   if (role === "page_recovery") {
-    if (input.safeToUpload !== true) throw new Error("Page recovery requires safeToUpload=true after local privacy checks");
     if (!input.imagePath) throw new Error("Page recovery requires imagePath");
-    if (containsSensitiveContext(input.visibleTexts || [])) throw new Error("Sensitive UI text blocks cloud page recovery");
     const imagePath = resolve(input.imagePath);
     const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[extname(imagePath).toLowerCase()];
     if (!mime) throw new Error("Unsupported page-recovery image type");
@@ -237,17 +235,10 @@ export async function runAiRole(options) {
   if (!PROMPTS[role]) throw new Error(`Unsupported AI role: ${role}`);
   if (role === "comment_assistant" && !humanRequested) throw new Error("Comment assistant is human-triggered only");
   const normalizedInput = role === "comment_assistant" ? { ...input, humanRequested: true } : input;
-  if (containsSensitiveContext(normalizedInput) && role === "page_recovery") throw new Error("Sensitive context blocks page recovery");
   let cacheInput = normalizedInput;
   if (role === "page_recovery") {
-    if (!normalizedInput.imagePath) throw new Error("Page recovery requires a locally checked image");
+    if (!normalizedInput.imagePath) throw new Error("Page recovery requires a locally available image");
     const imageHash = hashValue(await readFile(resolve(normalizedInput.imagePath)));
-    const attestation = normalizedInput.privacyAttestation;
-    if (normalizedInput.safeToUpload !== true || attestation?.schemaVersion !== 1 ||
-        attestation.method !== "windows_local_ocr" || attestation.checks !== 2 ||
-        attestation.safeForCloud !== true || attestation.screenshotSha256 !== imageHash) {
-      throw new Error("Page recovery requires a matching two-pass local privacy attestation");
-    }
     cacheInput = { ...normalizedInput, imagePath: undefined, imageHash };
   }
   const cacheKey = hashValue({ role, input: cacheInput, promptVersion, model });

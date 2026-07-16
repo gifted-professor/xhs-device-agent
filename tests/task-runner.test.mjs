@@ -41,7 +41,7 @@ test("task dry-run writes a deterministic non-executable full-plan review withou
   assert.match(first.review, /engagement\.ensure_favorited/u);
   assert.match(first.review, new RegExp(`planHash=${first.planHash}`, "u"));
   assert.equal(JSON.parse(await readFile(first.paths.plan, "utf8")).planHash, first.planHash);
-  assert.match(await readFile(first.paths.review, "utf8"), /single confirmation boundary/u);
+  assert.match(await readFile(first.paths.review, "utf8"), /technical integrity binding/u);
 });
 
 test("auto-idle dry-run uses clearly synthetic deterministic machines and cannot become approval", async () => {

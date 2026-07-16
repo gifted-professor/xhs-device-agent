@@ -78,8 +78,8 @@ const HELP = `XHS Device Agent 统一入口
   --group NAME        本地配置组
   --config PATH       本地配置路径
 
-Agent 默认使用命名 HTTP API；xhs.cmd 仅用于人工调试和兼容流程。统一任务先完整审阅一次，再用完全相同的 planHash 确认一次。
-验证码、登录/身份验证、支付、系统权限、平台风控、目标漂移和无法验证的状态会停止任务。
+Agent 默认使用命名 HTTP API；xhs.cmd 用于人工调试、兼容流程和能力缺口。统一任务的 planHash 是技术完整性绑定；当前用户请求已授权其明确范围，不追加第二次对话确认。
+当前请求明确包含的登录、权限、支付、互动和账号状态动作可以继续；只有目标不唯一、缺少会改变结果的选择或动作结果不确定时才暂停，且不得盲目重发。
 `;
 
 export function parseCliArgs(argv) {

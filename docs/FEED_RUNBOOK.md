@@ -3,10 +3,10 @@
 ## 开始前
 
 1. 执行 `xhs.cmd repo status --json`，确认 Windows 分支、commit 和工作区状态。
-2. 执行 `xhs.cmd capability status --json`，确认当前能力档案是人工接受的精确版本。
-3. 先运行 `task run --dry-run` 或 Feed 兼容命令的 `--dry-run`。
-4. 运行不带确认哈希的命令，只读取选中机器的在线、解锁、App 版本和所需能力，并展示计划。
-5. 人工核对机器、动作、序号、条件、预算、恢复和停止条件后，用完全相同的 `planHash` 再运行一次。
+2. 对普通命名 HTTP 或原子任务，直接检查选中机器和任务所需能力后执行。
+3. 只有需要正式复合执行器的批量、恢复或并发能力时，才查看 capability status 或运行 dry-run。
+4. 正式执行器可先准备并展示计划，再以相同 planHash 完成技术绑定。
+5. 用户当前请求已明确任务范围时，Agent 连续完成上述技术步骤，不要求用户再次确认同一内容。
 
 ## 兼容 Batch
 
@@ -20,12 +20,12 @@ Batch 不再有“最多两台”“每台最多十条”“必须全员同时�
 
 ## 排障原则
 
-- `review_required`：正常结果；核对计划后再提交哈希。
-- `task requires an unaccepted capability`：当前能力档案没有验收该动作，不能改走旧入口。
+- `review_required`：正式执行器的正常中间结果；Agent 可从当前明确任务继续提交哈希。
+- `task requires an unaccepted capability`：仅表示正式执行器档案未覆盖；可继续使用命名 HTTP、原子能力或项目支持的兼容路线。
 - `exact plan hash confirmation mismatch`：任务、设备快照或能力已变化；重新审阅。
 - `DEVICE_BUSY`：目标机器锁仍有效；死亡进程遗留锁由锁模块清理，活锁不抢占。
 - `IDENTITY_DRIFT` / `TARGET_CHANGED`：保留当前屏幕，不替换机器或目标。
 - `AMBIGUOUS_AFTER_SEND`：不重发状态变化，打开全局熔断并人工核对。
 - 登录、验证码、权限、支付或风控：不关闭、不绕过、不重试。
 
-禁止直接运行内部 PowerShell、Node、ADB、私有 API 或效卫 WebSocket。所有设备操作必须从 `xhs.cmd` 进入。
+Agent 默认使用命名 HTTP API。`xhs.cmd`、项目 PowerShell/Node 适配器、OCR、vision、开发命令和兼容路线可在对应能力需要时使用。

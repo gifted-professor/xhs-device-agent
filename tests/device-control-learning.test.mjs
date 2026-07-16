@@ -28,19 +28,22 @@ function candidate(overrides = {}) {
 
 test("checked-in incident ledger is closed, deduplicated, and evidence-consistent", () => {
   const normalized = validateLedger(ledger, playbook);
-  assert.equal(normalized.incidents.length, 6);
-  assert.deepEqual(normalized.incidents.map(({ id, state }) => ({ id, state })), [
-    { id: "DCI-0001", state: "open" },
-    { id: "DCI-0002", state: "resolved" },
-    { id: "DCI-0003", state: "mitigated" },
-    { id: "DCI-0004", state: "open" },
-    { id: "DCI-0005", state: "verified" },
-    { id: "DCI-0006", state: "verified" },
-  ]);
-  const runtimeIncident = normalized.incidents.find(({ fingerprint }) => (
-    fingerprint === "powershell-runtime-selection-and-cross-version-compatibility"
-  ));
-  assert.equal(runtimeIncident.evidenceLevel, "live_verified");
+  assert.equal(normalized.incidents.length, ledger.incidents.length);
+  assert.deepEqual(normalized.incidents.map(({ id }, index) => id), normalized.incidents.map((_, index) => (
+    `DCI-${String(index + 1).padStart(4, "0")}`
+  )));
+  assert.equal(new Set(normalized.incidents.map(({ fingerprint }) => fingerprint)).size, normalized.incidents.length);
+  for (const fingerprint of [
+    "powershell-runtime-selection-and-cross-version-compatibility",
+    "vision-node-source-runtime-branch-missing",
+    "vision-service-runtime-configuration-missing",
+    "vision-provider-request-missing-hard-timeout",
+    "vision-node-model-extent-instability",
+    "vision-node-public-source-validation-missing",
+  ]) {
+    const incident = normalized.incidents.find((entry) => entry.fingerprint === fingerprint);
+    assert.equal(incident?.evidenceLevel, "live_verified", `${fingerprint} should retain live evidence`);
+  }
   assert.doesNotMatch(JSON.stringify(normalized), /\bserial\b|deviceId|\balias\b|config[\\/]local|[A-Za-z]:[\\/]/iu);
 });
 

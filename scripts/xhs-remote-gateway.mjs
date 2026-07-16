@@ -15,6 +15,7 @@ const DEFAULT_PORT = 17_891;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 120_000;
+const VISION_NODE_TIMEOUT_MS = 270_000;
 const AUDIT_PATH = path.join(PROJECT_ROOT, "data", "remote-gateway-audit.log");
 
 const SIMPLE_COMMANDS = Object.freeze({
@@ -190,6 +191,14 @@ export function buildRemoteArgv(input) {
   throw new Error(`Remote command is not implemented: ${command}`);
 }
 
+export function commandTimeoutMs(input) {
+  if ((input?.command === "device.node.resolve" || input?.command === "device.node.activate")
+      && Array.isArray(input?.selector?.sources) && input.selector.sources.includes("vision")) {
+    return VISION_NODE_TIMEOUT_MS;
+  }
+  return COMMAND_TIMEOUT_MS;
+}
+
 const SENSITIVE_KEY = /(?:authorization|cookie|password|secret|token|serial|onlySerial|deviceId|profilePic|alias|path|key)$/iu;
 
 function sanitizeValue(value) {
@@ -278,7 +287,7 @@ export function parseStructuredReadOutput(command, stdout) {
         || !["control", "tab", "button", "item"].includes(value.node.role)
         || !(value.node.group === null || value.node.group === "bottom_navigation")
         || !(value.node.ordinal === null || (Number.isSafeInteger(value.node.ordinal) && value.node.ordinal >= 1 && value.node.ordinal <= 12))
-        || !["accessibility", "ocr", "relation"].includes(value.node.source) || value.node.unique !== true
+        || !["accessibility", "ocr", "relation", "vision"].includes(value.node.source) || value.node.unique !== true
         || !/^\d{2}$/u.test(value.machine) || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
       throw new Error("device.node result contains an invalid public value");
     }
@@ -466,7 +475,7 @@ function runXhs(argv, runtime = {}) {
     child.stdout.on("data", collect(stdout));
     child.stderr.on("data", collect(stderr));
     child.on("error", reject);
-    const timer = setTimeout(() => { timedOut = true; child.kill(); }, COMMAND_TIMEOUT_MS);
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, runtime.timeoutMs ?? COMMAND_TIMEOUT_MS);
     child.on("close", (code) => {
       clearTimeout(timer);
       resolve({
@@ -527,7 +536,7 @@ export function createRemoteGateway(options = {}) {
     }
     const startedAt = new Date().toISOString();
     try {
-      const result = await enqueue(() => execute(argv));
+      const result = await enqueue(() => execute(argv, { timeoutMs: commandTimeoutMs(body) }));
       auditImpl({ requestId, startedAt, completedAt: new Date().toISOString(), source: identity, command: body.command, exitCode: result.code });
       if (result.code === 0 && STRUCTURED_COMMANDS.has(body.command)) {
         try {

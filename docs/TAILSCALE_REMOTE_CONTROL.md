@@ -296,7 +296,7 @@ UI 与截图示例：
 
 服务端获取第一张截图并要求目标文字唯一匹配，再获取第二张截图复核目标位置与前台包未漂移，只发送一次 `pointerEvent`。发送后重新截图并要求 `expectText` 唯一出现；目标缺失或重复、中文 OCR 不可用、目标移动、前台包变化、后态原本已存在或后态未验证时均失败关闭且不重放。HTTP 调用不接受 `serial`、`x`、`y`、`screenId` 或截图路径。
 
-微信底部孤立单字“我”曾暴露出一个通用问题：无障碍层级为空，精确 OCR 又可能漏掉孤立短文本。现在该问题归入通用节点系统，不再由微信特判定义能力。Agent 先按 `UI_EMPTY` 或 `OCR_MISS` 调用 `device.guide`，再用 `device.node.resolve` 提交封闭选择器。选择器可依次声明 `accessibility`、`ocr`、`relation`；当前关系算法只允许 `horizontal_equal_spacing + bottom_navigation`，并要求两个精确锚点、各自序号和目标序号。服务端在两份新鲜证据上独立解析，调用方不能提交或接收坐标。
+微信底部孤立单字“我”曾暴露出一个通用问题：无障碍层级为空，精确 OCR 又可能漏掉孤立短文本。现在该问题归入通用节点系统，不再由微信特判定义能力。Agent 先按 `UI_EMPTY` 或 `OCR_MISS` 调用 `device.guide`，再用 `device.node.resolve` 提交封闭选择器。选择器可依次声明 `accessibility`、`ocr`、`relation`、`vision`；`vision` 复用 Hermes 的辅助视觉模型，服务端只接受两张新鲜截图上稳定的安全中心点，且不向调用方公开坐标。当前关系算法只允许 `horizontal_equal_spacing + bottom_navigation`，并要求两个精确锚点、各自序号和目标序号。服务端在两份新鲜证据上独立解析，调用方不能提交或接收坐标。
 
 `device.node.activate` 不信任之前的解析响应，也不接受节点令牌。它重新采集两份新鲜 UI/截图、验证前台包、按同一选择器重新解析、确认来源和位置稳定，然后最多发送一次；发送后必须在新证据上验证 `expectText`。重复节点、OCR 多结果、锚点缺失、布局漂移、前台漂移、后态预先存在或发送后未出现，都会失败关闭。完整决策树见 `docs/AGENT_DEVICE_CONTROL_PLAYBOOK.md`，机器可读目录为 `config/device-control-playbook.json`。
 

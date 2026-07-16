@@ -53,7 +53,7 @@ Set-Location -LiteralPath '<WINDOWS_PROJECT_ROOT>'
 .\xhs.cmd device list
 ```
 
-`xhs.cmd` 是设备操作的唯一入口。不要直接调用内部脚本、原始 ADB 或效卫 WebSocket。
+远程 Agent 默认调用文档中的 Tailnet 命名 HTTPS API；`xhs.cmd` 是人工调试、兼容流程和能力缺口入口。
 机器身份的显示与选择规则见 [机器编号与名称](MACHINE_IDENTITY.md)。
 
 ## 审核 Feed 兼容任务
@@ -72,7 +72,7 @@ $taskId = 'mac-feed-review-' + (Get-Date -Format 'yyyyMMdd-HHmmss')
   --dry-run
 ```
 
-正式执行必须使用候选计划显示的精确 `planHash` 再提交一次，并由当前能力档案、目标设备预检和锁共同放行。不要在远程文档中保存通用确认值。
+需要正式复合执行器时，精确 `planHash` 用于绑定同一份计划。用户已经明确请求任务时，Agent 可连续提交该哈希，不需要用户再次确认；普通命名 HTTP 或原子能力不受此流程限制。
 
 SSH 中断后不要直接用新 task ID 重跑。先检查原任务目录的 `checkpoint.json`、`summary.json` 和 `events.jsonl`，确认是否仍在执行或是否已经完成。
 

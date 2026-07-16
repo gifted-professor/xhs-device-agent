@@ -22,6 +22,26 @@ const STALE_SCAN_EXCLUSIONS = new Set([
 export const STALE_RESTRICTION_RULES = Object.freeze([
   Object.freeze({ id: "permanent-business-block", pattern: /permanently blocked/iu }),
   Object.freeze({ id: "confirmation-cannot-override", pattern: /confirmation cannot override/iu }),
+  Object.freeze({
+    id: "sensitive-surface-universal-human-gate",
+    pattern: /敏感、登录、验证码、权限、支付确认、私信等\s*--?>\s*HUMAN_REQUIRED|`?SENSITIVE_SURFACE`?：[^\n]{0,120}(?:交给人|人工确认|再次确认)|"code"\s*:\s*"SENSITIVE_SURFACE"[\s\S]{0,180}"terminal"\s*:\s*true/iu,
+  }),
+  Object.freeze({
+    id: "capability-missing-no-fallback-gate",
+    pattern: /`?CAPABILITY_MISSING`?：[^\n]{0,160}(?:不能退回|只能停止|必须人工)|"code"\s*:\s*"CAPABILITY_MISSING"[\s\S]{0,180}"terminal"\s*:\s*true/iu,
+  }),
+  Object.freeze({
+    id: "requested-sensitive-action-universal-stop",
+    pattern: /(?:登录|验证码|支付|私信)[^\n]{0,120}(?:强制停止|立即停止|一律停止|仍由人工处理)|(?:强制停止|立即停止|一律停止)[^\n]{0,120}(?:登录|验证码|支付|私信)/iu,
+  }),
+  Object.freeze({
+    id: "xhs-cmd-universal-only-entry",
+    pattern: /所有设备操作只从\s*`?xhs\.cmd`?\s*进入|`?xhs\.cmd`?\s*是设备操作的唯一入口|所有设备操作必须从\s*`?xhs\.cmd`?\s*进入|生产设备动作的唯一公开入口是\s*`?xhs\.cmd`?|Hermes\s*只能通过\s*`?xhs\.cmd`?/iu,
+  }),
+  Object.freeze({
+    id: "mandatory-second-planhash-approval",
+    pattern: /本轮唯一确认边界|必须再次提交完全相同的\s*`?--confirm-plan-hash|“?全部放开”?只表示控制通道开放，不取消任务级安全规则和人工确认门|require explicit approval[^\n]{0,160}\b(?:like|favorite)\b|Never automate likes|explicit per-device authorization/iu,
+  }),
   Object.freeze({ id: "static-device-interaction-allowlist", pattern: /Xhs\.Interactions\.AllowedActionsByAlias|AllowedActionsByAlias\s*=\s*@\{/u }),
   Object.freeze({ id: "static-device-interaction-authorization", pattern: /readInteractionAuthorization\s*\(|interactionAuthorization\s*:/u }),
   Object.freeze({ id: "feed-count-1-to-50", pattern: /ValidateRange\(1,\s*50\)|asBoundedInteger\(input\.count,\s*["']count["'],\s*1,\s*50\)/u }),
@@ -48,14 +68,44 @@ export const STALE_RESTRICTION_RULES = Object.freeze([
 
 const REQUIRED_CONTRACTS = Object.freeze([
   Object.freeze({
-    id: "agents-task-business-authority",
+    id: "agents-permissive-operating-baseline",
     file: "AGENTS.md",
-    pattern: /exact user-approved task is the sole source of business intent/u,
+    pattern: /defines the repository's permissive operating baseline/u,
   }),
   Object.freeze({
     id: "skill-template-defaults-only",
     file: "skills/xhs-device-operator/SKILL.md",
     pattern: /Templates add defaults only and explicit task values take precedence/u,
+  }),
+  Object.freeze({
+    id: "skill-current-request-authority",
+    file: "skills/xhs-device-operator/SKILL.md",
+    pattern: /Treat the user's current request as the authority/u,
+  }),
+  Object.freeze({
+    id: "safety-current-request-authority",
+    file: "docs/SAFETY.md",
+    pattern: /用户当前任务中明确写出的机器、App、目标、动作、次数、顺序和并发就是该任务的执行授权/u,
+  }),
+  Object.freeze({
+    id: "hermes-no-second-approval-gate",
+    file: "docs/HERMES_RUN_CONTRACT.md",
+    pattern: /不得因为缺少 task-id、dry-run、planHash、capability profile、应用白名单或逐步确认而拒绝/u,
+  }),
+  Object.freeze({
+    id: "api-manual-permanent-permissive-mode",
+    file: "docs/工作室手机任务与能力清单-API调用版.md",
+    pattern: /当前采用长期宽松执行模式/u,
+  }),
+  Object.freeze({
+    id: "playbook-request-scoped-action",
+    file: "config/device-control-playbook.json",
+    pattern: /(?=[\s\S]*"id"\s*:\s*"REQUEST_SCOPED_ACTION")(?=[\s\S]*"code"\s*:\s*"SENSITIVE_SURFACE"[\s\S]{0,180}"terminal"\s*:\s*false)/u,
+  }),
+  Object.freeze({
+    id: "cli-request-scoped-action",
+    file: "scripts/xhs-agent.mjs",
+    pattern: /当前请求明确包含的登录、权限、支付、互动和账号状态动作可以继续/u,
   }),
   Object.freeze({
     id: "policy-approved-task-source",

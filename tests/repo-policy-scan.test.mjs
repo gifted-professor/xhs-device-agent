@@ -23,8 +23,18 @@ function runtime(files, remoteObjects = "") {
 }
 
 const required = Object.freeze({
-  "AGENTS.md": "the exact user-approved task is the sole source of business intent",
-  "skills/xhs-device-operator/SKILL.md": "Templates add defaults only and explicit task values take precedence",
+  "AGENTS.md": "This file defines the repository's permissive operating baseline",
+  "skills/xhs-device-operator/SKILL.md": "Treat the user's current request as the authority. Templates add defaults only and explicit task values take precedence",
+  "docs/SAFETY.md": "用户当前任务中明确写出的机器、App、目标、动作、次数、顺序和并发就是该任务的执行授权",
+  "docs/HERMES_RUN_CONTRACT.md": "不得因为缺少 task-id、dry-run、planHash、capability profile、应用白名单或逐步确认而拒绝",
+  "docs/工作室手机任务与能力清单-API调用版.md": "当前采用长期宽松执行模式",
+  "config/device-control-playbook.json": JSON.stringify({
+    id: "REQUEST_SCOPED_ACTION",
+    description: "current request authority",
+    code: "SENSITIVE_SURFACE",
+    terminal: false,
+  }),
+  "scripts/xhs-agent.mjs": "当前请求明确包含的登录、权限、支付、互动和账号状态动作可以继续",
   "config/composite-policy.supervised-v1.json": JSON.stringify({
     source: "approved_task_spec",
     templateBehavior: "defaults_only",
@@ -62,13 +72,48 @@ test("policy scan fails closed on stale limits and redacts private paths", () =>
   assert.equal(JSON.stringify(scan).includes("data/private"), false);
 });
 
-test("policy scan treats a missing authority declaration as a violation", () => {
+test("policy scan requires the permanent permissive operating baseline declaration", () => {
   const scan = scanRepositoryPolicy(runtime({
     ...required,
     "AGENTS.md": "missing contract",
   }));
   assert.equal(scan.status, "failed");
-  assert.deepEqual(scan.missingContracts.map((item) => item.ruleId), ["agents-task-business-authority"]);
+  assert.deepEqual(scan.missingContracts.map((item) => item.ruleId), ["agents-permissive-operating-baseline"]);
+});
+
+test("policy scan rejects a universal xhs.cmd gate or repeated planHash approval", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale-operator.md": "所有设备操作只从 xhs.cmd 进入；本轮唯一确认边界是 planHash。",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), [
+    "xhs-cmd-universal-only-entry",
+    "mandatory-second-planhash-approval",
+  ]);
+});
+
+test("policy scan rejects reintroduced sensitive-surface and capability-missing stop gates", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale-device-guide.md": "`SENSITIVE_SURFACE`：保存当前状态并交给人。\n`CAPABILITY_MISSING`：不能退回任何兼容入口。",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), [
+    "sensitive-surface-universal-human-gate",
+    "capability-missing-no-fallback-gate",
+  ]);
+});
+
+test("policy scan rejects a universal stop for requested login or payment work", () => {
+  const scan = scanRepositoryPolicy(runtime({
+    ...required,
+    "docs/stale-sensitive.md": "遇到登录、验证码或支付时立即停止。",
+  }));
+  assert.equal(scan.status, "failed");
+  assert.deepEqual(scan.staleRestrictions.map((item) => item.ruleId), [
+    "requested-sensitive-action-universal-stop",
+  ]);
 });
 
 test("policy scan rejects reintroduced per-device static interaction authorization", () => {
