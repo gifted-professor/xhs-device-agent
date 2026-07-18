@@ -2027,6 +2027,55 @@ test("xhs.dm.send degrades to mitigated when the sent bubble stays unreadable", 
   }
 });
 
+test("xhs.dm.send degrades to mitigated when the editor node vanishes after send", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-mitigated-vanished-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-mitigated-vanished");
+  let sent = false;
+  let pointerCalls = 0;
+  // Before send: one EditText holding the draft + aligned send control. After
+  // send: the editor node is gone entirely (XHS collapses it), so xhsDmEditor
+  // returns null and the sent bubble is unreadable — the exact hermes P1 gap 2
+  // real-machine shape that previously burned the budget and threw
+  // POSTCONDITION_MISS because xhsDmEditorIsEmpty(null) is false.
+  const ui = () => sent
+    ? `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+      <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[921,1344][1025,1432]" />
+    </node></hierarchy>`
+    : `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+      <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[827,1196][959,1261]" />
+      <node package="com.xingin.xhs" class="android.widget.EditText" focused="true" text="测试" bounds="[165,1333][811,1443]" />
+      <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[921,1344][1025,1432]" />
+    </node></hierarchy>`;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+      outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      delay: async () => {},
+      dmDegradedEchoBudgetMs: 0,
+      dmVerifyBudgetMs: 0,
+      sendRequest: async (request) => {
+        if (request.action === "pointerEvent") {
+          pointerCalls += 1;
+          sent = true;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(pointerCalls, 1);
+    assert.deepEqual(result, {
+      machine: "02", status: "mitigated", draftLength: 2,
+      verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("device screen composes screencap and pullFile then removes the phone artifact", async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-read-screen-"));
   const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-screen");
