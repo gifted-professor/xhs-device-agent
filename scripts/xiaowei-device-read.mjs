@@ -1985,7 +1985,14 @@ async function sendXhsDmDraft(target, request, options) {
         localAdbRequired: false,
       };
     }
-    if (xhsDmEditorIsEmpty(afterEditor)) editorCleared = true;
+    // xhsDmEditor returns null once the editor node has fully disappeared
+    // (a stronger clear signal than an empty EditText). xhsDmEditorIsEmpty
+    // deliberately returns false for null so the verified path (which needs a
+    // state to read the sent bubble) is not misled — but here, a vanished editor
+    // still means the send consumed the draft, so treat it as cleared and let
+    // the degraded path lower to "mitigated" instead of burning the whole
+    // budget and returning POSTCONDITION_MISS (hermes P1 gap 2 real-machine).
+    if (xhsDmEditorIsEmpty(afterEditor) || afterEditor === null) editorCleared = true;
     if (editorCleared && options.now() - verifyStartedAt >= degradedEchoBudgetMs) {
       return {
         machine: target.machine,
