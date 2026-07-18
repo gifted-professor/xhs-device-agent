@@ -1933,12 +1933,55 @@ function xhsDmSendBounds(state) {
   return candidates.length === 1 ? candidates[0] : null;
 }
 
-function xhsDmContainsSentBubble(state, expectedDraft) {
-  if (!state) return false;
+function xhsDmContainsSentBubbleInDocument(document, expectedDraft) {
+  if (!document) return false;
   const expected = semanticValue(expectedDraft);
-  return state.document.nodes.some((node) => node.packageName === XHS_PACKAGE
+  return document.nodes.some((node) => node.packageName === XHS_PACKAGE
     && !/(?:^|\.)EditText$/u.test(node.className)
     && (semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected));
+}
+
+function xhsDmContainsSentBubble(state, expectedDraft) {
+  if (!state) return false;
+  return xhsDmContainsSentBubbleInDocument(state.document, expectedDraft);
+}
+
+// Recover a destabilized DM editor before tapping send, or conclude the draft
+// was already sent. `device.input` returns `verified` from a snapshot taken
+// before the IME restore and never re-reads after, so by the time `dm.send`
+// reads the hierarchy the XHS DM EditText may have dropped out (keyboard
+// collapse) or reverted to its placeholder hint. Rather than throw at the
+// precondition, re-focus the composer structurally and retry; if the draft is
+// genuinely gone, detect an already-sent bubble so the caller learns the
+// message was delivered (the hermes P0 shape: blue bubble present, API error).
+// Returns { kind: "ready", editor, sendBounds, hierarchy } when the draft is
+// recovered and safe to send, { kind: "already_sent", hierarchy } when a sent
+// bubble proves delivery without our tap, or null for a true failure.
+async function recoverDmEditorOrDetectSent(target, request, options, hierarchy) {
+  const structural = xhsDmEditor(hierarchy);
+  let finalHierarchy = hierarchy;
+  if (structural) {
+    const dimensions = await readPhysicalDisplaySize(target, options);
+    await invokePointerBounds(target, structural.bounds, dimensions, options);
+    await options.delay(300);
+    const reread = await readUiHierarchy(target, options);
+    if (hierarchyContainsPackage(reread, XHS_PACKAGE)) {
+      finalHierarchy = reread;
+      const editor = xhsDmEditor(reread, request.expectedDraft);
+      if (editor) {
+        const sendBounds = xhsDmSendBounds(editor)
+          ?? uniqueXhsControlBounds(reread, "发送", { optional: true });
+        if (sendBounds) {
+          return { kind: "ready", editor, sendBounds, hierarchy: reread };
+        }
+      }
+    }
+  }
+  const document = parseUiAutomatorXml(finalHierarchy);
+  if (xhsDmContainsSentBubbleInDocument(document, request.expectedDraft)) {
+    return { kind: "already_sent", hierarchy: finalHierarchy };
+  }
+  return null;
 }
 
 async function sendXhsDmDraft(target, request, options) {
@@ -1946,18 +1989,65 @@ async function sendXhsDmDraft(target, request, options) {
   if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
     throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.dm.send requires Xiaohongshu in the foreground");
   }
-  const first = xhsDmEditor(hierarchy, request.expectedDraft);
-  const firstSend = xhsDmSendBounds(first);
+  let first = xhsDmEditor(hierarchy, request.expectedDraft);
+  let firstSend = first
+    ? (xhsDmSendBounds(first) ?? uniqueXhsControlBounds(hierarchy, "发送", { optional: true }))
+    : null;
+  let recoveredJustNow = false;
   if (!first || !firstSend) {
-    throw new Error("xhs.dm.send requires one exact draft and one send control aligned with its editor");
+    const recovered = await recoverDmEditorOrDetectSent(target, request, options, hierarchy);
+    if (!recovered) {
+      throw new DeviceNodeError("PRECONDITION_MISS",
+        "xhs.dm.send could not resolve the draft editor or an aligned send control, and no sent bubble was detected; the draft must be re-input");
+    }
+    if (recovered.kind === "already_sent") {
+      return {
+        machine: target.machine,
+        status: "mitigated",
+        draftLength: [...request.expectedDraft].length,
+        verification: "dm_draft_already_sent_before_tap_detected_via_bubble",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    first = recovered.editor;
+    firstSend = recovered.sendBounds;
+    hierarchy = recovered.hierarchy;
+    recoveredJustNow = true;
   }
-  await options.delay(300);
-  hierarchy = await readUiHierarchy(target, options);
-  const guard = xhsDmEditor(hierarchy, request.expectedDraft);
-  const guardSend = xhsDmSendBounds(guard);
-  if (!guard || !guardSend || !stableNodeBounds(first.bounds, guard.bounds)
-      || !stableNodeBounds(firstSend, guardSend)) {
-    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS private-message draft or send control changed before submission");
+  let guard = first;
+  let guardSend = firstSend;
+  if (!recoveredJustNow) {
+    await options.delay(300);
+    hierarchy = await readUiHierarchy(target, options);
+    guard = xhsDmEditor(hierarchy, request.expectedDraft);
+    guardSend = guard
+      ? (xhsDmSendBounds(guard) ?? uniqueXhsControlBounds(hierarchy, "发送", { optional: true }))
+      : null;
+    if (!guard || !guardSend || !stableNodeBounds(first.bounds, guard.bounds)
+        || !stableNodeBounds(firstSend, guardSend)) {
+      const recovered = await recoverDmEditorOrDetectSent(target, request, options, hierarchy);
+      if (!recovered) {
+        throw new DeviceNodeError("LAYOUT_DRIFT",
+          "XHS private-message draft or send control changed before submission and could not be re-resolved");
+      }
+      if (recovered.kind === "already_sent") {
+        return {
+          machine: target.machine,
+          status: "mitigated",
+          draftLength: [...request.expectedDraft].length,
+          verification: "dm_draft_already_sent_before_tap_detected_via_bubble",
+          transport: "xiaowei-api",
+          localAdbRequired: false,
+        };
+      }
+      // The recovery did its own fresh re-read, so the recovered pair is a
+      // stable present-moment observation; re-checking against the pre-recovery
+      // first/guard pair would always fail (that is why we recovered).
+      guard = recovered.editor;
+      guardSend = recovered.sendBounds;
+      hierarchy = recovered.hierarchy;
+    }
   }
   const dimensions = await readPhysicalDisplaySize(target, options);
   await invokePointerBounds(target, guardSend, dimensions, options);
