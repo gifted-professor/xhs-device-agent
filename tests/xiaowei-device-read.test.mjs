@@ -800,6 +800,56 @@ test("device.node.resolve vision uses two fresh screenshots and keeps model boun
   }
 });
 
+test("device.node.resolve vision tolerates normal model box jitter", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-node-vision-jitter-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-node-vision-jitter");
+  const hierarchy = '<hierarchy><node package="com.example.app" bounds="[0,0][1080,2400]" /></hierarchy>';
+  let visionCalls = 0;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "node-resolve", package: "com.example.app",
+      selector: {
+        label: "Profile", role: "tab", sources: ["vision"],
+        visionPrompt: "person-shaped profile tab in the bottom navigation",
+      },
+      endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      sendRequest: async (request) => {
+        if (request.action === "pullFile") {
+          await writeFile(request.data.savePath, SCREEN_PNG);
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        if (request.data?.command === "uiautomator dump /dev/tty") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: hierarchy } };
+        }
+        if (request.data?.command === "wm size") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: "Physical size: 1080x2400" } };
+        }
+        if (request.data?.command?.startsWith("if [ -s")) {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: String(SCREEN_PNG.length) } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: null };
+      },
+      cloudVision: async () => {
+        visionCalls += 1;
+        return { content: JSON.stringify({
+          matches: visionCalls === 1
+            ? [{ left: 810, top: 2100, right: 900, bottom: 2190 }]
+            : [{ left: 845, top: 2130, right: 935, bottom: 2220 }],
+        }) };
+      },
+      localOcr: async () => ({ matches: [], ocrAvailable: true }),
+      delay: async () => {},
+    });
+    assert.equal(visionCalls, 2);
+    assert.equal(result.status, "resolved");
+    assert.equal(result.node.source, "vision");
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("device.node.resolve vision reports missing configuration instead of falling into relation", async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-node-vision-missing-"));
   const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-node-vision-missing");
@@ -1072,8 +1122,10 @@ test("device.back uses one Xiaowei back event and verifies a fresh screen change
           return { code: 10_000, message: "SUCCESS", data: null };
         }
         assert.equal(request.action, "adb_shell");
-        assert.equal(request.data.command, "screencap -p | sha256sum");
-        return { code: 10_000, message: "SUCCESS", data: { opaque: `${(page === "before" ? "a" : "b").repeat(64)}  -` } };
+        if (request.data.command === "screencap -p | sha256sum") {
+          return { code: 10_000, message: "SUCCESS", data: { opaque: `${(page === "before" ? "a" : "b").repeat(64)}  -` } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: { opaque: "mCurrentFocus=Window{a} com.example.app/.MainActivity" } };
       },
       delay: async () => {},
     });
@@ -1085,6 +1137,67 @@ test("device.back uses one Xiaowei back event and verifies a fresh screen change
       transport: "xiaowei-api",
       localAdbRequired: false,
     });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("device.back accepts a focused-window change on animated pages", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-back-animated-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-back-animated");
+  let activity = "com.xingin.xhs/.note.NoteActivity";
+  let hashCalls = 0;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "back", endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      sendRequest: async (request) => {
+        if (request.action === "pushEvent") {
+          activity = "com.xingin.xhs/.home.MainActivity";
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        assert.equal(request.action, "adb_shell");
+        if (request.data.command === "screencap -p | sha256sum") {
+          hashCalls += 1;
+          return { code: 10_000, message: "SUCCESS", data: { opaque: `${String(hashCalls).padStart(2, "0").repeat(32)}  -` } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: { opaque: `mCurrentFocus=Window{a} ${activity}` } };
+      },
+      delay: async () => {},
+    });
+    assert.equal(result.status, "verified");
+    assert.equal(result.verification, "single_back_event_then_focused_window_change");
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("device.back rejects pure animation without navigation", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-back-anim-fail-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-back-anim-fail");
+  let hashCalls = 0;
+  let backEvents = 0;
+  try {
+    await assert.rejects(() => runXiaoweiDeviceRead({
+      action: "back", endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      sendRequest: async (request) => {
+        if (request.action === "pushEvent") {
+          backEvents += 1;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        assert.equal(request.action, "adb_shell");
+        if (request.data.command === "screencap -p | sha256sum") {
+          hashCalls += 1;
+          return { code: 10_000, message: "SUCCESS", data: { opaque: `${String(hashCalls + 100).repeat(32).slice(0, 64)}  -` } };
+        }
+        return { code: 10_000, message: "SUCCESS", data: { opaque: "mCurrentFocus=Window{a} com.xingin.xhs/.note.NoteActivity" } };
+      },
+      delay: async () => {},
+    }), /POSTCONDITION_MISS|fresh UI change was not verified/u);
+    assert.equal(backEvents, 1);
   } finally {
     await rm(projectRoot, { recursive: true, force: true });
   }
@@ -1875,6 +1988,45 @@ test("xhs.dm.send binds the exact draft to the send control aligned with its edi
   }
 });
 
+test("xhs.dm.send degrades to mitigated when the sent bubble stays unreadable", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-mitigated-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-mitigated");
+  let sent = false;
+  let pointerCalls = 0;
+  const ui = () => `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+    <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[827,1196][959,1261]" />
+    <node package="com.xingin.xhs" class="android.widget.EditText" focused="true" text="${sent ? "请友善发言..." : "测试"}" bounds="[165,1333][811,1443]" />
+    <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[921,1344][1025,1432]" />
+  </node></hierarchy>`;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+      outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      delay: async () => {},
+      dmDegradedEchoBudgetMs: 0,
+      sendRequest: async (request) => {
+        if (request.action === "pointerEvent") {
+          pointerCalls += 1;
+          sent = true;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(pointerCalls, 1);
+    assert.deepEqual(result, {
+      machine: "02", status: "mitigated", draftLength: 2,
+      verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("device screen composes screencap and pullFile then removes the phone artifact", async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-read-screen-"));
   const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-screen");
@@ -2005,4 +2157,12 @@ test("package-bound text taps reject cross-app and same-app ambiguity", () => {
   assert.throws(() => findSemanticTapPoint(replies, "回复", { width: 1080, height: 2400 }, {
     packageName: "com.xingin.xhs", match: "suffix",
   }), /NODE_AMBIGUOUS/u);
+});
+
+test("suffix reply targets tolerate a trailing translate chip", () => {
+  const hierarchy = '<hierarchy><node package="com.xingin.xhs" bounds="[0,600][1080,900]">'
+    + '<node package="com.xingin.xhs" text="7分钟前 中国台湾 回复 翻译" clickable="false" bounds="[168,769][810,824]" /></node></hierarchy>';
+  assert.deepEqual(findSemanticTapPoint(hierarchy, "回复", { width: 1080, height: 2400 }, {
+    packageName: "com.xingin.xhs", match: "suffix", ordinal: 1,
+  }), { x: "45.277778", y: "33.1875" });
 });

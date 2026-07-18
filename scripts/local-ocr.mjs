@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { POWERSHELL_EXECUTABLE } from "./powershell-runtime.mjs";
@@ -14,7 +16,12 @@ function compact(value) {
 function compactHanSpacing(value) {
   return compact(value)
     .replace(/(\p{Script=Han})\s+(?=[\p{L}\p{N}])/gu, "$1")
-    .replace(/([\p{L}\p{N}])\s+(?=\p{Script=Han})/gu, "$1");
+    .replace(/([\p{L}\p{N}])\s+(?=\p{Script=Han})/gu, "$1")
+    // Windows OCR also inserts spaces between topic/@-mention markers and
+    // Han characters (e.g. "# 酸 奶 推 荐"); join those too so topic-tag
+    // and mention targets hash identically on both sides of the contract.
+    .replace(/([#@])\s+(?=\p{Script=Han})/gu, "$1")
+    .replace(/(\p{Script=Han})\s+(?=[#@])/gu, "$1");
 }
 
 function exactTextHash(value) {
@@ -250,10 +257,20 @@ export function classifyLocalOcrText(value) {
   return null;
 }
 
+// windows-ocr.ps1 relies on .NET Framework WinRT interop (Add-Type
+// System.Runtime.WindowsRuntime plus AsTask reflection), which exists only in
+// Windows PowerShell 5.1. PowerShell 7 (pwsh) fails closed, so the OCR runner
+// must prefer the 5.1 executable instead of the globally resolved one.
+const WINDOWS_POWERSHELL_51 = process.env.SystemRoot
+  ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+  : "powershell.exe";
+
 export function createWindowsLocalOcr(options = {}) {
   const commandRunner = options.commandRunner ?? defaultCommandRunner;
   const scriptPath = options.scriptPath ?? DEFAULT_SCRIPT_PATH;
-  const powershellPath = options.powershellPath ?? POWERSHELL_EXECUTABLE;
+  const powershellPath = options.powershellPath
+    ?? (process.platform === "win32" && existsSync(WINDOWS_POWERSHELL_51)
+      ? WINDOWS_POWERSHELL_51 : POWERSHELL_EXECUTABLE);
   const enabled = options.enabled ?? process.platform === "win32";
 
   return async function windowsLocalOcr(input = {}) {

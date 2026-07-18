@@ -1657,34 +1657,57 @@
       "scope": "interaction",
       "category": "capability",
       "failureCode": "NODE_NOT_FOUND",
-      "state": "open",
-      "observation": "帖子正文中的多个话题标签全部位于一个 TextView 中,没有拆分为独立的 clickable span。尝试 device.tap-text 点击某个具体话题失败。",
+      "state": "verified",
+      "observation": "帖子正文中的多个话题标签全部位于一个 TextView 中,没有拆分为独立的 clickable span。device.tap-text 无法单独命中某个话题;本地 OCR 此前在 pwsh 下不可用且归一化与窗口匹配缺失。",
       "rootCause": {
         "status": "confirmed",
         "summary": "话题标签未作为独立可点击节点暴露给 accessibility 服务,而是作为普通文本的一部分。"
       },
       "resolution": {
-        "kind": "none",
-        "strategyId": null,
-        "summary": null
+        "kind": "general_fix",
+        "strategyId": "OCR_EXACT_NODE",
+        "summary": "本地 OCR 定位链修复并真机验证：归一化把 #/@ 与汉字间空格合并；locate 支持行内连续词窗匹配话题标签；OCR 运行器固定使用 Windows PowerShell 5.1（pwsh 7 无 WinRT 互操作）。device.tap-ocr 命中话题并跳转话题页。"
       },
       "evidence": {
-        "artifacts": [],
-        "tests": [],
+        "artifacts": [
+          {
+            "path": "scripts/local-ocr.mjs",
+            "claim": "归一化合并 #/@ 与汉字间空格；OCR 运行器优先选用 PowerShell 5.1。"
+          },
+          {
+            "path": "scripts/windows-ocr.ps1",
+            "claim": "归一化同步合并标记与汉字；locate 新增行内连续词窗匹配。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/local-ocr.test.mjs",
+            "name": "exact local OCR joins topic-tag markers with spaced Han characters"
+          },
+          {
+            "path": "tests/local-ocr.test.mjs",
+            "name": "Windows OCR adapter prefers the Windows PowerShell 5.1 executable for WinRT interop"
+          }
+        ],
         "liveAcceptance": [
           {
             "command": "device.tap-text",
             "outcome": "failed: topic text is embedded in a single TextView, not clickable"
+          },
+          {
+            "command": "device.tap-ocr",
+            "outcome": "01 真机定位并点击 #酸奶推荐（多标签同 TextView 内），跳转话题页并以「讨论」postcondition 验证，73s 返回 success。"
           }
         ]
       },
       "id": "DCI-0033",
       "evidenceLevel": "live_verified",
       "firstObservedOn": "2026-07-16",
-      "lastObservedOn": "2026-07-16",
-      "occurrenceCount": 1,
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 2,
       "sessionIds": [
-        "2026-07-16-xhs-b6-b8-02"
+        "2026-07-16-xhs-b6-b8-02",
+        "2026-07-18-p1-gaps-batch-fix-kimi"
       ]
     },
     {
@@ -3189,29 +3212,30 @@
       "scope": "perception",
       "category": "reliability",
       "failureCode": "CAPABILITY_MISSING",
-      "state": "mitigated",
+      "state": "resolved",
       "observation": "评论面板已可滚动和回复,但同一页面上的 xhs.observe 仍可能返回无法分类当前页面。",
       "rootCause": {
-        "status": "hypothesis",
-        "summary": "当前动态评论面板的可见标题、输入框或资源特征未稳定达到 COMMENT_PANEL 分类阈值。"
+        "status": "confirmed",
+        "summary": "comment-modal 证据正则只接受有限时间格式（MM-dd/N天前/昨天/前天）且不允许「翻译」后缀；而 0.85 阈值实际要求 heading+input+modal 三组证据全中，含「分钟前/小时前/翻译」元数据的面板恒失败。"
       },
       "resolution": {
-        "kind": "workaround",
+        "kind": "general_fix",
         "strategyId": "PROJECT_COMPATIBILITY_ROUTE",
-        "summary": "评论面板操作继续使用 device.ui、device.scroll 和专用回复事务;不依赖 xhs.observe 的评论面板分类结果。"
+        "summary": "放宽 comment-modal 证据正则：覆盖 分钟前/小时前/周前/个月前/月前/刚刚 并允许尾随「翻译」；实测含「7分钟前 中国台湾 回复 翻译」的面板重新满分分类 COMMENT_PANEL。"
       },
       "evidence": {
         "artifacts": [
           {
             "path": "config/xhs-page-rules.json",
-            "claim": "定义 COMMENT_PANEL 的标题、输入框和弹层证据。"
-          },
-          {
-            "path": "scripts/xhs-public-observation.mjs",
-            "claim": "结构化观察要求当前层级先通过页面分类。"
+            "claim": "comment-modal 证据正则覆盖更多时间格式并允许「翻译」后缀。"
           }
         ],
-        "tests": [],
+        "tests": [
+          {
+            "path": "tests/xhs-public-observation.test.mjs",
+            "name": "comment panel with minute-based reply metadata and a translate chip classifies as COMMENT_PANEL"
+          }
+        ],
         "liveAcceptance": [
           {
             "command": "xhs.observe",
@@ -3222,10 +3246,11 @@
       "id": "DCI-0055",
       "evidenceLevel": "live_verified",
       "firstObservedOn": "2026-07-17",
-      "lastObservedOn": "2026-07-17",
-      "occurrenceCount": 1,
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 2,
       "sessionIds": [
-        "2026-07-17-comment-reply-input-scroll-live-codex"
+        "2026-07-17-comment-reply-input-scroll-live-codex",
+        "2026-07-18-p1-gaps-batch-fix-kimi"
       ]
     },
     {
@@ -3326,6 +3351,184 @@
       "occurrenceCount": 1,
       "sessionIds": [
         "2026-07-17-xhs-observe-search-classify-hermes"
+      ]
+    },
+    {
+      "fingerprint": "xhs-dm-send-verification-multi-dump-slow",
+      "title": "xhs.dm.send 验证阶段多次完整 UI dump 导致超时",
+      "scope": "performance",
+      "category": "performance",
+      "failureCode": null,
+      "state": "resolved",
+      "observation": "私信发送动作本身成功（气泡可见、草稿清空），但验证阶段在慢速机上多次完整 UI dump，总耗时超过命令超时；调用方无法确认消息送达。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "验证要求编辑器清空与气泡回显同时成立；慢速机 UI dump 单次 10-15s，多次重试累计超过原 35s/120s 超时。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "PROJECT_COMPATIBILITY_ROUTE",
+        "summary": "新增降级路径：编辑器清空但气泡在 20s 内不可读时返回 status=mitigated（verified 语义不变），xhs.dm.send 网关命令超时提升至 300s，验证总预算默认 90s。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "dm.send 新增 mitigated 降级与验证时间预算。"
+          },
+          {
+            "path": "scripts/xhs-remote-gateway.mjs",
+            "claim": "dm.send 命令超时提升至 300s 并放行 verified/mitigated 双态公开结果。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "xhs.dm.send degrades to mitigated when the sent bubble stays unreadable"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0058",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-17",
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-18-open-gaps-report-for-repair"
+      ]
+    },
+    {
+      "fingerprint": "vision-node-observation-box-jitter-layout-drift",
+      "title": "vision 节点两次观测的模型框抖动超出无障碍级容差导致 LAYOUT_DRIFT",
+      "scope": "perception",
+      "category": "reliability",
+      "failureCode": "LAYOUT_DRIFT",
+      "state": "verified",
+      "observation": "device.node.resolve 的 vision 来源在视觉后端可用时仍报 LAYOUT_DRIFT；两次独立观测的中心点实测抖动约 79px，超过 ±24px 容差。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "LLM 视觉框为近似估计，两次观测中心点天然抖动数十像素；复核使用与 accessibility/OCR 相同的 ±24px 容差，恒判漂移。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "VISION_NODE",
+        "summary": "vision 观测改用屏幕相对容差（max(64px, 屏宽 8%)）比对中心点；真实页面切换仍按数百像素量级拒绝。视觉后端经 hermes 配置实测 12-17s 返回。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "新增 vision 专用观测一致性容差并应用于 node.resolve/node.activate。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "device.node.resolve vision tolerates normal model box jitter"
+          }
+        ],
+        "liveAcceptance": [
+          {
+            "command": "device.node.resolve",
+            "outcome": "01 真机以 vision 来源解析「关注」按钮，两次观测后返回 resolved（52s），不再 LAYOUT_DRIFT。"
+          }
+        ]
+      },
+      "id": "DCI-0059",
+      "evidenceLevel": "live_verified",
+      "firstObservedOn": "2026-07-18",
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 2,
+      "sessionIds": [
+        "2026-07-18-open-gaps-report-for-repair",
+        "2026-07-18-p1-gaps-batch-fix-kimi"
+      ]
+    },
+    {
+      "fingerprint": "reply-target-suffix-blocked-by-translate-chip",
+      "title": "带「翻译」按钮的评论元数据使回复目标 suffix 匹配失败",
+      "scope": "device_interaction",
+      "category": "reliability",
+      "failureCode": "NODE_NOT_FOUND",
+      "state": "resolved",
+      "observation": "评论元数据为单一 TextView 且以「翻译」结尾（如「7分钟前 中国台湾 回复 翻译」）时，xhs.comment.reply-input 的 suffix 匹配找不到「回复」，命令快速失败。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "suffix 匹配要求节点文本以「回复」结尾；多语言评论的「翻译」按钮使元数据以「翻译」结尾。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "ACCESSIBILITY_EXACT_NODE",
+        "summary": "suffix 匹配容忍尾随「翻译」：节点文本剥除尾部「翻译」后再做结尾比较；实测点击点（元数据节点中心）落在回复 span 上。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "suffix 匹配容忍尾随「翻译」后缀。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "suffix reply targets tolerate a trailing translate chip"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0060",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-18",
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-18-reply-target-suffix-blocked-by-translate-kimi"
+      ]
+    },
+    {
+      "fingerprint": "device-back-fingerprint-animation-false-verify",
+      "title": "device.back 屏幕指纹验证在动画页面可能把未生效的返回误判为成功",
+      "scope": "device_interaction",
+      "category": "reliability",
+      "failureCode": "POSTCONDITION_MISS",
+      "state": "resolved",
+      "observation": "device.back 以屏幕指纹变化验证返回成功；动画页面（视频/动效）每帧都变，返回未生效时指纹也变化，可能误验证。",
+      "rootCause": {
+        "status": "confirmed",
+        "summary": "像素指纹无法区分「页面切换」与「动画帧变化」。"
+      },
+      "resolution": {
+        "kind": "general_fix",
+        "strategyId": "ACCESSIBILITY_EXACT_NODE",
+        "summary": "验证改为「新屏幕能稳定（600ms 内指纹不再变化）或前台窗口真实移动（mCurrentFocus/mFocusedApp 变化）」；纯动画两条件均不满足，继续轮询直至失败关闭。"
+      },
+      "evidence": {
+        "artifacts": [
+          {
+            "path": "scripts/xiaowei-device-read.mjs",
+            "claim": "device.back 新增稳定化与前台窗口复核双路径。"
+          }
+        ],
+        "tests": [
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "device.back accepts a focused-window change on animated pages"
+          },
+          {
+            "path": "tests/xiaowei-device-read.test.mjs",
+            "name": "device.back rejects pure animation without navigation"
+          }
+        ],
+        "liveAcceptance": []
+      },
+      "id": "DCI-0061",
+      "evidenceLevel": "tests_passed",
+      "firstObservedOn": "2026-07-18",
+      "lastObservedOn": "2026-07-18",
+      "occurrenceCount": 1,
+      "sessionIds": [
+        "2026-07-18-p1-gaps-batch-fix-kimi"
       ]
     }
   ]

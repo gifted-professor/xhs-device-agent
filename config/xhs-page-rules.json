@@ -20,25 +20,72 @@
               "id": "home-navigation",
               "weight": 0.35,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["tab_home", "home_tab", "bottom_home"] },
-                { "attribute": "text", "match": "exact", "values": ["首页"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["首页"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "tab_home",
+                    "home_tab",
+                    "bottom_home"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "首页"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "首页"
+                  ]
+                }
               ]
             },
             {
               "id": "feed-channel",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["关注", "发现", "推荐"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["关注", "发现", "推荐"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "关注",
+                    "发现",
+                    "推荐"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "关注",
+                    "发现",
+                    "推荐"
+                  ]
+                }
               ]
             },
             {
               "id": "feed-container",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["home_feed", "feed_list", "note_list"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "home_feed",
+                    "feed_list",
+                    "note_list"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ],
@@ -47,16 +94,47 @@
               "id": "search-overlay",
               "weight": 0.7,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "综合", "最新"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result", "search_suggestion"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "综合",
+                    "最新"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result",
+                    "search_suggestion"
+                  ]
+                }
               ]
             },
             {
               "id": "modal-overlay",
               "weight": 0.7,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_panel", "update_dialog"] },
-                { "attribute": "text", "match": "exact", "values": ["发现新版本", "版本更新"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_panel",
+                    "update_dialog"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "发现新版本",
+                    "版本更新"
+                  ]
+                }
               ]
             }
           ]
@@ -68,24 +146,62 @@
               "id": "search-field",
               "weight": 0.45,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "search-action",
               "weight": 0.3,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                }
               ]
             },
             {
               "id": "input-focused",
               "weight": 0.25,
               "any": [
-                { "attribute": "focused", "equals": true },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+                {
+                  "attribute": "focused",
+                  "equals": true
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_cursor",
+                    "search_clear"
+                  ]
+                }
               ]
             }
           ],
@@ -94,16 +210,44 @@
               "id": "suggestion-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion"
+                  ]
+                }
               ]
             },
             {
               "id": "result-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -115,25 +259,72 @@
               "id": "search-field",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-heading",
               "weight": 0.45,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "大家都在搜"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "大家都在搜"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-container",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
-                { "attribute": "scrollable", "equals": true },
-                { "attribute": "text", "match": "exact", "values": ["历史记录"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion",
+                    "suggestion_list",
+                    "search_history"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "历史记录"
+                  ]
+                }
               ]
             }
           ],
@@ -142,8 +333,22 @@
               "id": "result-tabs",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -155,26 +360,79 @@
               "id": "search-field",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-                { "attribute": "text", "match": "exact", "values": ["搜索"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索"
+                  ]
+                }
               ]
             },
             {
               "id": "result-tabs",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户", "商品"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_filter", "result_tab"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户",
+                    "商品"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_filter",
+                    "result_tab"
+                  ]
+                }
               ]
             },
             {
               "id": "result-list",
               "weight": 0.4,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result", "result_list", "note_list"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["搜索结果|笔记列表"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result",
+                    "result_list",
+                    "note_list"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "搜索结果|笔记列表"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ],
@@ -183,8 +441,22 @@
               "id": "suggestion-heading",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion"
+                  ]
+                }
               ]
             }
           ]
@@ -196,24 +468,66 @@
               "id": "trending-heading",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["热搜榜", "小红书热搜", "热点榜", "实时热点"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["hot_search_title", "trending_title"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "热搜榜",
+                    "小红书热搜",
+                    "热点榜",
+                    "实时热点"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "hot_search_title",
+                    "trending_title"
+                  ]
+                }
               ]
             },
             {
               "id": "rank-or-heat",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["hot_rank", "heat_value", "trending_rank"] },
-                { "attribute": "text", "match": "regex", "values": ["^\\d+[.、]?$", "热度$", "^热$"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "hot_rank",
+                    "heat_value",
+                    "trending_rank"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "^\\d+[.、]?$",
+                    "热度$",
+                    "^热$"
+                  ]
+                }
               ]
             },
             {
               "id": "trending-list",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["hot_search_list", "trending_list"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "hot_search_list",
+                    "trending_list"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ]
@@ -225,24 +539,65 @@
               "id": "recommendation-heading",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["猜你想看", "猜你喜欢", "为你推荐", "相关推荐"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["recommend_title", "guess_you_like"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "猜你想看",
+                    "猜你喜欢",
+                    "为你推荐",
+                    "相关推荐"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "recommend_title",
+                    "guess_you_like"
+                  ]
+                }
               ]
             },
             {
               "id": "recommendation-reason",
               "weight": 0.25,
               "any": [
-                { "attribute": "text", "match": "regex", "values": ["因为你.*浏览", "你可能感兴趣", "相关推荐"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["recommend_reason"] }
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "因为你.*浏览",
+                    "你可能感兴趣",
+                    "相关推荐"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "recommend_reason"
+                  ]
+                }
               ]
             },
             {
               "id": "recommendation-list",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["recommend_list", "related_note", "note_list"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "recommend_list",
+                    "related_note",
+                    "note_list"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ],
@@ -251,8 +606,21 @@
               "id": "home-navigation",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["tab_home", "bottom_home"] },
-                { "attribute": "text", "match": "exact", "values": ["首页"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "tab_home",
+                    "bottom_home"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "首页"
+                  ]
+                }
               ]
             }
           ]
@@ -264,26 +632,84 @@
               "id": "image-note-marker",
               "weight": 0.45,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["image_pager", "note_image", "photo_view"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图", "图文", "^图片,第\\d+张,共\\d+张"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "image_pager",
+                    "note_image",
+                    "photo_view"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "第.*张图片",
+                    "查看大图",
+                    "图文",
+                    "^图片,第\\d+张,共\\d+张"
+                  ]
+                }
               ]
             },
             {
               "id": "note-metadata",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content", "nickNameTV", "moreOperateIV"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["作者|笔记正文"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "note_title",
+                    "note_author",
+                    "note_content",
+                    "nickNameTV",
+                    "moreOperateIV"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "作者|笔记正文"
+                  ]
+                }
               ]
             },
             {
               "id": "note-comment-entry",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
-                { "attribute": "text", "match": "exact", "values": ["评论"] },
-                { "attribute": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["^评论\\s*\\d+$"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_count",
+                    "comment_entry"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "评论"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "^共\\s*\\d+\\s*条评论$"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "^评论\\s*\\d+$"
+                  ]
+                }
               ]
             }
           ],
@@ -292,8 +718,22 @@
               "id": "video-player",
               "weight": 0.8,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["video_player", "player_view"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["播放", "暂停"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "video_player",
+                    "player_view"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "播放",
+                    "暂停"
+                  ]
+                }
               ]
             }
           ]
@@ -305,26 +745,81 @@
               "id": "video-note-marker",
               "weight": 0.5,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["video_player", "player_view", "video_progress"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["播放", "暂停", "视频"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "video_player",
+                    "player_view",
+                    "video_progress"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "播放",
+                    "暂停",
+                    "视频"
+                  ]
+                }
               ]
             },
             {
               "id": "note-metadata",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["note_title", "note_author", "note_content"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["作者|笔记正文"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "note_title",
+                    "note_author",
+                    "note_content"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "作者|笔记正文"
+                  ]
+                }
               ]
             },
             {
               "id": "note-comment-entry",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_count", "comment_entry"] },
-                { "attribute": "text", "match": "exact", "values": ["评论"] },
-                { "attribute": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["^评论\\s*\\d+$"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_count",
+                    "comment_entry"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "评论"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "^共\\s*\\d+\\s*条评论$"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "^评论\\s*\\d+$"
+                  ]
+                }
               ]
             }
           ],
@@ -333,8 +828,22 @@
               "id": "image-pager",
               "weight": 0.8,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["image_pager", "photo_view"] },
-                { "attribute": "contentDesc", "match": "regex", "values": ["第.*张图片", "查看大图"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "image_pager",
+                    "photo_view"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "regex",
+                  "values": [
+                    "第.*张图片",
+                    "查看大图"
+                  ]
+                }
               ]
             }
           ]
@@ -346,26 +855,84 @@
               "id": "comment-heading",
               "weight": 0.4,
               "any": [
-                { "attribute": "text", "match": "regex", "values": ["^(?:全部)?评论$", "^共.*条评论$"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_title", "comment_count_title"] }
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "^(?:全部)?评论$",
+                    "^共.*条评论$"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_title",
+                    "comment_count_title"
+                  ]
+                }
               ]
             },
             {
               "id": "comment-input",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["说点什么...", "说点什么", "友善评论", "爱评论的人运气都不差", "留下你的想法吧"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["说点什么", "添加评论"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_input"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "说点什么...",
+                    "说点什么",
+                    "友善评论",
+                    "爱评论的人运气都不差",
+                    "留下你的想法吧"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "说点什么",
+                    "添加评论"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_input"
+                  ]
+                }
               ]
             },
             {
               "id": "comment-modal",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["comment_panel", "comment_sheet", "comment_dialog"] },
-                { "attribute": "className", "match": "exact", "values": ["android.app.Dialog"] },
-                { "attribute": "text", "match": "regex", "values": ["^(?:(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天).*\\s)?回复$", "^展开\\s*\\d+\\s*条回复$"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "comment_panel",
+                    "comment_sheet",
+                    "comment_dialog"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.app.Dialog"
+                  ]
+                },
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "^(?:(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天|\\d+分钟前|\\d+小时前|\\d+周前|\\d+个月前|\\d+月前|刚刚).*\\s)?回复(?:\\s+翻译)?$",
+                    "^展开\\s*\\d+\\s*条回复$"
+                  ]
+                }
               ]
             }
           ]
@@ -377,17 +944,56 @@
               "id": "network-error-message",
               "weight": 0.65,
               "any": [
-                { "attribute": "text", "match": "regex", "values": ["网络开小差", "网络异常", "加载失败", "无网络连接", "连接失败"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["network_error", "load_error"] }
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "网络开小差",
+                    "网络异常",
+                    "加载失败",
+                    "无网络连接",
+                    "连接失败"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "network_error",
+                    "load_error"
+                  ]
+                }
               ]
             },
             {
               "id": "retry-action",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["重试", "重新加载", "刷新"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["重试", "重新加载"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["retry", "reload"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "重试",
+                    "重新加载",
+                    "刷新"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "重试",
+                    "重新加载"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "retry",
+                    "reload"
+                  ]
+                }
               ]
             }
           ]
@@ -399,24 +1005,69 @@
               "id": "update-heading",
               "weight": 0.4,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["发现新版本", "版本更新", "升级提示"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["update_title", "upgrade_title"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "发现新版本",
+                    "版本更新",
+                    "升级提示"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "update_title",
+                    "upgrade_title"
+                  ]
+                }
               ]
             },
             {
               "id": "update-action",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["立即更新", "立即升级", "更新"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["update_now", "upgrade_now"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "立即更新",
+                    "立即升级",
+                    "更新"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "update_now",
+                    "upgrade_now"
+                  ]
+                }
               ]
             },
             {
               "id": "update-dismiss",
               "weight": 0.25,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["以后再说", "暂不更新", "取消"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["update_later", "upgrade_cancel"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "以后再说",
+                    "暂不更新",
+                    "取消"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "update_later",
+                    "upgrade_cancel"
+                  ]
+                }
               ]
             }
           ]
@@ -428,25 +1079,83 @@
               "id": "auth-heading",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["登录", "安全验证", "身份验证", "账号验证", "请完成验证"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["login_title", "security_verify", "captcha_title"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "登录",
+                    "安全验证",
+                    "身份验证",
+                    "账号验证",
+                    "请完成验证"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "login_title",
+                    "security_verify",
+                    "captcha_title"
+                  ]
+                }
               ]
             },
             {
               "id": "auth-input-or-challenge",
               "weight": 0.35,
               "any": [
-                { "attribute": "text", "match": "regex", "values": ["手机号", "验证码", "拖动.*滑块", "图形验证", "重新验证"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["phone_input", "verification_code", "captcha", "slider"] },
-                { "attribute": "password", "equals": true }
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "手机号",
+                    "验证码",
+                    "拖动.*滑块",
+                    "图形验证",
+                    "重新验证"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "phone_input",
+                    "verification_code",
+                    "captcha",
+                    "slider"
+                  ]
+                },
+                {
+                  "attribute": "password",
+                  "equals": true
+                }
               ]
             },
             {
               "id": "auth-secondary",
               "weight": 0.3,
               "any": [
-                { "attribute": "text", "match": "regex", "values": ["其他登录方式", "同意.*协议", "账号存在风险", "操作过于频繁", "请完成验证"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["login_agreement", "other_login", "risk_tip"] }
+                {
+                  "attribute": "text",
+                  "match": "regex",
+                  "values": [
+                    "其他登录方式",
+                    "同意.*协议",
+                    "账号存在风险",
+                    "操作过于频繁",
+                    "请完成验证"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "login_agreement",
+                    "other_login",
+                    "risk_tip"
+                  ]
+                }
               ]
             }
           ]
@@ -459,116 +1168,400 @@
       ],
       "semanticTargets": {
         "home_tab": [
-          { "strategy": "resource-id", "match": "includes", "values": ["tab_home", "home_tab", "bottom_home"] },
-          { "strategy": "text", "values": ["首页"] },
-          { "strategy": "content-desc", "values": ["首页"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "tab_home",
+              "home_tab",
+              "bottom_home"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "首页"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "首页"
+            ]
+          },
           {
             "id": "home-label-clickable-ancestor",
             "strategy": "relation",
             "direction": "ancestor",
             "maxDepth": 3,
-            "anchor": { "attribute": "text", "match": "exact", "values": ["首页"] },
-            "node": { "attribute": "clickable", "equals": true }
+            "anchor": {
+              "attribute": "text",
+              "match": "exact",
+              "values": [
+                "首页"
+              ]
+            },
+            "node": {
+              "attribute": "clickable",
+              "equals": true
+            }
           }
         ],
         "search_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-          { "strategy": "text", "values": ["搜索"] },
-          { "strategy": "content-desc", "values": ["搜索"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_input",
+              "search_box",
+              "search_edit"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "搜索"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          },
           {
             "id": "search-label-clickable-ancestor",
             "strategy": "relation",
             "direction": "ancestor",
             "maxDepth": 3,
-            "anchor": { "attribute": "text", "match": "exact", "values": ["搜索"] },
-            "node": { "attribute": "clickable", "equals": true }
+            "anchor": {
+              "attribute": "text",
+              "match": "exact",
+              "values": [
+                "搜索"
+              ]
+            },
+            "node": {
+              "attribute": "clickable",
+              "equals": true
+            }
           }
         ],
         "search_submit": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
-          { "strategy": "text", "values": ["搜索"] },
-          { "strategy": "content-desc", "values": ["搜索"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_submit",
+              "search_action"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "搜索"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          }
         ],
         "trending_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["hot_search", "trending"] },
-          { "strategy": "text", "values": ["热搜榜", "小红书热搜"] },
-          { "strategy": "content-desc", "values": ["热搜榜", "小红书热搜"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "hot_search",
+              "trending"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "热搜榜",
+              "小红书热搜"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "热搜榜",
+              "小红书热搜"
+            ]
+          }
         ],
         "recommendation_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["recommend", "guess_you_like"] },
-          { "strategy": "text", "values": ["猜你想看", "猜你喜欢", "为你推荐"] },
-          { "strategy": "content-desc", "values": ["猜你想看", "猜你喜欢", "为你推荐"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "recommend",
+              "guess_you_like"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "猜你想看",
+              "猜你喜欢",
+              "为你推荐"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "猜你想看",
+              "猜你喜欢",
+              "为你推荐"
+            ]
+          }
         ],
         "comments_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["comment_entry", "comment_count"] },
-          { "strategy": "text", "values": ["评论"] },
-          { "strategy": "text", "match": "regex", "values": ["^共\\s*\\d+\\s*条评论$"] },
-          { "strategy": "content-desc", "values": ["评论", "查看评论"] },
-          { "strategy": "content-desc", "match": "regex", "values": ["^评论\\s*\\d+$"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "comment_entry",
+              "comment_count"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "评论"
+            ]
+          },
+          {
+            "strategy": "text",
+            "match": "regex",
+            "values": [
+              "^共\\s*\\d+\\s*条评论$"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "评论",
+              "查看评论"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "match": "regex",
+            "values": [
+              "^评论\\s*\\d+$"
+            ]
+          },
           {
             "id": "comment-label-clickable-ancestor",
             "strategy": "relation",
             "direction": "ancestor",
             "maxDepth": 3,
-            "anchor": { "attribute": "text", "match": "exact", "values": ["评论"] },
-            "node": { "attribute": "clickable", "equals": true }
+            "anchor": {
+              "attribute": "text",
+              "match": "exact",
+              "values": [
+                "评论"
+              ]
+            },
+            "node": {
+              "attribute": "clickable",
+              "equals": true
+            }
           }
         ],
         "comments_container": [
-          { "strategy": "resource-id", "match": "includes", "values": ["comment_panel", "comment_list", "comment_container", "comment_scroll", "comments_list", "comments_container"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "comment_panel",
+              "comment_list",
+              "comment_container",
+              "comment_scroll",
+              "comments_list",
+              "comments_container"
+            ]
+          },
           {
             "id": "scrollable-comment-list-without-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "scrollable", "equals": true },
-              { "attribute": "className", "match": "includes", "values": ["RecyclerView", "ListView", "ScrollView"] }
+              {
+                "attribute": "scrollable",
+                "equals": true
+              },
+              {
+                "attribute": "className",
+                "match": "includes",
+                "values": [
+                  "RecyclerView",
+                  "ListView",
+                  "ScrollView"
+                ]
+              }
             ]
           }
         ],
         "note_content_container": [
-          { "strategy": "resource-id", "match": "includes", "values": ["note_content_container", "note_content_scroll", "content_scroll", "detail_scroll", "article_content"] },
-          { "strategy": "content-desc", "match": "regex", "values": ["^图片[,，]?第\\d+张[,，]?共\\d+张"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "note_content_container",
+              "note_content_scroll",
+              "content_scroll",
+              "detail_scroll",
+              "article_content"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "match": "regex",
+            "values": [
+              "^图片[,，]?第\\d+张[,，]?共\\d+张"
+            ]
+          },
           {
             "id": "image-note-scrollable-surface",
             "strategy": "attributes",
             "all": [
-              { "attribute": "scrollable", "equals": true },
-              { "attribute": "className", "match": "includes", "values": ["RecyclerView", "ScrollView", "ViewPager"] }
+              {
+                "attribute": "scrollable",
+                "equals": true
+              },
+              {
+                "attribute": "className",
+                "match": "includes",
+                "values": [
+                  "RecyclerView",
+                  "ScrollView",
+                  "ViewPager"
+                ]
+              }
             ]
           }
         ],
         "video_player_surface": [
-          { "strategy": "resource-id", "match": "includes", "values": ["video_player", "player_surface", "video_surface"] },
-          { "strategy": "content-desc", "match": "regex", "values": ["^(?:播放|暂停)$", "^已播放到"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "video_player",
+              "player_surface",
+              "video_surface"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "match": "regex",
+            "values": [
+              "^(?:播放|暂停)$",
+              "^已播放到"
+            ]
+          }
         ],
         "retry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["retry", "reload"] },
-          { "strategy": "text", "values": ["重试", "重新加载", "刷新"] },
-          { "strategy": "content-desc", "values": ["重试", "重新加载"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "retry",
+              "reload"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "重试",
+              "重新加载",
+              "刷新"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "重试",
+              "重新加载"
+            ]
+          }
         ],
         "dismiss_update": [
-          { "strategy": "resource-id", "match": "includes", "values": ["update_later", "upgrade_cancel"] },
-          { "strategy": "text", "values": ["以后再说", "暂不更新", "取消"] },
-          { "strategy": "content-desc", "values": ["关闭"] }
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "update_later",
+              "upgrade_cancel"
+            ]
+          },
+          {
+            "strategy": "text",
+            "values": [
+              "以后再说",
+              "暂不更新",
+              "取消"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "values": [
+              "关闭"
+            ]
+          }
         ],
         "note_card": [
-          { "strategy": "resource-id", "match": "includes", "values": ["note_card", "feed_item"] },
-          { "strategy": "content-desc", "match": "regex", "values": ["^笔记\\s"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "note_card",
+              "feed_item"
+            ]
+          },
+          {
+            "strategy": "content-desc",
+            "match": "regex",
+            "values": [
+              "^笔记\\s"
+            ]
+          },
           {
             "id": "title-clickable-card-ancestor",
             "strategy": "relation",
             "direction": "ancestor",
             "maxDepth": 4,
-            "anchor": { "attribute": "resourceId", "match": "includes", "values": ["note_title"] },
-            "node": { "attribute": "clickable", "equals": true }
+            "anchor": {
+              "attribute": "resourceId",
+              "match": "includes",
+              "values": [
+                "note_title"
+              ]
+            },
+            "node": {
+              "attribute": "clickable",
+              "equals": true
+            }
           },
           {
             "id": "dated-result-clickable-card-ancestor",
             "strategy": "relation",
             "direction": "ancestor",
             "maxDepth": 5,
-            "anchor": { "attribute": "text", "match": "regex", "values": ["^(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天)$"] },
-            "node": { "attribute": "clickable", "equals": true }
+            "anchor": {
+              "attribute": "text",
+              "match": "regex",
+              "values": [
+                "^(?:\\d{2}-\\d{2}|\\d+天前|昨天|前天)$"
+              ]
+            },
+            "node": {
+              "attribute": "clickable",
+              "equals": true
+            }
           }
         ]
       }
@@ -586,40 +1579,99 @@
       "calibratedXhsVersion": "9.26.1",
       "semanticTargets": {
         "search_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_input",
+              "search_box",
+              "search_edit"
+            ]
+          },
           {
             "id": "focused-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "focused", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "focused",
+                "equals": true
+              }
             ]
           },
           {
             "id": "clickable-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           },
           {
             "id": "query-text-next-to-clear",
             "strategy": "relation",
             "direction": "sibling",
-            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
-            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+            "anchor": {
+              "attribute": "contentDesc",
+              "match": "exact",
+              "values": [
+                "全部删除"
+              ]
+            },
+            "node": {
+              "attribute": "className",
+              "match": "exact",
+              "values": [
+                "android.widget.TextView"
+              ]
+            }
           },
-          { "strategy": "content-desc", "values": ["搜索"] }
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          }
         ],
         "search_submit": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_submit",
+              "search_action"
+            ]
+          },
           {
             "id": "clickable-search-action",
             "strategy": "attributes",
             "all": [
-              { "attribute": "text", "match": "exact", "values": ["搜索"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "text",
+                "match": "exact",
+                "values": [
+                  "搜索"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           }
         ]
@@ -636,40 +1688,99 @@
       "calibratedXhsVersion": "9.35.1",
       "semanticTargets": {
         "search_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_input",
+              "search_box",
+              "search_edit"
+            ]
+          },
           {
             "id": "focused-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "focused", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "focused",
+                "equals": true
+              }
             ]
           },
           {
             "id": "clickable-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           },
           {
             "id": "query-text-next-to-clear",
             "strategy": "relation",
             "direction": "sibling",
-            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
-            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+            "anchor": {
+              "attribute": "contentDesc",
+              "match": "exact",
+              "values": [
+                "全部删除"
+              ]
+            },
+            "node": {
+              "attribute": "className",
+              "match": "exact",
+              "values": [
+                "android.widget.TextView"
+              ]
+            }
           },
-          { "strategy": "content-desc", "values": ["搜索"] }
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          }
         ],
         "search_submit": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_submit",
+              "search_action"
+            ]
+          },
           {
             "id": "clickable-search-action",
             "strategy": "attributes",
             "all": [
-              { "attribute": "text", "match": "exact", "values": ["搜索"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "text",
+                "match": "exact",
+                "values": [
+                  "搜索"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           }
         ]
@@ -692,24 +1803,62 @@
               "id": "search-field",
               "weight": 0.55,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "search-action",
               "weight": 0.3,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                }
               ]
             },
             {
               "id": "input-focused",
               "weight": 0.15,
               "any": [
-                { "attribute": "focused", "equals": true },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+                {
+                  "attribute": "focused",
+                  "equals": true
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_cursor",
+                    "search_clear"
+                  ]
+                }
               ]
             }
           ],
@@ -718,16 +1867,45 @@
               "id": "suggestion-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "历史记录"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion"
+                  ]
+                }
               ]
             },
             {
               "id": "result-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -739,25 +1917,74 @@
               "id": "search-field",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-heading",
               "weight": 0.45,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录", "大家都在搜"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史记录"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "历史记录",
+                    "大家都在搜"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史记录"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-container",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
-                { "attribute": "className", "match": "exact", "values": ["androidx.recyclerview.widget.RecyclerView"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion",
+                    "suggestion_list",
+                    "search_history"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "androidx.recyclerview.widget.RecyclerView"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ],
@@ -766,8 +1993,22 @@
               "id": "result-tabs",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -775,40 +2016,99 @@
       ],
       "semanticTargets": {
         "search_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_input",
+              "search_box",
+              "search_edit"
+            ]
+          },
           {
             "id": "focused-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "focused", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "focused",
+                "equals": true
+              }
             ]
           },
           {
             "id": "clickable-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           },
           {
             "id": "query-text-next-to-clear",
             "strategy": "relation",
             "direction": "sibling",
-            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
-            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+            "anchor": {
+              "attribute": "contentDesc",
+              "match": "exact",
+              "values": [
+                "全部删除"
+              ]
+            },
+            "node": {
+              "attribute": "className",
+              "match": "exact",
+              "values": [
+                "android.widget.TextView"
+              ]
+            }
           },
-          { "strategy": "content-desc", "values": ["搜索"] }
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          }
         ],
         "search_submit": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_submit",
+              "search_action"
+            ]
+          },
           {
             "id": "clickable-search-action",
             "strategy": "attributes",
             "all": [
-              { "attribute": "text", "match": "exact", "values": ["搜索"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "text",
+                "match": "exact",
+                "values": [
+                  "搜索"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           }
         ]
@@ -831,24 +2131,62 @@
               "id": "search-field",
               "weight": 0.55,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "search-action",
               "weight": 0.3,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索", "取消"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索", "取消"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索",
+                    "取消"
+                  ]
+                }
               ]
             },
             {
               "id": "input-focused",
               "weight": 0.15,
               "any": [
-                { "attribute": "focused", "equals": true },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_cursor", "search_clear"] }
+                {
+                  "attribute": "focused",
+                  "equals": true
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_cursor",
+                    "search_clear"
+                  ]
+                }
               ]
             }
           ],
@@ -857,16 +2195,45 @@
               "id": "suggestion-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "历史记录"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion"
+                  ]
+                }
               ]
             },
             {
               "id": "result-content",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -878,25 +2245,74 @@
               "id": "search-field",
               "weight": 0.3,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
-                { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_input",
+                    "search_box",
+                    "search_edit"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "android.widget.EditText"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-heading",
               "weight": 0.45,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史搜索", "历史记录", "大家都在搜"] },
-                { "attribute": "contentDesc", "match": "exact", "values": ["搜索发现", "猜你想搜", "历史记录"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史搜索",
+                    "历史记录",
+                    "大家都在搜"
+                  ]
+                },
+                {
+                  "attribute": "contentDesc",
+                  "match": "exact",
+                  "values": [
+                    "搜索发现",
+                    "猜你想搜",
+                    "历史记录"
+                  ]
+                }
               ]
             },
             {
               "id": "suggestion-container",
               "weight": 0.25,
               "any": [
-                { "attribute": "resourceId", "match": "includes", "values": ["search_suggestion", "suggestion_list", "search_history"] },
-                { "attribute": "className", "match": "exact", "values": ["androidx.recyclerview.widget.RecyclerView"] },
-                { "attribute": "scrollable", "equals": true }
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_suggestion",
+                    "suggestion_list",
+                    "search_history"
+                  ]
+                },
+                {
+                  "attribute": "className",
+                  "match": "exact",
+                  "values": [
+                    "androidx.recyclerview.widget.RecyclerView"
+                  ]
+                },
+                {
+                  "attribute": "scrollable",
+                  "equals": true
+                }
               ]
             }
           ],
@@ -905,8 +2321,22 @@
               "id": "result-tabs",
               "weight": 0.5,
               "any": [
-                { "attribute": "text", "match": "exact", "values": ["综合", "最新", "用户"] },
-                { "attribute": "resourceId", "match": "includes", "values": ["search_result"] }
+                {
+                  "attribute": "text",
+                  "match": "exact",
+                  "values": [
+                    "综合",
+                    "最新",
+                    "用户"
+                  ]
+                },
+                {
+                  "attribute": "resourceId",
+                  "match": "includes",
+                  "values": [
+                    "search_result"
+                  ]
+                }
               ]
             }
           ]
@@ -914,40 +2344,99 @@
       ],
       "semanticTargets": {
         "search_entry": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_input", "search_box", "search_edit"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_input",
+              "search_box",
+              "search_edit"
+            ]
+          },
           {
             "id": "focused-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "focused", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "focused",
+                "equals": true
+              }
             ]
           },
           {
             "id": "clickable-search-editor",
             "strategy": "attributes",
             "all": [
-              { "attribute": "className", "match": "exact", "values": ["android.widget.EditText"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "className",
+                "match": "exact",
+                "values": [
+                  "android.widget.EditText"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           },
           {
             "id": "query-text-next-to-clear",
             "strategy": "relation",
             "direction": "sibling",
-            "anchor": { "attribute": "contentDesc", "match": "exact", "values": ["全部删除"] },
-            "node": { "attribute": "className", "match": "exact", "values": ["android.widget.TextView"] }
+            "anchor": {
+              "attribute": "contentDesc",
+              "match": "exact",
+              "values": [
+                "全部删除"
+              ]
+            },
+            "node": {
+              "attribute": "className",
+              "match": "exact",
+              "values": [
+                "android.widget.TextView"
+              ]
+            }
           },
-          { "strategy": "content-desc", "values": ["搜索"] }
+          {
+            "strategy": "content-desc",
+            "values": [
+              "搜索"
+            ]
+          }
         ],
         "search_submit": [
-          { "strategy": "resource-id", "match": "includes", "values": ["search_submit", "search_action"] },
+          {
+            "strategy": "resource-id",
+            "match": "includes",
+            "values": [
+              "search_submit",
+              "search_action"
+            ]
+          },
           {
             "id": "clickable-search-action",
             "strategy": "attributes",
             "all": [
-              { "attribute": "text", "match": "exact", "values": ["搜索"] },
-              { "attribute": "clickable", "equals": true }
+              {
+                "attribute": "text",
+                "match": "exact",
+                "values": [
+                  "搜索"
+                ]
+              },
+              {
+                "attribute": "clickable",
+                "equals": true
+              }
             ]
           }
         ]
@@ -955,59 +2444,195 @@
     }
   ],
   "safety": {
-    "humanRequiredStates": ["LOGIN_OR_CHALLENGE"],
-    "blockCloudStates": ["LOGIN_OR_CHALLENGE"],
+    "humanRequiredStates": [
+      "LOGIN_OR_CHALLENGE"
+    ],
+    "blockCloudStates": [
+      "LOGIN_OR_CHALLENGE"
+    ],
     "patterns": [
       {
         "id": "login-screen",
         "any": [
-          { "attribute": "text", "match": "exact", "values": ["登录", "手机号登录", "其他登录方式"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["login_title", "phone_input"] },
-          { "attribute": "password", "equals": true }
+          {
+            "attribute": "text",
+            "match": "exact",
+            "values": [
+              "登录",
+              "手机号登录",
+              "其他登录方式"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "login_title",
+              "phone_input"
+            ]
+          },
+          {
+            "attribute": "password",
+            "equals": true
+          }
         ]
       },
       {
         "id": "identity-or-risk-challenge",
         "challenge": true,
         "any": [
-          { "attribute": "text", "match": "regex", "values": ["安全验证", "身份验证", "请完成验证", "验证码", "拖动.*滑块", "账号存在风险", "操作过于频繁"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["captcha", "security_verify", "risk_tip", "slider"] }
+          {
+            "attribute": "text",
+            "match": "regex",
+            "values": [
+              "安全验证",
+              "身份验证",
+              "请完成验证",
+              "验证码",
+              "拖动.*滑块",
+              "账号存在风险",
+              "操作过于频繁"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "captcha",
+              "security_verify",
+              "risk_tip",
+              "slider"
+            ]
+          }
         ]
       },
       {
         "id": "private-message-screen",
         "any": [
-          { "attribute": "text", "match": "exact", "values": ["私信", "发送私信", "聊天详情"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["private_message", "chat_input"] }
+          {
+            "attribute": "text",
+            "match": "exact",
+            "values": [
+              "私信",
+              "发送私信",
+              "聊天详情"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "private_message",
+              "chat_input"
+            ]
+          }
         ]
       },
       {
         "id": "contacts-screen",
         "any": [
-          { "attribute": "text", "match": "exact", "values": ["通讯录", "联系人"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["contacts_list", "address_book"] }
+          {
+            "attribute": "text",
+            "match": "exact",
+            "values": [
+              "通讯录",
+              "联系人"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "contacts_list",
+              "address_book"
+            ]
+          }
         ]
       },
       {
         "id": "payment-screen",
         "any": [
-          { "attribute": "text", "match": "exact", "values": ["支付", "付款", "收银台", "银行卡"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["payment", "cashier", "bank_card"] }
+          {
+            "attribute": "text",
+            "match": "exact",
+            "values": [
+              "支付",
+              "付款",
+              "收银台",
+              "银行卡"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "payment",
+              "cashier",
+              "bank_card"
+            ]
+          }
         ]
       },
       {
         "id": "permission-prompt",
         "challenge": true,
         "any": [
-          { "attribute": "text", "match": "regex", "values": ["权限申请", "系统权限", "应用权限", "允许访问", "始终允许", "仅在使用时允许", "不允许", "授权访问", "相机权限", "麦克风权限", "通知权限", "位置权限"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["permission", "grant_dialog", "allow_button"] }
+          {
+            "attribute": "text",
+            "match": "regex",
+            "values": [
+              "权限申请",
+              "系统权限",
+              "应用权限",
+              "允许访问",
+              "始终允许",
+              "仅在使用时允许",
+              "不允许",
+              "授权访问",
+              "相机权限",
+              "麦克风权限",
+              "通知权限",
+              "位置权限"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "permission",
+              "grant_dialog",
+              "allow_button"
+            ]
+          }
         ]
       },
       {
         "id": "orders-account-or-private-screen",
         "any": [
-          { "attribute": "text", "match": "exact", "values": ["我的订单", "订单详情", "交易详情", "收货地址", "账号与安全", "隐私设置", "实名认证"] },
-          { "attribute": "resourceId", "match": "includes", "values": ["order_detail", "shipping_address", "account_security", "privacy_settings", "real_name"] }
+          {
+            "attribute": "text",
+            "match": "exact",
+            "values": [
+              "我的订单",
+              "订单详情",
+              "交易详情",
+              "收货地址",
+              "账号与安全",
+              "隐私设置",
+              "实名认证"
+            ]
+          },
+          {
+            "attribute": "resourceId",
+            "match": "includes",
+            "values": [
+              "order_detail",
+              "shipping_address",
+              "account_security",
+              "privacy_settings",
+              "real_name"
+            ]
+          }
         ]
       }
     ]

@@ -379,7 +379,12 @@ export function findSemanticTapPoint(hierarchy, label, displaySize, {
   }
   const matchesLabel = (value) => {
     const actual = semanticValue(value);
-    return match === "exact" ? actual === expected : actual.endsWith(expected);
+    if (match === "exact") return actual === expected;
+    if (actual.endsWith(expected)) return true;
+    // XHS translatable comments pack the reply action into one TextView that
+    // ends with 翻译 instead of the bare label ("…回复 翻译"). Tolerate the
+    // trailing translate chip so the reply target stays resolvable.
+    return actual.replace(/\s*翻译\s*$/u, "").endsWith(expected);
   };
   const candidates = document.nodes
     .filter((node) => (packageName === undefined || node.packageName === packageName)
@@ -659,19 +664,59 @@ async function goRecent(target, options) {
   throw new Error("device.recent sent one task-switcher event but a fresh UI change was not verified; the event will not be replayed");
 }
 
+async function readFocusedWindow(target, options) {
+  const output = await readAdbShellText(
+    target,
+    "dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'",
+    options,
+  );
+  const lines = String(output).split(/\r?\n/u).map((line) => line.trim())
+    .filter((line) => /mCurrentFocus|mFocusedApp/u.test(line));
+  if (!lines.length) throw new Error("Xiaowei could not read the focused window");
+  return lines.join("\n");
+}
+
 async function goBack(target, options) {
   const beforeHash = await readScreenFingerprint(target, options);
+  let beforeFocus = null;
+  try {
+    beforeFocus = await readFocusedWindow(target, options);
+  } catch {
+    // Focused-window lookup is best-effort; the fingerprint path still applies.
+  }
   await invokeOfficial("pushEvent", target, { type: "3" }, options);
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const afterHash = await readScreenFingerprint(target, options);
     if (afterHash !== beforeHash) {
-      return {
-        machine: target.machine,
-        status: "verified",
-        verification: "single_back_event_then_fresh_screen_change",
-        transport: "xiaowei-api",
-        localAdbRequired: false,
-      };
+      // Animated pages change pixels without any navigation. A real BACK moves
+      // to a page that settles, or at least moves the focused window; pure
+      // animation fails both checks and keeps polling.
+      await options.delay(600);
+      const settledHash = await readScreenFingerprint(target, options);
+      if (settledHash === afterHash) {
+        return {
+          machine: target.machine,
+          status: "verified",
+          verification: "single_back_event_then_fresh_screen_change",
+          transport: "xiaowei-api",
+          localAdbRequired: false,
+        };
+      }
+      if (beforeFocus !== null) {
+        try {
+          if (await readFocusedWindow(target, options) !== beforeFocus) {
+            return {
+              machine: target.machine,
+              status: "verified",
+              verification: "single_back_event_then_focused_window_change",
+              transport: "xiaowei-api",
+              localAdbRequired: false,
+            };
+          }
+        } catch {
+          // Keep polling while the focus reader is unavailable.
+        }
+      }
     }
     if (attempt < 7) await options.delay(300);
   }
@@ -1314,11 +1359,30 @@ async function screenshotContainsText(observation, value, options) {
   }
 }
 
+// LLM vision returns approximate boxes; two independent observations of the
+// same stable target routinely differ by tens of pixels, which is normal for
+// the model but far beyond the accessibility-grade 24px tolerance. Compare
+// vision observations with a screen-relative point tolerance instead; a real
+// page change still moves the target by hundreds of pixels and stays blocked.
+function visionPointsAgree(first, second, dimensions) {
+  const distance = Math.hypot(
+    ((first.left + first.right) - (second.left + second.right)) / 2,
+    ((first.top + first.bottom) - (second.top + second.bottom)) / 2,
+  );
+  return distance <= Math.max(64, dimensions.width * 0.08);
+}
+
+function observationsAgree(first, guard) {
+  if (first.source !== guard.source) return false;
+  if (first.source === "vision") return visionPointsAgree(first.bounds, guard.bounds, first.dimensions);
+  return stableNodeBounds(first.bounds, guard.bounds);
+}
+
 async function resolveDeviceNode(target, request, deviceDirectory, options) {
   const first = await nodeObservation(target, request, deviceDirectory, options, "node-resolve-before");
   await options.delay(250);
   const guard = await nodeObservation(target, request, deviceDirectory, options, "node-resolve-guard");
-  if (first.source !== guard.source || !stableNodeBounds(first.bounds, guard.bounds)) {
+  if (!observationsAgree(first, guard)) {
     throw new DeviceNodeError("LAYOUT_DRIFT", "Node changed between two fresh observations");
   }
   return {
@@ -1345,7 +1409,7 @@ async function activateDeviceNode(target, request, deviceDirectory, options) {
   if (await screenshotContainsText(guard, request.postcondition.value, options)) {
     throw new DeviceNodeError("POSTCONDITION_MISS", "Postcondition appeared before activation");
   }
-  if (first.source !== guard.source || !stableNodeBounds(first.bounds, guard.bounds)) {
+  if (!observationsAgree(first, guard)) {
     throw new DeviceNodeError("LAYOUT_DRIFT", "Node changed before activation; no event was sent");
   }
   const x = (guard.bounds.left + guard.bounds.right) / 2;
@@ -1897,6 +1961,14 @@ async function sendXhsDmDraft(target, request, options) {
   }
   const dimensions = await readPhysicalDisplaySize(target, options);
   await invokePointerBounds(target, guardSend, dimensions, options);
+  // Slow devices can take a long time to expose the sent bubble in the UI
+  // hierarchy even though the editor clears right away. Treat editor clearing
+  // as a strong send signal and degrade to "mitigated" instead of burning
+  // the whole budget when the bubble stays unreadable (hermes P1 gap).
+  const verifyBudgetMs = options.dmVerifyBudgetMs ?? 90_000;
+  const degradedEchoBudgetMs = options.dmDegradedEchoBudgetMs ?? 20_000;
+  const verifyStartedAt = options.now();
+  let editorCleared = false;
   for (let attempt = 0; attempt < 15; attempt += 1) {
     const after = await readUiHierarchy(target, options);
     if (!hierarchyContainsPackage(after, XHS_PACKAGE)) {
@@ -1913,6 +1985,18 @@ async function sendXhsDmDraft(target, request, options) {
         localAdbRequired: false,
       };
     }
+    if (xhsDmEditorIsEmpty(afterEditor)) editorCleared = true;
+    if (editorCleared && options.now() - verifyStartedAt >= degradedEchoBudgetMs) {
+      return {
+        machine: target.machine,
+        status: "mitigated",
+        draftLength: [...request.expectedDraft].length,
+        verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (options.now() - verifyStartedAt >= verifyBudgetMs) break;
     if (attempt < 14) await options.delay(400);
   }
   throw new DeviceNodeError(
@@ -2814,6 +2898,8 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
     uiScratchDirectory: outputRoot,
     replyOpenBudgetMs: runtime.replyOpenBudgetMs,
     commentDraftVerifyBudgetMs: runtime.commentDraftVerifyBudgetMs,
+    dmVerifyBudgetMs: runtime.dmVerifyBudgetMs,
+    dmDegradedEchoBudgetMs: runtime.dmDegradedEchoBudgetMs,
   };
   const results = [];
   if ([

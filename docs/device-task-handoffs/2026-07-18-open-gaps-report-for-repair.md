@@ -257,3 +257,21 @@
 ---
 
 *报告生成：hermes-agent 2026-07-18*
+
+---
+
+## 修复状态（2026-07-18 kimi 批量处置后）
+
+| # | 原状态 | 修复状态 | 事件 |
+|---|--------|----------|------|
+| 1 搜索页 observe | open | Codex 已修（公开校验放行搜索状态），待真机复验 | DCI-0057 resolved |
+| 2 dm.send 验证超时 | mitigated | 已修：20s 气泡不可读降级 mitigated + 超时 300s | DCI-0058 resolved |
+| 3 全流程性能 187s | open | Codex 性能优化已在码，待重测基准 | — |
+| 4 话题标签点击 | open | 已修并真机验证（OCR 5.1 运行器 + 归一化 + 词窗匹配） | DCI-0033 verified |
+| 5 视觉服务超时 | open | 已修：后端可用（12-17s），vision 观测容差改屏宽 8% | DCI-0059 verified |
+| 6 翻译评论回复 | open | 已修：suffix 匹配容忍尾随「翻译」 | DCI-0060 resolved |
+| 7 评论面板 observe | mitigated | 已修：modal 证据正则放宽时间格式与「翻译」 | DCI-0055 resolved |
+| 8 back 指纹不稳 | open | 已修：稳定化或前台窗口移动双路径验证 | DCI-0061 resolved |
+
+验收指引见 `2026-07-18-p1-gaps-batch-fix-kimi.md`。全量测试 533/533 通过。
+

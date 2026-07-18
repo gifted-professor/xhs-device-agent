@@ -362,7 +362,8 @@ export function commandTimeoutMs(input) {
   // Comment draft transactions include IME switches plus slow-device editor
   // rebuild storms; machine 01 alone needs >78s before its reply editor even
   // becomes focus-stable, so the generic 120s cap cuts these commands off.
-  if (input?.command === "xhs.comment.input" || input?.command === "xhs.comment.reply-input") {
+  if (input?.command === "xhs.comment.input" || input?.command === "xhs.comment.reply-input"
+      || input?.command === "xhs.dm.send") {
     return COMMENT_INPUT_TRANSACTION_TIMEOUT_MS;
   }
   if ((input?.command === "device.node.resolve" || input?.command === "device.node.activate")
@@ -529,7 +530,7 @@ export function parseStructuredReadOutput(command, stdout) {
   if (command === "device.back") {
     assertExactPublicKeys(value, ["machine", "status", "verification", "transport", "localAdbRequired"], "device.back result");
     if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
-        || value.verification !== "single_back_event_then_fresh_screen_change"
+        || !["single_back_event_then_fresh_screen_change", "single_back_event_then_focused_window_change"].includes(value.verification)
         || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
       throw new Error("device.back contains an invalid public value");
     }
@@ -696,9 +697,13 @@ export function parseStructuredReadOutput(command, stdout) {
     assertExactPublicKeys(value, [
       "machine", "status", "draftLength", "verification", "transport", "localAdbRequired",
     ], "xhs.dm.send result");
-    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+    const dmSendOutcomes = {
+      verified: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo",
+      mitigated: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+    };
+    if (!/^\d{2}$/u.test(value.machine)
         || !Number.isSafeInteger(value.draftLength) || value.draftLength < 1 || value.draftLength > 256
-        || value.verification !== "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo"
+        || dmSendOutcomes[value.status] !== value.verification
         || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
       throw new Error("xhs.dm.send contains an invalid public value");
     }
