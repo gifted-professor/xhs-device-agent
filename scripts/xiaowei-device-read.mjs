@@ -16,7 +16,7 @@ import {
   stableNodeBounds,
   validateDeviceNodeSelector,
 } from "./device-node-engine.mjs";
-import { loadRules, parseUiAutomatorXml } from "./xhs-page-engine.mjs";
+import { createNormalizedFingerprint, loadRules, parseUiAutomatorXml } from "./xhs-page-engine.mjs";
 import { intersectXhsObservations, observeXhsHierarchy, resolveVisibleXhsNote } from "./xhs-public-observation.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -24,6 +24,10 @@ const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const SAFE_ALIAS = /^[A-Za-z0-9._-]{1,64}$/u;
 const SAFE_MACHINE = /^\d{2}$/u;
 const SAFE_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/u;
+const SAFE_IME_SERVICE = /^[A-Za-z0-9._]+\/[A-Za-z0-9._$]+$/u;
+const XHS_PACKAGE = "com.xingin.xhs";
+const XHS_FIND_VIDEO_DEFAULT_MAX_SCROLLS = 3;
+const XHS_FIND_VIDEO_DEFAULT_MAX_DURATION_MS = 28_000;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_ARTIFACT_BYTES = 64 * 1024 * 1024;
 
@@ -153,7 +157,15 @@ export function extractUiHierarchy(value) {
   const hierarchyStart = value.indexOf("<hierarchy");
   const hierarchyEnd = value.indexOf("</hierarchy>", hierarchyStart);
   if (hierarchyStart < 0 || hierarchyEnd < hierarchyStart) {
-    throw new Error("Xiaowei UI response did not contain a complete hierarchy");
+    const error = new Error([
+      "Xiaowei UI response did not contain a complete hierarchy",
+      `bytes=${Buffer.byteLength(value, "utf8")}`,
+      `hasStart=${hierarchyStart >= 0}`,
+      `hasEnd=${value.includes("</hierarchy>")}`,
+      `sha256=${createHash("sha256").update(value).digest("hex")}`,
+    ].join("; "));
+    error.code = "UI_HIERARCHY_INCOMPLETE";
+    throw error;
   }
   const declaration = value.lastIndexOf("<?xml", hierarchyStart);
   const start = declaration >= 0 ? declaration : hierarchyStart;
@@ -191,12 +203,12 @@ export function inspectPng(buffer) {
   return { width, height, bytes: buffer.length };
 }
 
-async function invokeOfficial(action, target, data, options) {
+async function invokeOfficial(action, target, data, options, timeoutMs = options.timeoutMs) {
   let raw;
   try {
     raw = await options.sendRequest({ action, devices: target.serial, data }, {
       endpoint: options.endpoint,
-      timeoutMs: options.timeoutMs,
+      timeoutMs,
       maxResponseBytes: 4 * 1024 * 1024,
     });
   } catch (error) {
@@ -251,8 +263,58 @@ async function readUi(target, deviceDirectory, options) {
 }
 
 async function readUiHierarchy(target, options) {
-  const data = await invokeOfficial("adb_shell", target, { command: "uiautomator dump /dev/tty" }, options);
-  return extractUiHierarchy(extractSingleDeviceValue(data));
+  try {
+    const data = await invokeOfficial(
+      "adb_shell", target, { command: "uiautomator dump /dev/tty" }, options, options.uiDirectTimeoutMs,
+    );
+    return extractUiHierarchy(extractSingleDeviceValue(data));
+  } catch (error) {
+    return readUiHierarchyFromFile(target, options, error);
+  }
+}
+
+async function readUiHierarchyFromFile(target, options, ttyError) {
+  const nonce = randomUUID().replaceAll("-", "");
+  const remotePath = `/sdcard/xhs-agent-ui-${nonce}.xml`;
+  const localPath = path.join(options.uiScratchDirectory, `uiautomator-${nonce}.xml`);
+  let remoteCreated = false;
+  try {
+    await invokeOfficial("adb_shell", target, { command: `uiautomator dump --compressed ${remotePath}` }, options);
+    remoteCreated = true;
+    let remoteBytes = 0;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const sizeData = await invokeOfficial("adb_shell", target, {
+        command: `if [ -s ${remotePath} ]; then wc -c < ${remotePath}; else echo 0; fi`,
+      }, options);
+      const matches = extractSingleDeviceValue(sizeData).match(/(?:^|\n)\s*(\d+)\s*(?=\n|$)/gu) ?? [];
+      remoteBytes = Number(matches.at(-1)?.trim() ?? 0);
+      if (Number.isSafeInteger(remoteBytes) && remoteBytes > 0 && remoteBytes <= 4 * 1024 * 1024) break;
+      if (attempt < 11) await options.delay(250);
+    }
+    if (!Number.isSafeInteger(remoteBytes) || remoteBytes < 1 || remoteBytes > 4 * 1024 * 1024) {
+      throw new Error("device-side UI dump did not produce a bounded XML artifact");
+    }
+    await rm(localPath, { force: true });
+    await invokeOfficial("pullFile", target, { filePath: remotePath, savePath: localPath }, options);
+    let previousSize = -1;
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      try {
+        const metadata = await stat(localPath);
+        if (metadata.isFile() && metadata.size === remoteBytes && metadata.size === previousSize) break;
+        previousSize = metadata.size;
+      } catch {}
+      if (attempt === 11) throw new Error("pulled UI dump did not become a stable local artifact");
+      await options.delay(100);
+    }
+    return extractUiHierarchy(await readFile(localPath, "utf8"));
+  } catch (error) {
+    throw new Error(`${ttyError.message}; device-file fallback failed: ${error.message}`);
+  } finally {
+    await rm(localPath, { force: true });
+    if (remoteCreated) {
+      try { await invokeOfficial("adb_shell", target, { command: `rm -f ${remotePath}` }, options); } catch {}
+    }
+  }
 }
 
 function collectPackageNames(value, packages = new Set()) {
@@ -268,6 +330,10 @@ function collectPackageNames(value, packages = new Set()) {
     for (const entry of Object.values(value)) collectPackageNames(entry, packages);
   }
   return packages;
+}
+
+export function installedPackageNames(value) {
+  return [...collectPackageNames(value)].sort((left, right) => left.localeCompare(right));
 }
 
 export function packageInventoryContains(value, packageName) {
@@ -302,23 +368,46 @@ function actionableAncestor(document, node) {
   return bounds ? { node, bounds } : null;
 }
 
-export function findSemanticTapPoint(hierarchy, label, displaySize) {
+export function findSemanticTapPoint(hierarchy, label, displaySize, {
+  packageName, match = "exact", ordinal,
+} = {}) {
   const document = parseUiAutomatorXml(hierarchy);
   const expected = semanticValue(label);
+  if (!["exact", "suffix"].includes(match)
+      || (ordinal !== undefined && (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 50))) {
+    throw new Error("Semantic text target options are invalid");
+  }
+  const matchesLabel = (value) => {
+    const actual = semanticValue(value);
+    return match === "exact" ? actual === expected : actual.endsWith(expected);
+  };
   const candidates = document.nodes
-    .filter((node) => semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected)
+    .filter((node) => (packageName === undefined || node.packageName === packageName)
+      && (matchesLabel(node.text) || matchesLabel(node.contentDesc)))
     .map((node) => actionableAncestor(document, node))
     .filter(Boolean);
   if (!candidates.length) throw new Error(`Control ${expected} was not found in the fresh UI hierarchy`);
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [
+    `${candidate.bounds.left},${candidate.bounds.top},${candidate.bounds.right},${candidate.bounds.bottom}`, candidate,
+  ])).values()];
+  if (ordinal === undefined && packageName !== undefined && uniqueCandidates.length !== 1) {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", `Control ${expected} was not unique in the expected foreground package`);
+  }
   const allBounds = document.nodes.map((node) => parseBounds(node.attributes?.bounds)).filter(Boolean);
   const width = displaySize?.width ?? Math.max(0, ...allBounds.map((bounds) => bounds.right));
   const height = displaySize?.height ?? Math.max(0, ...allBounds.map((bounds) => bounds.bottom));
   if (!width || !height) throw new Error("Fresh UI hierarchy did not expose valid display bounds");
-  candidates.sort((left, right) =>
-    (left.bounds.width * left.bounds.height) - (right.bounds.width * right.bounds.height)
-    || right.bounds.top - left.bounds.top
-    || left.bounds.left - right.bounds.left);
-  const bounds = candidates[0].bounds;
+  uniqueCandidates.sort((left, right) => ordinal === undefined
+    ? (left.bounds.width * left.bounds.height) - (right.bounds.width * right.bounds.height)
+      || right.bounds.top - left.bounds.top
+      || left.bounds.left - right.bounds.left
+    : left.bounds.top - right.bounds.top
+      || left.bounds.left - right.bounds.left
+      || (left.bounds.width * left.bounds.height) - (right.bounds.width * right.bounds.height));
+  if (ordinal !== undefined && ordinal > uniqueCandidates.length) {
+    throw new Error(`Control ${expected} ordinal ${ordinal} was not visible in the fresh UI hierarchy`);
+  }
+  const bounds = uniqueCandidates[(ordinal ?? 1) - 1].bounds;
   const x = (bounds.left + bounds.right) / 2;
   const y = (bounds.top + bounds.bottom) / 2;
   if (x < 0 || y < 0 || x > width || y > height) {
@@ -360,27 +449,48 @@ function hierarchyMatchesPostcondition(hierarchy, postcondition) {
 
 async function tapText(target, request, deviceDirectory, options) {
   const before = await readUiHierarchy(target, options);
+  if (request.package !== undefined && !hierarchyContainsPackage(before, request.package)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "device.tap-text expected foreground package was not verified");
+  }
   const beforePath = path.join(deviceDirectory, "tap-before.xml");
   const beforePersistence = await writeAtomic(beforePath, before, options);
   const displaySize = await readPhysicalDisplaySize(target, options);
-  const point = findSemanticTapPoint(before, request.text, displaySize);
+  const point = findSemanticTapPoint(before, request.text, displaySize, {
+    packageName: request.package, match: request.match, ordinal: request.ordinal,
+  });
   await invokeOfficial("pointerEvent", target, { type: "10", x: point.x, y: point.y }, options);
 
   let after = "";
   let verified = false;
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    after = await readUiHierarchy(target, options);
-    if (hierarchyMatchesPostcondition(after, request.postcondition)) {
+    if (request.postcondition.kind === "package") {
+      verified = await readFocusedPackage(target, options) === request.postcondition.value;
+    } else {
+      after = await readUiHierarchy(target, options);
+      verified = hierarchyMatchesPostcondition(after, request.postcondition);
+    }
+    if (verified) {
       verified = true;
       break;
     }
     if (attempt < 5) await options.delay(400);
   }
-  const afterPath = path.join(deviceDirectory, "tap-after.xml");
-  const afterPersistence = await writeAtomic(afterPath, after, options);
   if (!verified) {
     throw new Error("Tap was sent once but the approved postcondition was not verified; the tap will not be replayed");
   }
+  if (request.postcondition.kind === "package") {
+    return {
+      executionOutcome: "accepted",
+      verificationOutcome: "verified",
+      beforeHierarchyPath: beforePath,
+      beforeBytes: beforePersistence.bytes,
+      beforeSha256: beforePersistence.sha256,
+      persistenceVerification: beforePersistence.persistenceVerification,
+      verification: "fresh_ui_target_then_single_pointer_event_then_foreground_package",
+    };
+  }
+  const afterPath = path.join(deviceDirectory, "tap-after.xml");
+  const afterPersistence = await writeAtomic(afterPath, after, options);
   return {
     executionOutcome: "accepted",
     verificationOutcome: "verified",
@@ -393,6 +503,48 @@ async function tapText(target, request, deviceDirectory, options) {
     persistenceVerification: afterPersistence.persistenceVerification,
     verification: "fresh_ui_postcondition_after_single_pointer_event",
   };
+}
+
+function percentageCoordinate(value, label) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
+    throw new Error(`${label} must be a finite percentage from 0 through 100`);
+  }
+  return value.toFixed(6).replace(/\.?0+$/u, "");
+}
+
+async function tapCoordinates(target, request, options) {
+  if (await readFocusedPackage(target, options) !== request.package) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "device.tap-coords source package was not verified");
+  }
+  await options.delay(100);
+  if (await readFocusedPackage(target, options) !== request.package) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "device.tap-coords source package changed before the pointer event");
+  }
+  await invokeOfficial("pointerEvent", target, {
+    type: "10",
+    x: percentageCoordinate(request.x, "device.tap-coords x"),
+    y: percentageCoordinate(request.y, "device.tap-coords y"),
+  }, options);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      const verified = request.postcondition.kind === "package"
+        ? await readFocusedPackage(target, options) === request.postcondition.value
+        : hierarchyMatchesPostcondition(await readUiHierarchy(target, options), request.postcondition);
+      if (verified) {
+        return {
+          machine: target.machine,
+          status: "verified",
+          verification: "source_package_fast_rechecked_then_single_pointer_event_then_fresh_postcondition",
+          transport: "xiaowei-api",
+          localAdbRequired: false,
+        };
+      }
+    } catch {
+      // App transitions can briefly return an incomplete hierarchy.
+    }
+    if (attempt < 11) await options.delay(300);
+  }
+  throw new Error("device.tap-coords sent one pointer event but the fresh postcondition was not verified; the event will not be replayed");
 }
 
 async function waitForForegroundPackage(target, packageName, deviceDirectory, options, artifactName) {
@@ -444,6 +596,20 @@ async function openApp(target, packageName, deviceDirectory, options) {
   };
 }
 
+async function listApps(target, options) {
+  const inventory = await invokeOfficial("apkList", target, undefined, options);
+  const packages = installedPackageNames(inventory);
+  if (!packages.length || packages.length > 20_000) {
+    throw new Error("Xiaowei apkList returned no bounded package inventory");
+  }
+  return {
+    machine: target.machine,
+    packages,
+    transport: "xiaowei-api",
+    localAdbRequired: false,
+  };
+}
+
 function extractResolvedPackage(value) {
   const lines = String(value ?? "").split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
   for (let index = lines.length - 1; index >= 0; index -= 1) {
@@ -466,6 +632,312 @@ async function goHome(target, deviceDirectory, options) {
     executionOutcome: "accepted",
     verificationOutcome: "verified",
     ...verification,
+  };
+}
+
+async function goRecent(target, options) {
+  const before = await readUiHierarchy(target, options);
+  const beforeHash = createNormalizedFingerprint(before).hash;
+  await invokeOfficial("pushEvent", target, { type: "1" }, options);
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    try {
+      const after = await readUiHierarchy(target, options);
+      if (createNormalizedFingerprint(after).hash !== beforeHash) {
+        return {
+          machine: target.machine,
+          status: "verified",
+          verification: "single_recent_event_then_fresh_ui_change",
+          transport: "xiaowei-api",
+          localAdbRequired: false,
+        };
+      }
+    } catch {
+      // The task switcher can briefly expose an incomplete hierarchy.
+    }
+    if (attempt < 11) await options.delay(300);
+  }
+  throw new Error("device.recent sent one task-switcher event but a fresh UI change was not verified; the event will not be replayed");
+}
+
+async function goBack(target, options) {
+  const beforeHash = await readScreenFingerprint(target, options);
+  await invokeOfficial("pushEvent", target, { type: "3" }, options);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const afterHash = await readScreenFingerprint(target, options);
+    if (afterHash !== beforeHash) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        verification: "single_back_event_then_fresh_screen_change",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (attempt < 7) await options.delay(300);
+  }
+  throw new DeviceNodeError("POSTCONDITION_MISS", "BACK was sent once but a fresh UI change was not verified; BACK will not be replayed");
+}
+
+function editorObservation(hierarchy, packageName, {
+  expectedText, reference = null, requireFocused = true,
+} = {}) {
+  const document = parseUiAutomatorXml(hierarchy);
+  const editors = document.nodes
+    .filter((node) => node.packageName === packageName && /(?:^|\.)EditText$/u.test(node.className))
+    .map((node) => ({ node, bounds: parseBounds(node.attributes?.bounds) }))
+    .filter(({ node, bounds }) => bounds && (!requireFocused || node.focused === true)
+      && (!reference || (node.className === reference.node.className
+        && (!reference.node.resourceId || node.resourceId === reference.node.resourceId)
+        && stableNodeBounds(bounds, reference.bounds))))
+    .filter(({ node }) => expectedText === undefined || semanticValue(node.text) === semanticValue(expectedText));
+  if (editors.length !== 1) return null;
+  return editors[0];
+}
+
+function focusedEditor(hierarchy, packageName, expectedText) {
+  return editorObservation(hierarchy, packageName, { expectedText })?.node ?? null;
+}
+
+function singleDeviceActionValue(data, action) {
+  if (Array.isArray(data) || typeof data === "string") return data;
+  if (!plainObject(data)) throw new Error(`Xiaowei ${action} returned invalid device data`);
+  const values = Object.values(data);
+  if (values.length !== 1) throw new Error(`Xiaowei ${action} did not return one device result`);
+  return values[0];
+}
+
+function imeServiceFromOutput(value, label) {
+  const services = String(value ?? "").split(/\r?\n/u).map((entry) => entry.trim()).filter((entry) => SAFE_IME_SERVICE.test(entry));
+  if (!services.length) throw new Error(`Xiaowei could not read the ${label} input method`);
+  return services.at(-1);
+}
+
+async function readAdbShellText(target, command, options) {
+  return singleDeviceActionValue(await invokeOfficial("adb_shell", target, { command }, options), "adb_shell");
+}
+
+function focusedPackageFromOutput(value) {
+  const lines = String(value ?? "").split(/\r?\n/u)
+    .filter((line) => /mCurrentFocus|mFocusedApp|topResumedActivity|mResumedActivity|ResumedActivity/u.test(line));
+  for (const line of lines) {
+    const match = /\b([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\/[A-Za-z0-9_.$]+/u.exec(line);
+    if (match && SAFE_PACKAGE.test(match[1])) return match[1];
+  }
+  return null;
+}
+
+async function readFocusedPackage(target, options) {
+  const probes = [
+    "dumpsys activity activities | grep -m 1 -E 'topResumedActivity|mResumedActivity|ResumedActivity'",
+    "dumpsys window windows | grep -E 'mCurrentFocus|mFocusedApp'",
+  ];
+  for (const command of probes) {
+    try {
+      const packageName = focusedPackageFromOutput(await readAdbShellText(target, command, options));
+      if (packageName) return packageName;
+    } catch {
+      // Android versions expose different focus markers; use the next bounded probe.
+    }
+  }
+  throw new Error("Xiaowei could not read one current foreground package");
+}
+
+async function readScreenFingerprint(target, options) {
+  const output = await readAdbShellText(target, "screencap -p | sha256sum", options);
+  const match = /(?:^|\s)([a-f0-9]{64})(?=\s|$)/iu.exec(String(output));
+  if (!match) throw new Error("Xiaowei could not read a bounded screen fingerprint");
+  return match[1].toLowerCase();
+}
+
+async function waitForIme(target, expectedIme, options, { binding = false } = {}) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const output = await readAdbShellText(
+      target,
+      binding ? "dumpsys input_method" : "settings get secure default_input_method",
+      options,
+    );
+    if (binding ? String(output).includes(expectedIme) : imeServiceFromOutput(output, "default") === expectedIme) return true;
+    if (attempt < 9) await options.delay(250);
+  }
+  return false;
+}
+
+async function waitForFocusedEditor(target, packageName, expectedText, options, reference = null, attempts = 8) {
+  let hierarchy = "";
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    hierarchy = await readUiHierarchy(target, options);
+    if (editorObservation(hierarchy, packageName, { expectedText, reference })) return hierarchy;
+    if (attempt < attempts - 1) await options.delay(250);
+  }
+  return hierarchy;
+}
+
+function percentagePoint(bounds, dimensions) {
+  const x = (bounds.left + bounds.right) / 2;
+  const y = (bounds.top + bounds.bottom) / 2;
+  const decimal = (value) => value.toFixed(6).replace(/\.?0+$/u, "");
+  return {
+    x: decimal((x / dimensions.width) * 100),
+    y: decimal((y / dimensions.height) * 100),
+  };
+}
+
+async function restoreEditorFocus(target, packageName, reference, options, { reopenEditor } = {}) {
+  const firstHierarchy = await readUiHierarchy(target, options);
+  if (editorObservation(firstHierarchy, packageName, { reference })) return firstHierarchy;
+  let previous = editorObservation(firstHierarchy, packageName, { requireFocused: false });
+  let guardHierarchy = firstHierarchy;
+  let guard = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await options.delay(300);
+    guardHierarchy = await readUiHierarchy(target, options);
+    guard = editorObservation(guardHierarchy, packageName, { requireFocused: false });
+    if (previous && guard && previous.node.className === guard.node.className
+        && previous.node.resourceId === guard.node.resourceId
+        && stableNodeBounds(previous.bounds, guard.bounds)) break;
+    previous = guard;
+    guard = null;
+  }
+  if (!guard) {
+    if (reopenEditor) {
+      const recoveredHierarchy = await reopenEditor();
+      if (editorObservation(recoveredHierarchy, packageName)) return recoveredHierarchy;
+    }
+    throw new Error("The input editor could not be safely re-resolved after input-method selection");
+  }
+  if (guard.node.focused === true) return guardHierarchy;
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  await invokeOfficial("pointerEvent", target, { type: "10", ...percentagePoint(guard.bounds, dimensions) }, options);
+  const refocused = await waitForFocusedEditor(target, packageName, undefined, options, guard, 24);
+  if (!editorObservation(refocused, packageName, { reference: guard })) {
+    throw new Error("The input editor was tapped once but focus was not restored; the tap will not be replayed");
+  }
+  return refocused;
+}
+
+async function inputDeviceText(target, request, deviceDirectory, options, { reopenEditor } = {}) {
+  const before = await readUiHierarchy(target, options);
+  let initialEditor = editorObservation(before, request.package);
+  if (!initialEditor) {
+    const unfocusedEditor = editorObservation(before, request.package, { requireFocused: false });
+    if (unfocusedEditor) {
+      const focusedHierarchy = await restoreEditorFocus(target, request.package, unfocusedEditor, options);
+      initialEditor = editorObservation(focusedHierarchy, request.package);
+    }
+  }
+  if (!initialEditor) {
+    throw new Error("device.input requires exactly one resolvable EditText in the expected foreground package");
+  }
+  await writeAtomic(path.join(deviceDirectory, "input-before.xml"), before, options);
+
+  const priorIme = imeServiceFromOutput(
+    await readAdbShellText(target, "settings get secure default_input_method", options),
+    "current",
+  );
+  const installedRaw = singleDeviceActionValue(await invokeOfficial("imeList", target, undefined, options), "imeList");
+  const installed = Array.isArray(installedRaw) ? installedRaw.map(String) : [];
+  if (!installed.includes(request.imeService)) {
+    throw new Error("The approved bridge input method is not installed on the selected machine");
+  }
+  const enabledRaw = await readAdbShellText(target, "ime list -s", options);
+  const enabled = new Set(String(enabledRaw).split(/\r?\n/u).map((entry) => entry.trim()).filter((entry) => SAFE_IME_SERVICE.test(entry)));
+  let enabledByAdapter = false;
+  let operationError = null;
+  let verification = null;
+
+  try {
+    if (!enabled.has(request.imeService)) {
+      if (!request.allowTemporaryEnable) {
+        throw new Error("The approved bridge input method is installed but not enabled");
+      }
+      await readAdbShellText(target, `ime enable ${request.imeService}`, options);
+      const afterEnable = String(await readAdbShellText(target, "ime list -s", options));
+      if (!afterEnable.split(/\r?\n/u).map((entry) => entry.trim()).includes(request.imeService)) {
+        throw new Error("The approved bridge input method could not be enabled");
+      }
+      enabledByAdapter = true;
+    }
+
+    await invokeOfficial("selectIme", target, { ime: request.imeService }, options);
+    if (!await waitForIme(target, request.imeService, options)
+        || !await waitForIme(target, request.imeService, options, { binding: true })) {
+      throw new Error("The approved bridge input method could not be selected and bound");
+    }
+    const activeHierarchy = await restoreEditorFocus(target, request.package, initialEditor, options, { reopenEditor });
+    const activeEditor = editorObservation(activeHierarchy, request.package);
+    if (!activeEditor) throw new Error("The input editor was not uniquely focused after input-method selection");
+
+    const backwardDeletes = Array(256).fill("KEYCODE_DEL").join(" ");
+    const forwardDeletes = Array(256).fill("KEYCODE_FORWARD_DEL").join(" ");
+    await readAdbShellText(target, `input keyevent KEYCODE_MOVE_END ${backwardDeletes}`, options);
+    await readAdbShellText(target, `input keyevent KEYCODE_MOVE_HOME ${forwardDeletes}`, options);
+    if (request.echoVerification === "ui_text") {
+      const semanticEmpty = request.semanticEmpty === "xhs-comment";
+      const cleared = await waitForFocusedEditor(
+        target, request.package, semanticEmpty ? undefined : "", options, activeEditor,
+      );
+      const clearedEditor = editorObservation(cleared, request.package, { reference: activeEditor });
+      if (!clearedEditor || (semanticEmpty ? !xhsEditorIsEmpty(clearedEditor)
+        : semanticValue(clearedEditor.node.text) !== "")) {
+        throw new Error("The focused editor could not be verified empty");
+      }
+    }
+
+    await invokeOfficial("inputText", target, { content: request.text }, options);
+    if (request.echoVerification === "ui_text") {
+      const after = await waitForFocusedEditor(target, request.package, request.text, options, activeEditor);
+      if (!editorObservation(after, request.package, { expectedText: request.text, reference: activeEditor })) {
+        throw new Error("device.input was accepted once but exact focused-editor echo was not verified");
+      }
+      await writeAtomic(path.join(deviceDirectory, "input-after.xml"), after, options);
+      verification = "exact_focused_editor_ui_echo_after_ime_restore";
+    } else {
+      const exactUi = await waitForFocusedEditor(target, request.package, request.text, options, activeEditor);
+      if (editorObservation(exactUi, request.package, { expectedText: request.text, reference: activeEditor })) {
+        await writeAtomic(path.join(deviceDirectory, "input-after.xml"), exactUi, options);
+        verification = "exact_focused_editor_ui_echo_after_ime_restore";
+      } else {
+        const afterHierarchy = await waitForFocusedEditor(target, request.package, undefined, options, activeEditor);
+        if (!editorObservation(afterHierarchy, request.package, { reference: activeEditor })) {
+          throw new Error("The focused editor was lost after device.input");
+        }
+        const screen = await readScreen(target, deviceDirectory, options, "input-after.png");
+        await locateText(options, screen.screenshotPath, request.text, "input echo", screen, { requireStable: true });
+        verification = "exact_local_ocr_echo_after_ime_restore";
+      }
+    }
+  } catch (error) {
+    operationError = error;
+  }
+
+  const restorationErrors = [];
+  try {
+    await invokeOfficial("selectIme", target, { ime: priorIme }, options);
+    if (!await waitForIme(target, priorIme, options)) throw new Error("The prior input method could not be restored");
+  } catch (error) {
+    restorationErrors.push(error.message);
+  }
+  if (enabledByAdapter) {
+    try {
+      await readAdbShellText(target, `ime disable ${request.imeService}`, options);
+      const afterDisable = String(await readAdbShellText(target, "ime list -s", options));
+      if (afterDisable.split(/\r?\n/u).map((entry) => entry.trim()).includes(request.imeService)) {
+        throw new Error("The bridge input method enabled state could not be restored");
+      }
+    } catch (error) {
+      restorationErrors.push(error.message);
+    }
+  }
+  if (restorationErrors.length) {
+    throw new Error(`device.input stopped because input-method restoration failed: ${restorationErrors.join("; ")}`);
+  }
+  if (operationError) throw operationError;
+  return {
+    machine: target.machine,
+    status: "verified",
+    verification,
+    transport: "xiaowei-api",
+    localAdbRequired: false,
   };
 }
 
@@ -608,19 +1080,102 @@ async function locateText(options, imagePath, expectedText, label, dimensions, {
   throw new Error(`Local OCR did not produce two stable unique ${label} matches`);
 }
 
-function uniqueSemanticBounds(hierarchy, label, dimensions) {
+function isDescendantOf(document, node, ancestor) {
+  let current = node;
+  while (current?.parentIndex !== null) {
+    if (current.parentIndex === ancestor.nodeIndex) return true;
+    current = document.nodes[current.parentIndex];
+  }
+  return false;
+}
+
+function hasRelativePosition(nodeBounds, anchorBounds, position) {
+  if (!position) return true;
+  const nodeCenterX = (nodeBounds.left + nodeBounds.right) / 2;
+  const nodeCenterY = (nodeBounds.top + nodeBounds.bottom) / 2;
+  const anchorCenterX = (anchorBounds.left + anchorBounds.right) / 2;
+  const anchorCenterY = (anchorBounds.top + anchorBounds.bottom) / 2;
+  if (position === "right") return nodeCenterX > anchorCenterX;
+  if (position === "left") return nodeCenterX < anchorCenterX;
+  if (position === "above") return nodeCenterY < anchorCenterY;
+  return nodeCenterY > anchorCenterY;
+}
+
+function sharesBoundedAncestor(document, node, anchors, dimensions, position, maximumDepth = 2) {
+  const nodeBounds = parseBounds(node.attributes?.bounds);
+  if (!nodeBounds) return false;
+  let current = node;
+  for (let depth = 0; current && depth <= maximumDepth; depth += 1) {
+    const bounds = parseBounds(current.attributes?.bounds);
+    const localContainer = bounds
+      && bounds.width * bounds.height <= dimensions.width * dimensions.height * 0.5;
+    const relatedAnchors = localContainer ? anchors.filter((anchor) =>
+      anchor.nodeIndex === current.nodeIndex || isDescendantOf(document, anchor, current)) : [];
+    if (relatedAnchors.some((anchor) => {
+      const anchorBounds = parseBounds(anchor.attributes?.bounds);
+      return anchorBounds && hasRelativePosition(nodeBounds, anchorBounds, position);
+    })) {
+      return true;
+    }
+    current = current.parentIndex === null ? null : document.nodes[current.parentIndex];
+  }
+  return false;
+}
+
+function matchesAccessibilityAttributes(node, selector) {
+  const filters = [
+    ["text", node.text],
+    ["contentDesc", node.contentDesc],
+    ["className", node.className],
+    ["resourceId", node.resourceId],
+  ];
+  for (const [field, actual] of filters) {
+    if (selector[field] !== undefined && semanticValue(actual) !== semanticValue(selector[field])) return false;
+  }
+  if (selector.clickable !== undefined && node.clickable !== selector.clickable) return false;
+  return true;
+}
+
+function boundsInScreenRegion(bounds, region, dimensions) {
+  if (!region) return true;
+  const x = (bounds.left + bounds.right) / 2;
+  const y = (bounds.top + bounds.bottom) / 2;
+  if (region === "top_left") return x < dimensions.width / 2 && y < dimensions.height * 0.25;
+  if (region === "top_right") return x >= dimensions.width / 2 && y < dimensions.height * 0.25;
+  if (region === "bottom_left") return x < dimensions.width / 2 && y >= dimensions.height * 0.75;
+  if (region === "bottom_right") return x >= dimensions.width / 2 && y >= dimensions.height * 0.75;
+  if (region === "bottom_navigation") return y >= dimensions.height * 0.85;
+  return x >= dimensions.width * 0.75;
+}
+
+export function uniqueAccessibilityBounds(hierarchy, selector, dimensions) {
   const document = parseUiAutomatorXml(hierarchy);
-  const expected = semanticValue(label);
-  const candidates = document.nodes
-    .filter((node) => semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected)
+  const attributeFields = ["text", "contentDesc", "className", "resourceId", "clickable"];
+  const hasAttributeFilter = attributeFields.some((field) => selector[field] !== undefined);
+  const expected = semanticValue(selector.label);
+  const anchors = selector.nearText === undefined ? [] : document.nodes.filter((node) =>
+    semanticValue(node.text) === semanticValue(selector.nearText)
+    || semanticValue(node.contentDesc) === semanticValue(selector.nearText));
+  if (selector.nearText !== undefined && !anchors.length) return null;
+  let candidates = document.nodes
+    .filter((node) => hasAttributeFilter
+      ? matchesAccessibilityAttributes(node, selector)
+      : semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected)
+    .filter((node) => !anchors.length || sharesBoundedAncestor(
+      document, node, anchors, dimensions, selector.nearTextPosition,
+    ))
     .map((node) => actionableAncestor(document, node))
     .filter(Boolean)
     .map(({ bounds }) => bounds)
-    .filter((bounds) => bounds.right <= dimensions.width && bounds.bottom <= dimensions.height);
-  const unique = [...new Map(candidates.map((bounds) => [
+    .filter((bounds) => bounds.right <= dimensions.width && bounds.bottom <= dimensions.height)
+    .filter((bounds) => boundsInScreenRegion(bounds, selector.screenRegion, dimensions));
+  let unique = [...new Map(candidates.map((bounds) => [
     `${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}`, bounds,
   ])).values()];
-  if (unique.length > 1) throw new DeviceNodeError("NODE_AMBIGUOUS", "Accessibility exposed multiple exact nodes");
+  unique.sort((left, right) => left.top - right.top || left.left - right.left
+    || left.width * left.height - right.width * right.height);
+  if (selector.regionOrdinal !== undefined) unique = unique.slice(selector.regionOrdinal - 1, selector.regionOrdinal);
+  if (unique.length > 1) throw new DeviceNodeError("NODE_AMBIGUOUS", "Accessibility exposed multiple matching nodes");
   return unique[0] ?? null;
 }
 
@@ -680,7 +1235,7 @@ async function nodeObservation(target, request, deviceDirectory, options, artifa
   let visionMiss = false;
   for (const source of request.selector.sources) {
     if (source === "accessibility") {
-      const bounds = uniqueSemanticBounds(hierarchy, request.selector.label, dimensions);
+      const bounds = uniqueAccessibilityBounds(hierarchy, request.selector, dimensions);
       if (bounds) return { hierarchy, screen, dimensions, bounds, source };
     } else if (source === "ocr") {
       try {
@@ -747,11 +1302,16 @@ async function nodeObservation(target, request, deviceDirectory, options, artifa
 
 async function screenshotContainsText(observation, value, options) {
   if (hierarchyMatchesPostcondition(observation.hierarchy, { kind: "text", value })) return true;
-  const located = await locateText(
-    options, observation.screen.screenshotPath, value, "postcondition", observation.dimensions,
-    { allowMissing: true, requireStable: false },
-  );
-  return Boolean(located);
+  try {
+    const located = await locateText(
+      options, observation.screen.screenshotPath, value, "postcondition", observation.dimensions,
+      { allowMissing: true, requireStable: false },
+    );
+    return Boolean(located);
+  } catch (error) {
+    if (/unavailable/u.test(String(error?.message ?? ""))) return false;
+    throw error;
+  }
 }
 
 async function resolveDeviceNode(target, request, deviceDirectory, options) {
@@ -1004,6 +1564,15 @@ async function readXhsPublicObservation(target, options) {
   const rules = await loadRules(options.xhsRulesPath);
   const firstHierarchy = await readUiHierarchy(target, options);
   const first = observeXhsHierarchy(firstHierarchy, rules, { targetAlias: target.alias });
+  if (first.page.state === "VIDEO_NOTE") {
+    return {
+      machine: target.machine,
+      ...first,
+      stability: "single_fresh_video_detail_ui",
+      transport: "xiaowei-api",
+      localAdbRequired: false,
+    };
+  }
   await options.delay(300);
   const secondHierarchy = await readUiHierarchy(target, options);
   const second = observeXhsHierarchy(secondHierarchy, rules, { targetAlias: target.alias });
@@ -1016,34 +1585,123 @@ async function readXhsPublicObservation(target, options) {
   };
 }
 
+function xhsFindVideoResult(target, observation, note, scrolls, startedAt, options) {
+  return {
+    machine: target.machine,
+    status: note ? "found" : "not_found",
+    page: observation.page,
+    note,
+    ordinal: note?.ordinal ?? null,
+    scrolls,
+    elapsedMs: Math.max(0, options.now() - startedAt),
+    verification: "fresh_home_feed_ui_after_each_scroll",
+    transport: "xiaowei-api",
+    localAdbRequired: false,
+  };
+}
+
+async function findVisibleXhsVideo(target, request, options) {
+  const rules = await loadRules(options.xhsRulesPath);
+  const startedAt = options.now();
+  let hierarchy = await readUiHierarchy(target, options);
+  let observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
+  hierarchy = await recoverXhsHomeFeed(target, hierarchy, observation, rules, options);
+  observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
+  let scrolls = 0;
+  while (true) {
+    if (observation.page.state !== "HOME_FEED") {
+      throw new Error("xhs.find-video requires a freshly verified Xiaohongshu home feed");
+    }
+    const video = observation.notes.find((note) => note.mediaType === "video") ?? null;
+    if (video) return xhsFindVideoResult(target, observation, video, scrolls, startedAt, options);
+    if (scrolls >= request.maxScrolls || options.now() - startedAt >= request.maxDurationMs) {
+      return xhsFindVideoResult(target, observation, null, scrolls, startedAt, options);
+    }
+
+    const beforeTarget = scrollableContainer(hierarchy, XHS_PACKAGE);
+    const beforeHash = createNormalizedFingerprint(hierarchy).hash;
+    await invokeOfficial("pointerEvent", target, { type: "6" }, options);
+    let changedHierarchy = null;
+    let changedObservation = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        const candidateHierarchy = await readUiHierarchy(target, options);
+        const candidateObservation = observeXhsHierarchy(candidateHierarchy, rules, { targetAlias: target.alias });
+        const candidateTarget = scrollableContainer(candidateHierarchy, XHS_PACKAGE);
+        if (candidateObservation.page.state === "HOME_FEED"
+            && sameScrollableContainer(beforeTarget, candidateTarget)
+            && createNormalizedFingerprint(candidateHierarchy).hash !== beforeHash) {
+          changedHierarchy = candidateHierarchy;
+          changedObservation = candidateObservation;
+          break;
+        }
+      } catch {
+        // Feed scrolling can briefly expose an incomplete hierarchy.
+      }
+      if (attempt < 9 && options.now() - startedAt < request.maxDurationMs) await options.delay(300);
+    }
+    if (!changedHierarchy || !changedObservation) {
+      throw new Error("xhs.find-video sent one scroll event but a fresh home-feed change was not verified; the event will not be replayed");
+    }
+    hierarchy = changedHierarchy;
+    observation = changedObservation;
+    scrolls += 1;
+  }
+}
+
 function samePublicNoteIdentity(left, right) {
   return left?.title === right?.title && left?.author === right?.author && left?.mediaType === right?.mediaType;
+}
+
+async function recoverXhsHomeFeed(target, hierarchy, observation, rules, options) {
+  if (observation.page.state === "HOME_FEED") return hierarchy;
+  for (let stage = 0; stage < 2; stage += 1) {
+    const priorState = observation.page.state;
+    if (!["COMMENT_PANEL", "IMAGE_NOTE", "VIDEO_NOTE"].includes(priorState)) {
+      throw new Error(`xhs.open-visible cannot recover the home feed from ${priorState}`);
+    }
+    await invokeOfficial("pushEvent", target, { type: "3" }, options);
+    let transitioned = false;
+    for (let attempt = 0; attempt < 28; attempt += 1) {
+      try {
+        hierarchy = await readUiHierarchy(target, options);
+        observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
+        if (observation.page.state === "HOME_FEED") return hierarchy;
+        if (priorState === "COMMENT_PANEL" && ["IMAGE_NOTE", "VIDEO_NOTE"].includes(observation.page.state)) {
+          transitioned = true;
+          break;
+        }
+      } catch {
+        // Back transitions may briefly expose an incomplete hierarchy.
+      }
+      if (attempt < 27) await options.delay(400);
+    }
+    if (!transitioned) {
+      throw new Error("xhs.open-visible sent BACK once but the expected feed transition was not verified; BACK will not be replayed");
+    }
+  }
+  throw new Error("xhs.open-visible could not recover the Xiaohongshu home feed");
 }
 
 async function openVisibleXhsNote(target, request, options) {
   const rules = await loadRules(options.xhsRulesPath);
   const displaySize = await readPhysicalDisplaySize(target, options);
-  const firstHierarchy = await readUiHierarchy(target, options);
-  const firstObservation = observeXhsHierarchy(firstHierarchy, rules, { targetAlias: target.alias });
-  if (firstObservation.page.state !== "HOME_FEED") {
-    throw new Error("xhs.open-visible requires the Xiaohongshu home feed");
-  }
+  let firstHierarchy = await readUiHierarchy(target, options);
+  const initialObservation = observeXhsHierarchy(firstHierarchy, rules, { targetAlias: target.alias });
+  firstHierarchy = await recoverXhsHomeFeed(target, firstHierarchy, initialObservation, rules, options);
   const firstTarget = resolveVisibleXhsNote(firstHierarchy, request.ordinal, displaySize);
-  await options.delay(250);
-  const guardHierarchy = await readUiHierarchy(target, options);
-  const guardObservation = observeXhsHierarchy(guardHierarchy, rules, { targetAlias: target.alias });
-  const guardTarget = resolveVisibleXhsNote(guardHierarchy, request.ordinal, displaySize);
-  if (guardObservation.page.state !== "HOME_FEED" || !samePublicNoteIdentity(firstTarget.note, guardTarget.note)) {
-    throw new Error("XHS visible note changed before the single pointer event");
+  if (await readFocusedPackage(target, options) !== XHS_PACKAGE) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS left the foreground before opening the visible note");
   }
 
-  await invokeOfficial("pointerEvent", target, { type: "10", ...guardTarget.point }, options);
+  await invokeOfficial("pointerEvent", target, { type: "10", ...firstTarget.point }, options);
   let detailObservation = null;
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       const hierarchy = await readUiHierarchy(target, options);
       const observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
-      if (["IMAGE_NOTE", "VIDEO_NOTE"].includes(observation.page.state)) {
+      if (["IMAGE_NOTE", "VIDEO_NOTE"].includes(observation.page.state)
+          && samePublicNoteIdentity(xhsObservationTarget(observation), firstTarget.note)) {
         detailObservation = observation;
         break;
       }
@@ -1053,23 +1711,868 @@ async function openVisibleXhsNote(target, request, options) {
     if (attempt < 7) await options.delay(400);
   }
   if (!detailObservation) {
-    throw new Error("XHS note was tapped once but a detail page was not verified; the tap will not be replayed");
+    throw new Error("XHS note was tapped once but its matching detail page was not verified; the tap will not be replayed");
   }
-  await options.delay(300);
-  const secondHierarchy = await readUiHierarchy(target, options);
-  const secondObservation = observeXhsHierarchy(secondHierarchy, rules, { targetAlias: target.alias });
-  const stable = intersectXhsObservations(detailObservation, secondObservation);
-  if (!stable.detail) throw new Error("XHS detail metadata was not stable across two fresh UI reads");
   return {
     machine: target.machine,
     selected: {
       ordinal: request.ordinal,
-      title: guardTarget.note.title,
-      author: guardTarget.note.author,
-      mediaType: guardTarget.note.mediaType,
+      title: firstTarget.note.title,
+      author: firstTarget.note.author,
+      mediaType: firstTarget.note.mediaType,
     },
-    ...stable,
-    verification: "single_pointer_event_then_two_fresh_detail_ui_reads",
+    ...detailObservation,
+    stability: "single_fresh_matching_detail_ui",
+    verification: "single_pointer_event_then_fresh_matching_detail_ui",
+    transport: "xiaowei-api",
+    localAdbRequired: false,
+  };
+}
+
+function uniqueXhsControlBounds(hierarchy, label, { optional = false } = {}) {
+  const document = parseUiAutomatorXml(hierarchy);
+  const expected = semanticValue(label);
+  const candidates = document.nodes
+    .filter((node) => node.packageName === XHS_PACKAGE
+      && (semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected))
+    .map((node) => actionableAncestor(document, node))
+    .filter(Boolean);
+  const unique = [...new Map(candidates.map(({ bounds }) => [
+    `${bounds.left},${bounds.top},${bounds.right},${bounds.bottom}`, bounds,
+  ])).values()];
+  if (unique.length > 1) throw new DeviceNodeError("NODE_AMBIGUOUS", `XHS control ${label} was not unique`);
+  if (!unique.length && !optional) throw new DeviceNodeError("NODE_NOT_FOUND", `XHS control ${label} was not found`);
+  return unique[0] ?? null;
+}
+
+function xhsDraftEditor(hierarchy, expectedEmoji) {
+  const document = parseUiAutomatorXml(hierarchy);
+  // Both sides must be NFKC-normalized: the accessibility layer may expose
+  // full-width characters (e.g. U+FF01) in compatibility form (U+0021), and
+  // comparing a normalized node value against a raw request silently missed
+  // exact drafts containing full-width punctuation (machine-independent).
+  const expected = expectedEmoji === undefined ? undefined : semanticValue(expectedEmoji);
+  const candidates = document.nodes
+    .filter((node) => node.packageName === XHS_PACKAGE && /(?:^|\.)EditText$/u.test(node.className))
+    .map((node) => ({ node, bounds: parseBounds(node.attributes?.bounds) }))
+    .filter(({ node, bounds }) => bounds && (expected === undefined
+      || semanticValue(node.text).includes(expected)
+      || semanticValue(node.contentDesc).includes(expected)));
+  if (candidates.length > 1) throw new DeviceNodeError("NODE_AMBIGUOUS", "XHS exposed multiple comment editors");
+  return candidates[0] ?? null;
+}
+
+function exactXhsCommentCount(hierarchy) {
+  const document = parseUiAutomatorXml(hierarchy);
+  const semanticCounts = [];
+  const resourceCounts = [];
+  for (const node of document.nodes) {
+    if (node.packageName !== XHS_PACKAGE) continue;
+    for (const value of [node.text, node.contentDesc]) {
+      const normalized = semanticValue(value).replace(/,/gu, "");
+      const semanticMatch = /^(?:评论\s*|共\s*)(\d{1,9})(?:\s*条评论)?$/u.exec(normalized);
+      if (semanticMatch) semanticCounts.push(Number(semanticMatch[1]));
+      if (/comment[_-]?(?:count|entry)/iu.test(node.resourceId)) {
+        const resourceMatch = /^(\d{1,9})$/u.exec(normalized);
+        if (resourceMatch) resourceCounts.push(Number(resourceMatch[1]));
+      }
+    }
+  }
+  const unique = [...new Set(semanticCounts.length ? semanticCounts : resourceCounts)];
+  if (unique.length !== 1 || !Number.isSafeInteger(unique[0])) {
+    throw new Error("XHS comment action requires one exact visible comment count");
+  }
+  return unique[0];
+}
+
+async function invokePointerBounds(target, bounds, dimensions, options) {
+  await invokeOfficial("pointerEvent", target, {
+    type: "10",
+    ...percentagePoint(bounds, dimensions),
+  }, options);
+}
+
+function xhsDraftMatches(editor, expectedDraft, expectedEmptyEditorStateHash = null) {
+  if (!editor) return false;
+  const expected = semanticValue(expectedDraft);
+  const text = semanticValue(editor.node.text);
+  const contentDescription = semanticValue(editor.node.contentDesc);
+  if (text === expected || (!text && contentDescription === expected)) return true;
+  if (typeof expectedEmptyEditorStateHash !== "string" || !/^[a-f0-9]{64}$/u.test(expectedEmptyEditorStateHash)) {
+    return false;
+  }
+  const matchesBoundReply = (value, field) => {
+    const match = /^(回复\s*@.{1,128}[：:]\s*)(.*)$/u.exec(value);
+    if (!match || semanticValue(match[2]) !== expected) return false;
+    const baselineText = field === "text" ? semanticValue(match[1]) : text;
+    const baselineDescription = field === "contentDesc" ? semanticValue(match[1]) : contentDescription;
+    const baselineState = `${baselineText}\u0000${baselineDescription}`;
+    const baselineHash = createHash("sha256")
+      .update(`xhs-comment-editor/v1\u0000${baselineState}`, "utf8").digest("hex");
+    return baselineHash === expectedEmptyEditorStateHash;
+  };
+  return matchesBoundReply(text, "text") || matchesBoundReply(contentDescription, "contentDesc");
+}
+
+function xhsEditorToken(editor) {
+  if (!editor) return null;
+  const state = `${semanticValue(editor.node.text)}\u0000${semanticValue(editor.node.contentDesc)}`;
+  return createHash("sha256").update(`xhs-comment-editor/v1\u0000${state}`, "utf8").digest("hex");
+}
+
+function xhsEditorIsEmpty(editor) {
+  if (!editor) return false;
+  const placeholders = new Set([
+    "让大家听到你的声音",
+    "留下你的想法吧",
+    "说点什么...",
+    "说点什么…",
+    "友善评论，文明发言",
+    "写评论...",
+    "写评论…",
+  ]);
+  const text = semanticValue(editor.node.text);
+  const contentDescription = semanticValue(editor.node.contentDesc);
+  const replyPlaceholder = /^回复\s*@.{1,128}[：:]\s*$/u;
+  return (!text || placeholders.has(text) || replyPlaceholder.test(text))
+    && (!contentDescription || placeholders.has(contentDescription) || replyPlaceholder.test(contentDescription));
+}
+
+function xhsDmEditor(hierarchy, expectedDraft) {
+  const document = parseUiAutomatorXml(hierarchy);
+  const editors = document.nodes
+    .filter((node) => node.packageName === XHS_PACKAGE && /(?:^|\.)EditText$/u.test(node.className))
+    .map((node) => ({ node, bounds: parseBounds(node.attributes?.bounds) }))
+    .filter(({ node, bounds }) => bounds && (expectedDraft === undefined
+      || semanticValue(node.text) === semanticValue(expectedDraft)));
+  if (editors.length !== 1) return null;
+  return { document, ...editors[0] };
+}
+
+function xhsDmEditorIsEmpty(editor) {
+  if (!editor) return false;
+  const placeholders = new Set(["请友善发言...", "请友善发言…"]);
+  const text = semanticValue(editor.node.text);
+  const contentDescription = semanticValue(editor.node.contentDesc);
+  return (!text || placeholders.has(text)) && (!contentDescription || placeholders.has(contentDescription));
+}
+
+function xhsDmSendBounds(state) {
+  if (!state) return null;
+  const editorCenterY = (state.bounds.top + state.bounds.bottom) / 2;
+  const candidates = state.document.nodes
+    .filter((node) => node.packageName === XHS_PACKAGE && node.enabled !== false && node.clickable
+      && (semanticValue(node.text) === "发送" || semanticValue(node.contentDesc) === "发送"))
+    .map((node) => parseBounds(node.attributes?.bounds))
+    .filter((bounds) => bounds && bounds.left >= state.bounds.right
+      && editorCenterY >= bounds.top - 24 && editorCenterY <= bounds.bottom + 24);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function xhsDmContainsSentBubble(state, expectedDraft) {
+  if (!state) return false;
+  const expected = semanticValue(expectedDraft);
+  return state.document.nodes.some((node) => node.packageName === XHS_PACKAGE
+    && !/(?:^|\.)EditText$/u.test(node.className)
+    && (semanticValue(node.text) === expected || semanticValue(node.contentDesc) === expected));
+}
+
+async function sendXhsDmDraft(target, request, options) {
+  let hierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.dm.send requires Xiaohongshu in the foreground");
+  }
+  const first = xhsDmEditor(hierarchy, request.expectedDraft);
+  const firstSend = xhsDmSendBounds(first);
+  if (!first || !firstSend) {
+    throw new Error("xhs.dm.send requires one exact draft and one send control aligned with its editor");
+  }
+  await options.delay(300);
+  hierarchy = await readUiHierarchy(target, options);
+  const guard = xhsDmEditor(hierarchy, request.expectedDraft);
+  const guardSend = xhsDmSendBounds(guard);
+  if (!guard || !guardSend || !stableNodeBounds(first.bounds, guard.bounds)
+      || !stableNodeBounds(firstSend, guardSend)) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS private-message draft or send control changed before submission");
+  }
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  await invokePointerBounds(target, guardSend, dimensions, options);
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    const after = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(after, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after private-message submission");
+    }
+    const afterEditor = xhsDmEditor(after);
+    if (xhsDmEditorIsEmpty(afterEditor) && xhsDmContainsSentBubble(afterEditor, request.expectedDraft)) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        draftLength: [...request.expectedDraft].length,
+        verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (attempt < 14) await options.delay(400);
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "XHS private-message send was tapped once but editor clearing plus message echo was not verified; send will not be replayed",
+  );
+}
+
+async function openXhsCommentComposer(target, options) {
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  let hierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.comment.open requires Xiaohongshu in the foreground");
+  }
+  const rules = await loadRules(options.xhsRulesPath);
+  const observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
+  if (!["IMAGE_NOTE", "VIDEO_NOTE"].includes(observation.page.state) || !observation.detail) {
+    throw new Error("xhs.comment.open requires a classified XHS note detail");
+  }
+  const targetBinding = {
+    title: observation.detail.title,
+    author: observation.detail.author,
+    mediaType: observation.detail.media.type,
+  };
+  const commentCount = exactXhsCommentCount(hierarchy);
+  if (xhsDraftEditor(hierarchy)) {
+    throw new Error("xhs.comment.open requires the comment composer to be closed before starting a new draft transaction");
+  }
+
+  const firstBox = uniqueXhsControlBounds(hierarchy, "评论框");
+  await options.delay(250);
+  const guardHierarchy = await readUiHierarchy(target, options);
+  const guardBox = uniqueXhsControlBounds(guardHierarchy, "评论框");
+  if (!stableNodeBounds(firstBox, guardBox) || exactXhsCommentCount(guardHierarchy) !== commentCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS comment box changed before activation");
+  }
+  await invokePointerBounds(target, guardBox, dimensions, options);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    hierarchy = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after opening the comment composer");
+    }
+    const openedEditor = xhsDraftEditor(hierarchy);
+    if (openedEditor) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        commentCount,
+        target: targetBinding,
+        editorStateHash: xhsEditorToken(openedEditor),
+        verification: "comment_box_rechecked_then_single_activation_then_editor_verified",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (attempt < 7) await options.delay(300);
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "The comment box was activated once but the editor was not verified; activation will not be replayed",
+  );
+}
+
+function samePercentagePoint(left, right) {
+  return left?.x === right?.x && left?.y === right?.y;
+}
+
+async function openXhsReplyEditor(target, replyOrdinal, options, {
+  expectedDraft, expectedEditorStateHash,
+} = {}) {
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  const firstHierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(firstHierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS reply input requires Xiaohongshu in the foreground");
+  }
+  if (xhsDraftEditor(firstHierarchy)) {
+    throw new Error("XHS reply input requires the reply editor to be closed before selecting a reply target");
+  }
+  const commentCount = exactXhsCommentCount(firstHierarchy);
+  const firstPoint = findSemanticTapPoint(firstHierarchy, "回复", dimensions, {
+    packageName: XHS_PACKAGE,
+    match: "suffix",
+    ordinal: replyOrdinal,
+  });
+  await options.delay(250);
+  const guardHierarchy = await readUiHierarchy(target, options);
+  const guardPoint = findSemanticTapPoint(guardHierarchy, "回复", dimensions, {
+    packageName: XHS_PACKAGE,
+    match: "suffix",
+    ordinal: replyOrdinal,
+  });
+  if (!samePercentagePoint(firstPoint, guardPoint) || exactXhsCommentCount(guardHierarchy) !== commentCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS reply target changed before activation");
+  }
+  await invokeOfficial("pointerEvent", target, { type: "10", ...guardPoint }, options);
+  let previousEditor = null;
+  let focusTapped = false;
+  // Slow machines (e.g. machine 01) can need >78s before the reply editor
+  // becomes stable and focused. Use a real time budget instead of an attempt
+  // count: faster UI reads must not shrink the wall-clock window, and calmer
+  // polling disturbs the device's own settle less. All checks are unchanged.
+  const openBudgetMs = options.replyOpenBudgetMs ?? 150_000;
+  const openStartedAt = options.now();
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    const hierarchy = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after opening the reply editor");
+    }
+    const editor = xhsDraftEditor(hierarchy);
+    const editorLabel = semanticValue(editor?.node.text || editor?.node.contentDesc);
+    const draftBound = editor && (expectedDraft === undefined ? /^回复\s*@/u.test(editorLabel)
+      : xhsDraftMatches(editor, expectedDraft, expectedEditorStateHash));
+    const stableFocused = draftBound && editor.node.focused === true && previousEditor
+      && editor.node.className === previousEditor.node.className
+      && editor.node.resourceId === previousEditor.node.resourceId
+      && stableNodeBounds(editor.bounds, previousEditor.bounds);
+    if (stableFocused) {
+      return { hierarchy, editor, commentCount };
+    }
+    if (options.now() - openStartedAt >= openBudgetMs) break;
+    if (draftBound && editor.node.focused !== true && !focusTapped) {
+      await invokePointerBounds(target, editor.bounds, dimensions, options);
+      focusTapped = true;
+    }
+    previousEditor = draftBound ? editor : null;
+    await options.delay(1_000);
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "The selected reply target was activated once but its editor was not verified; activation will not be replayed",
+  );
+}
+
+async function inputXhsReplyDraft(target, request, deviceDirectory, options) {
+  const opened = await openXhsReplyEditor(target, request.replyOrdinal, options);
+  const editorStateHash = xhsEditorToken(opened.editor);
+  const input = await inputXhsCommentDraft(target, {
+    ...request,
+    expectedEditorStateHash: editorStateHash,
+  }, deviceDirectory, options);
+  return {
+    ...input,
+    commentCount: opened.commentCount,
+    editorStateHash,
+    replyOrdinal: request.replyOrdinal,
+    verification: "reply_target_rechecked_then_editor_recovered_after_ime_then_bound_draft_echo",
+  };
+}
+
+async function inputXhsCommentDraft(target, request, deviceDirectory, options) {
+  let hierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.comment.input requires Xiaohongshu in the foreground");
+  }
+  const initialEditor = xhsDraftEditor(hierarchy);
+  if (!initialEditor || xhsEditorToken(initialEditor) !== request.expectedEditorStateHash) {
+    throw new Error("xhs.comment.input editor state did not match the open transaction token");
+  }
+
+  let inputMethod = "ime";
+  const shortcutLabel = /^\[[^\]\r\n]{1,60}R\]$/u.test(request.text);
+  const firstShortcut = shortcutLabel ? uniqueXhsControlBounds(hierarchy, request.text, { optional: true }) : null;
+  if (firstShortcut) {
+    inputMethod = "shortcut";
+    const dimensions = await readPhysicalDisplaySize(target, options);
+    await options.delay(250);
+    const guardHierarchy = await readUiHierarchy(target, options);
+    const guardEditor = xhsDraftEditor(guardHierarchy);
+    const guardShortcut = uniqueXhsControlBounds(guardHierarchy, request.text);
+    if (!guardEditor || xhsEditorToken(guardEditor) !== request.expectedEditorStateHash
+        || !stableNodeBounds(initialEditor.bounds, guardEditor.bounds)
+        || !stableNodeBounds(firstShortcut, guardShortcut)) {
+      throw new DeviceNodeError("LAYOUT_DRIFT", "XHS comment editor or shortcut changed before draft input");
+    }
+    await invokePointerBounds(target, guardShortcut, dimensions, options);
+  } else {
+    await inputDeviceText(target, {
+      ...request,
+      package: XHS_PACKAGE,
+      semanticEmpty: "xhs-comment",
+      echoVerification: "ui_text",
+    }, deviceDirectory, options, {
+      reopenEditor: request.replyOrdinal === undefined
+        ? undefined
+        : async () => (await openXhsReplyEditor(target, request.replyOrdinal, options)).hierarchy,
+    });
+  }
+
+  let reopenedAfterImeRestore = false;
+  // On slow machines the draft echo only re-appears tens of seconds after the
+  // IME-restore storm, and dense UI polling delays that settle further. Give
+  // the device a short undisturbed grace window, then verify with a real time
+  // budget and calmer polling; exact-match semantics stay unchanged.
+  await options.delay(6_000);
+  const verifyBudgetMs = options.commentDraftVerifyBudgetMs ?? 150_000;
+  const verifyStartedAt = options.now();
+  for (let attempt = 0; attempt < 60; attempt += 1) {
+    hierarchy = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after comment draft input");
+    }
+    const draftedEditor = xhsDraftEditor(hierarchy, request.text);
+    if (xhsDraftMatches(draftedEditor, request.text, request.expectedEditorStateHash)) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        inputMethod,
+        draftLength: [...request.text].length,
+        verification: "xhs_comment_draft_exact_ui_echo",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (options.now() - verifyStartedAt >= verifyBudgetMs) break;
+    if (inputMethod === "ime" && !reopenedAfterImeRestore && !xhsDraftEditor(hierarchy)) {
+      if (request.replyOrdinal !== undefined) {
+        hierarchy = (await openXhsReplyEditor(target, request.replyOrdinal, options, {
+          expectedDraft: request.text,
+          expectedEditorStateHash: request.expectedEditorStateHash,
+        })).hierarchy;
+        reopenedAfterImeRestore = true;
+        continue;
+      }
+      const firstBox = uniqueXhsControlBounds(hierarchy, "评论框", { optional: true });
+      if (firstBox) {
+        const dimensions = await readPhysicalDisplaySize(target, options);
+        await options.delay(250);
+        const guardHierarchy = await readUiHierarchy(target, options);
+        const guardBox = uniqueXhsControlBounds(guardHierarchy, "评论框");
+        if (!stableNodeBounds(firstBox, guardBox)) {
+          throw new DeviceNodeError("LAYOUT_DRIFT", "XHS comment box changed while restoring the verified text draft");
+        }
+        await invokePointerBounds(target, guardBox, dimensions, options);
+        reopenedAfterImeRestore = true;
+        continue;
+      }
+    }
+    await options.delay(2_500);
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "Comment input was sent once but the exact draft was not verified; input will not be replayed",
+  );
+}
+
+function xhsObservationTarget(observation) {
+  if (!observation?.detail) return null;
+  return {
+    title: observation.detail.title,
+    author: observation.detail.author,
+    mediaType: observation.detail.media?.type
+      ?? (observation.page?.state === "VIDEO_NOTE" ? "video"
+        : observation.page?.state === "IMAGE_NOTE" ? "image" : null),
+  };
+}
+
+async function reopenExpectedXhsTarget(target, expectedTarget, dimensions, options) {
+  const rules = await loadRules(options.xhsRulesPath);
+  const firstHierarchy = await readUiHierarchy(target, options);
+  const firstObservation = observeXhsHierarchy(firstHierarchy, rules, { targetAlias: target.alias });
+  if (firstObservation.page.state !== "HOME_FEED") {
+    throw new DeviceNodeError("POSTCONDITION_MISS", "Submitted comment count stayed hidden and the expected feed was not available");
+  }
+  const matches = firstObservation.notes
+    .map((note, index) => ({ note, ordinal: index + 1 }))
+    .filter(({ note }) => samePublicNoteIdentity(note, expectedTarget));
+  if (matches.length !== 1) {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", "Expected commented note was not uniquely visible after submission");
+  }
+  const firstTarget = resolveVisibleXhsNote(firstHierarchy, matches[0].ordinal, dimensions);
+  if (!samePublicNoteIdentity(firstTarget.note, expectedTarget)) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "Expected commented note did not match its visible feed target");
+  }
+  await options.delay(250);
+  const guardHierarchy = await readUiHierarchy(target, options);
+  const guardObservation = observeXhsHierarchy(guardHierarchy, rules, { targetAlias: target.alias });
+  const guardTarget = resolveVisibleXhsNote(guardHierarchy, matches[0].ordinal, dimensions);
+  if (guardObservation.page.state !== "HOME_FEED"
+      || !samePublicNoteIdentity(guardTarget.note, expectedTarget)) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "Expected commented note changed before count verification");
+  }
+  await invokeOfficial("pointerEvent", target, { type: "10", ...guardTarget.point }, options);
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const detailHierarchy = await readUiHierarchy(target, options);
+    const detailObservation = observeXhsHierarchy(detailHierarchy, rules, { targetAlias: target.alias });
+    if (["IMAGE_NOTE", "VIDEO_NOTE"].includes(detailObservation.page.state)
+        && samePublicNoteIdentity(xhsObservationTarget(detailObservation), expectedTarget)) {
+      return detailHierarchy;
+    }
+    if (attempt < 7) await options.delay(350);
+  }
+  throw new DeviceNodeError("POSTCONDITION_MISS", "Expected commented note was opened once but its detail was not verified");
+}
+
+async function sendXhsCommentDraft(target, request, options) {
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  const firstHierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(firstHierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.comment.send requires Xiaohongshu in the foreground");
+  }
+  const beforeCount = request.expectedBeforeCount;
+  let visibleBeforeCount = null;
+  try { visibleBeforeCount = exactXhsCommentCount(firstHierarchy); } catch {}
+  if (visibleBeforeCount !== null && visibleBeforeCount !== beforeCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "Visible XHS comment count did not match expectedBeforeCount");
+  }
+  const firstEditor = xhsDraftEditor(firstHierarchy, request.expectedDraft);
+  const firstSend = uniqueXhsControlBounds(firstHierarchy, "发送");
+  if (!xhsDraftMatches(firstEditor, request.expectedDraft, request.expectedEmptyEditorStateHash)) {
+    throw new Error("xhs.comment.send refused a draft that did not exactly match expectedDraft");
+  }
+
+  await options.delay(250);
+  const guardHierarchy = await readUiHierarchy(target, options);
+  const guardEditor = xhsDraftEditor(guardHierarchy, request.expectedDraft);
+  const guardSend = uniqueXhsControlBounds(guardHierarchy, "发送");
+  if (!xhsDraftMatches(guardEditor, request.expectedDraft, request.expectedEmptyEditorStateHash)
+      || !stableNodeBounds(firstEditor.bounds, guardEditor.bounds)
+      || !stableNodeBounds(firstSend, guardSend)) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS send control or expected draft changed before submission");
+  }
+  let visibleGuardCount = null;
+  try { visibleGuardCount = exactXhsCommentCount(guardHierarchy); } catch {}
+  if (visibleGuardCount !== null && visibleGuardCount !== beforeCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS comment count changed before submission");
+  }
+  await invokePointerBounds(target, guardSend, dimensions, options);
+
+  let clearedHierarchy = null;
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const afterHierarchy = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(afterHierarchy, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after comment submission");
+    }
+    let afterCount = null;
+    try { afterCount = exactXhsCommentCount(afterHierarchy); } catch {}
+    const afterEditor = xhsDraftEditor(afterHierarchy);
+    const draftCleared = !afterEditor || xhsEditorToken(afterEditor) === request.expectedEmptyEditorStateHash;
+    if (draftCleared) clearedHierarchy = afterHierarchy;
+    if (afterCount !== null && afterCount > beforeCount && draftCleared) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        beforeCount,
+        afterCount,
+        verification: "expected_draft_and_send_rechecked_then_count_increment_and_draft_clear",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (draftCleared) break;
+    if (attempt < 11) await options.delay(400);
+  }
+  if (clearedHierarchy) {
+    await invokeOfficial("pushEvent", target, { type: "3" }, options);
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const afterBackHierarchy = await readUiHierarchy(target, options);
+      if (!hierarchyContainsPackage(afterBackHierarchy, XHS_PACKAGE)) {
+        throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed while revealing the submitted comment count");
+      }
+      let afterCount = null;
+      try { afterCount = exactXhsCommentCount(afterBackHierarchy); } catch {}
+      if (afterCount !== null && afterCount > beforeCount) {
+        return {
+          machine: target.machine,
+          status: "verified",
+          beforeCount,
+          afterCount,
+          verification: "expected_draft_and_send_rechecked_then_count_increment_and_draft_clear",
+          transport: "xiaowei-api",
+          localAdbRequired: false,
+        };
+      }
+      try {
+        const rules = await loadRules(options.xhsRulesPath);
+        const afterBackObservation = observeXhsHierarchy(afterBackHierarchy, rules, { targetAlias: target.alias });
+        if (afterBackObservation.page.state === "HOME_FEED") {
+          const reopenedHierarchy = await reopenExpectedXhsTarget(target, request.expectedTarget, dimensions, options);
+          const reopenedCount = exactXhsCommentCount(reopenedHierarchy);
+          if (reopenedCount > beforeCount) {
+            return {
+              machine: target.machine,
+              status: "verified",
+              beforeCount,
+              afterCount: reopenedCount,
+              verification: "expected_draft_and_send_rechecked_then_count_increment_and_draft_clear",
+              transport: "xiaowei-api",
+              localAdbRequired: false,
+            };
+          }
+          throw new DeviceNodeError("POSTCONDITION_MISS", "Reopened XHS note did not show the expected comment count increment");
+        }
+      } catch (error) {
+        if (error instanceof DeviceNodeError) throw error;
+      }
+      if (attempt < 7) await options.delay(300);
+    }
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "The expected comment was submitted once but count increment and draft clearing were not both verified; submission will not be replayed",
+  );
+}
+
+async function submitXhsEmojiComment(target, request, options) {
+  const dimensions = await readPhysicalDisplaySize(target, options);
+  let hierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.comment-emoji requires Xiaohongshu in the foreground");
+  }
+  const beforeCount = exactXhsCommentCount(hierarchy);
+  let emojiBounds = uniqueXhsControlBounds(hierarchy, request.emoji, { optional: true });
+
+  if (!emojiBounds) {
+    const firstBox = uniqueXhsControlBounds(hierarchy, "评论框");
+    await options.delay(250);
+    const guardHierarchy = await readUiHierarchy(target, options);
+    const guardBox = uniqueXhsControlBounds(guardHierarchy, "评论框");
+    if (!stableNodeBounds(firstBox, guardBox) || exactXhsCommentCount(guardHierarchy) !== beforeCount) {
+      throw new DeviceNodeError("LAYOUT_DRIFT", "XHS comment box changed before activation");
+    }
+    await invokePointerBounds(target, guardBox, dimensions, options);
+    let opened = false;
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      hierarchy = await readUiHierarchy(target, options);
+      if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+        throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after opening the comment composer");
+      }
+      emojiBounds = uniqueXhsControlBounds(hierarchy, request.emoji, { optional: true });
+      if (emojiBounds && xhsDraftEditor(hierarchy)) {
+        opened = true;
+        break;
+      }
+      if (attempt < 7) await options.delay(300);
+    }
+    if (!opened) {
+      throw new DeviceNodeError("POSTCONDITION_MISS", "The comment box was activated once but the emoji composer was not verified");
+    }
+  }
+
+  const initialEditor = xhsDraftEditor(hierarchy);
+  if (!xhsEditorIsEmpty(initialEditor)) {
+    throw new Error("xhs.comment-emoji requires one empty comment editor before emoji selection");
+  }
+  await options.delay(250);
+  const emojiGuardHierarchy = await readUiHierarchy(target, options);
+  const emojiGuard = uniqueXhsControlBounds(emojiGuardHierarchy, request.emoji);
+  const guardEditor = xhsDraftEditor(emojiGuardHierarchy);
+  if (!xhsEditorIsEmpty(guardEditor)
+      || !stableNodeBounds(emojiBounds, emojiGuard)
+      || !stableNodeBounds(initialEditor.bounds, guardEditor.bounds)
+      || exactXhsCommentCount(emojiGuardHierarchy) !== beforeCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS emoji composer changed before selection");
+  }
+  await invokePointerBounds(target, emojiGuard, dimensions, options);
+
+  let draftedHierarchy = "";
+  let draftedEditor = null;
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    draftedHierarchy = await readUiHierarchy(target, options);
+    draftedEditor = xhsDraftEditor(draftedHierarchy, request.emoji);
+    if (draftedEditor) break;
+    if (attempt < 7) await options.delay(300);
+  }
+  if (!draftedEditor) {
+    throw new DeviceNodeError("POSTCONDITION_MISS", "The emoji was activated once but the comment draft was not verified");
+  }
+  const firstSend = uniqueXhsControlBounds(draftedHierarchy, "发送");
+  await options.delay(250);
+  const sendGuardHierarchy = await readUiHierarchy(target, options);
+  const sendGuardEditor = xhsDraftEditor(sendGuardHierarchy, request.emoji);
+  const sendGuard = uniqueXhsControlBounds(sendGuardHierarchy, "发送");
+  if (!sendGuardEditor || !stableNodeBounds(draftedEditor.bounds, sendGuardEditor.bounds)
+      || !stableNodeBounds(firstSend, sendGuard)
+      || exactXhsCommentCount(sendGuardHierarchy) !== beforeCount) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "XHS send control or prepared draft changed before submission");
+  }
+  await invokePointerBounds(target, sendGuard, dimensions, options);
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const afterHierarchy = await readUiHierarchy(target, options);
+    if (!hierarchyContainsPackage(afterHierarchy, XHS_PACKAGE)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "XHS foreground changed after comment submission");
+    }
+    let afterCount = null;
+    try { afterCount = exactXhsCommentCount(afterHierarchy); } catch {}
+    const afterEditor = xhsDraftEditor(afterHierarchy);
+    const draftCleared = !afterEditor || xhsEditorIsEmpty(afterEditor)
+      || (!semanticValue(afterEditor.node.text).includes(request.emoji)
+        && !semanticValue(afterEditor.node.contentDesc).includes(request.emoji));
+    if (afterCount !== null && afterCount > beforeCount && draftCleared) {
+      return {
+        machine: target.machine,
+        status: "verified",
+        beforeCount,
+        afterCount,
+        verification: "emoji_selected_then_package_bound_send_then_comment_count_increment_and_draft_clear",
+        transport: "xiaowei-api",
+        localAdbRequired: false,
+      };
+    }
+    if (attempt < 11) await options.delay(400);
+  }
+  throw new DeviceNodeError(
+    "POSTCONDITION_MISS",
+    "The comment was submitted once but count increment and draft clearing were not both verified; submission will not be replayed",
+  );
+}
+
+function scrollableContainer(hierarchy, expectedPackage) {
+  const document = parseUiAutomatorXml(hierarchy);
+  const candidates = document.nodes
+    .filter((node) => node.scrollable && SAFE_PACKAGE.test(node.packageName)
+      && (expectedPackage === undefined || node.packageName === expectedPackage))
+    .map((node) => ({ node, bounds: parseBounds(node.attributes?.bounds) }))
+    .filter(({ bounds }) => bounds);
+  const uniqueCandidates = [...new Map(candidates.map((candidate) => [
+    [
+      candidate.node.packageName,
+      candidate.node.className,
+      candidate.node.resourceId || "",
+      candidate.bounds.left,
+      candidate.bounds.top,
+      candidate.bounds.right,
+      candidate.bounds.bottom,
+    ].join("\u0000"),
+    candidate,
+  ])).values()]
+    .sort((left, right) => right.bounds.width * right.bounds.height - left.bounds.width * left.bounds.height
+      || left.bounds.top - right.bounds.top || left.bounds.left - right.bounds.left);
+  if (!uniqueCandidates.length) throw new Error("device.scroll could not find a scrollable container in the foreground package");
+  const largestArea = uniqueCandidates[0].bounds.width * uniqueCandidates[0].bounds.height;
+  const tied = uniqueCandidates.filter(({ bounds }) => bounds.width * bounds.height === largestArea);
+  if (tied.length > 1) {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", "device.scroll found multiple distinct equally sized scrollable containers");
+  }
+  return uniqueCandidates[0];
+}
+
+function sameScrollableContainer(left, right) {
+  const sameStableIdentity = left.node.packageName === right.node.packageName
+    && left.node.className === right.node.className
+    && (left.node.resourceId || "") === (right.node.resourceId || "");
+  return sameStableIdentity && stableNodeBounds(left.bounds, right.bounds);
+}
+
+function foregroundPackageForPageGesture(hierarchy, expectedPackage) {
+  const packages = [...new Set(parseUiAutomatorXml(hierarchy).nodes
+    .map((node) => node.packageName)
+    .filter((packageName) => SAFE_PACKAGE.test(packageName)))];
+  if (expectedPackage !== undefined) {
+    if (!packages.includes(expectedPackage)) {
+      throw new DeviceNodeError("FOREGROUND_DRIFT", "device.scroll expected foreground package was not verified");
+    }
+    return expectedPackage;
+  }
+  if (packages.length !== 1) {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", "device.scroll could not derive one foreground package for a horizontal page gesture");
+  }
+  return packages[0];
+}
+
+async function horizontalPageScroll(target, request, deviceDirectory, options) {
+  const beforeHierarchy = await readUiHierarchy(target, options);
+  const sourcePackage = foregroundPackageForPageGesture(beforeHierarchy, request.package);
+  await options.delay(250);
+  const guardHierarchy = await readUiHierarchy(target, options);
+  if (foregroundPackageForPageGesture(guardHierarchy, sourcePackage) !== sourcePackage) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "device.scroll foreground package changed before the page gesture");
+  }
+  const firstScreen = await readScreen(target, deviceDirectory, options, "scroll-horizontal-before-1.png");
+  const firstHash = createHash("sha256").update(await readFile(firstScreen.screenshotPath)).digest("hex");
+  await options.delay(250);
+  let beforeScreen = await readScreen(target, deviceDirectory, options, "scroll-horizontal-before-2.png");
+  let beforeHash = createHash("sha256").update(await readFile(beforeScreen.screenshotPath)).digest("hex");
+  if (beforeHash !== firstHash) {
+    throw new DeviceNodeError("LAYOUT_DRIFT", "device.scroll horizontal source screen changed before the page gesture");
+  }
+  const eventType = request.direction === "right" ? "8" : "9";
+  for (let step = 0; step < request.steps; step += 1) {
+    await invokeOfficial("pointerEvent", target, { type: eventType }, options);
+    let verified = false;
+    let afterScreen;
+    let afterHash = "";
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        const afterHierarchy = await readUiHierarchy(target, options);
+        foregroundPackageForPageGesture(afterHierarchy, sourcePackage);
+        afterScreen = await readScreen(target, deviceDirectory, options, `scroll-horizontal-after-${step + 1}-${attempt + 1}.png`);
+        afterHash = createHash("sha256").update(await readFile(afterScreen.screenshotPath)).digest("hex");
+        if (afterHash !== beforeHash) {
+          verified = true;
+          break;
+        }
+      } catch {
+        // Horizontal page transitions can briefly expose incomplete UI or screenshots.
+      }
+      if (attempt < 3) await options.delay(350);
+    }
+    if (!verified) {
+      throw new Error("device.scroll sent one horizontal page event but a fresh screen change was not verified; the event will not be replayed");
+    }
+    beforeScreen = afterScreen;
+    beforeHash = afterHash;
+  }
+  return {
+    machine: target.machine,
+    status: "verified",
+    direction: request.direction,
+    steps: request.steps,
+    verification: "foreground_rechecked_then_horizontal_events_then_fresh_screen_change",
+    transport: "xiaowei-api",
+    localAdbRequired: false,
+  };
+}
+
+async function scrollDevice(target, request, deviceDirectory, options) {
+  if (["left", "right"].includes(request.direction)) {
+    return horizontalPageScroll(target, request, deviceDirectory, options);
+  }
+  let beforeHierarchy = await readUiHierarchy(target, options);
+  let beforeTarget = scrollableContainer(beforeHierarchy, request.package);
+  await options.delay(250);
+  let guardHierarchy = await readUiHierarchy(target, options);
+  let guardTarget = scrollableContainer(guardHierarchy, request.package ?? beforeTarget.node.packageName);
+  if (!sameScrollableContainer(beforeTarget, guardTarget)) {
+    throw new Error("device.scroll target changed between fresh observations");
+  }
+  const eventType = request.direction === "down" ? "6" : "7";
+  for (let step = 0; step < request.steps; step += 1) {
+    await invokeOfficial("pointerEvent", target, { type: eventType }, options);
+    let changed = false;
+    let afterHierarchy = "";
+    let afterTarget = null;
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      try {
+        afterHierarchy = await readUiHierarchy(target, options);
+        afterTarget = scrollableContainer(afterHierarchy, guardTarget.node.packageName);
+        if (sameScrollableContainer(guardTarget, afterTarget)
+            && createNormalizedFingerprint(afterHierarchy).hash !== createNormalizedFingerprint(guardHierarchy).hash) {
+          changed = true;
+          break;
+        }
+      } catch {
+        // A directional scroll can briefly expose an incomplete hierarchy.
+      }
+      if (attempt < 9) await options.delay(300);
+    }
+    if (!changed) {
+      throw new Error("device.scroll sent one directional event but a fresh UI change was not verified; the event will not be replayed");
+    }
+    guardHierarchy = afterHierarchy;
+    guardTarget = afterTarget;
+  }
+  return {
+    machine: target.machine,
+    status: "verified",
+    direction: request.direction,
+    steps: request.steps,
+    verification: "scrollable_container_rechecked_then_directional_events_then_fresh_ui_change",
     transport: "xiaowei-api",
     localAdbRequired: false,
   };
@@ -1077,37 +2580,110 @@ async function openVisibleXhsNote(target, request, options) {
 
 export async function runXiaoweiDeviceRead(request, runtime = {}) {
   if (!plainObject(request) || ![
-    "list", "size", "ui", "screen", "open-app", "home", "tap-text", "tap-ocr", "node-resolve", "node-activate",
-    "wechat-wallet-balance", "xhs-observe", "xhs-open-visible",
+    "list", "size", "app-list", "ui", "screen", "open-app", "home", "recent", "back", "tap-text", "tap-coords", "tap-ocr", "input", "node-resolve", "node-activate",
+    "scroll", "wechat-wallet-balance", "xhs-observe", "xhs-find-video", "xhs-open-visible", "xhs-comment-open", "xhs-comment-input", "xhs-comment-reply-input",
+    "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send",
   ].includes(request.action)
       || !Array.isArray(request.targets) || request.targets.length < 1 || request.targets.length > 32
       || typeof request.outputRoot !== "string" || !request.outputRoot) {
     throw new Error("Xiaowei device-read request is invalid");
   }
+  if (request.action === "xhs-find-video") {
+    request = {
+      ...request,
+      maxScrolls: request.maxScrolls ?? XHS_FIND_VIDEO_DEFAULT_MAX_SCROLLS,
+      maxDurationMs: request.maxDurationMs ?? XHS_FIND_VIDEO_DEFAULT_MAX_DURATION_MS,
+    };
+  }
   const allowedKeys = new Set(["action", "outputRoot", "targets"]);
   if (["list", "size"].includes(request.action)) allowedKeys.add("privateEndpoint");
   else allowedKeys.add("endpoint");
-  if (["open-app", "tap-ocr", "node-resolve", "node-activate"].includes(request.action)) allowedKeys.add("package");
+  if (["open-app", "tap-text", "tap-coords", "tap-ocr", "input", "node-resolve", "node-activate", "scroll"].includes(request.action)) allowedKeys.add("package");
   if (["tap-text", "tap-ocr"].includes(request.action)) {
     allowedKeys.add("text");
     allowedKeys.add("postcondition");
   }
+  if (request.action === "tap-text") {
+    allowedKeys.add("match");
+    allowedKeys.add("ordinal");
+  }
+  if (request.action === "tap-coords") {
+    allowedKeys.add("x");
+    allowedKeys.add("y");
+    allowedKeys.add("postcondition");
+  }
   if (["node-resolve", "node-activate"].includes(request.action)) allowedKeys.add("selector");
   if (request.action === "node-activate") allowedKeys.add("postcondition");
+  if (["input", "xhs-comment-input", "xhs-comment-reply-input"].includes(request.action)) {
+    for (const key of ["text", "imeService", "allowTemporaryEnable", "echoVerification"]) allowedKeys.add(key);
+  }
+  if (request.action === "xhs-comment-input") allowedKeys.add("expectedEditorStateHash");
+  if (request.action === "xhs-comment-reply-input") allowedKeys.add("replyOrdinal");
   if (request.action === "xhs-open-visible") allowedKeys.add("ordinal");
+  if (request.action === "xhs-find-video") {
+    allowedKeys.add("maxScrolls");
+    allowedKeys.add("maxDurationMs");
+  }
+  if (request.action === "xhs-comment-emoji") allowedKeys.add("emoji");
+  if (request.action === "xhs-comment-send") {
+    allowedKeys.add("expectedDraft");
+    allowedKeys.add("expectedBeforeCount");
+    allowedKeys.add("expectedTarget");
+    allowedKeys.add("expectedEmptyEditorStateHash");
+  }
+  if (request.action === "xhs-dm-send") allowedKeys.add("expectedDraft");
+  if (request.action === "scroll") {
+    allowedKeys.add("direction");
+    allowedKeys.add("steps");
+  }
   exactKeys(request, allowedKeys, `Xiaowei device.${request.action} request`);
-  if ((["open-app", "tap-ocr", "node-resolve", "node-activate"].includes(request.action)
+  const packageRequiredActions = ["open-app", "tap-coords", "tap-ocr", "input", "node-resolve", "node-activate"];
+  if ((packageRequiredActions.includes(request.action)
       && (typeof request.package !== "string" || request.package.length > 255
       || !SAFE_PACKAGE.test(request.package)))
-      || (!["open-app", "tap-ocr", "node-resolve", "node-activate"].includes(request.action) && request.package !== undefined)) {
+      || (request.action === "scroll" && request.package !== undefined
+        && (typeof request.package !== "string" || request.package.length > 255 || !SAFE_PACKAGE.test(request.package)))
+      || (request.action === "tap-text" && request.package !== undefined
+        && (typeof request.package !== "string" || request.package.length > 255 || !SAFE_PACKAGE.test(request.package)))
+      || (![...packageRequiredActions, "scroll", "tap-text"].includes(request.action) && request.package !== undefined)) {
     throw new Error("Xiaowei device-read package request is invalid");
   }
-  if (["tap-text", "tap-ocr"].includes(request.action)) {
+  if (["input", "xhs-comment-input", "xhs-comment-reply-input"].includes(request.action)) {
+    if (typeof request.text !== "string" || !request.text || [...request.text].length > 256
+        || /[\u0000\r\n]/u.test(request.text) || !SAFE_IME_SERVICE.test(request.imeService)
+        || typeof request.allowTemporaryEnable !== "boolean"
+        || !["ui_text", "local_ocr"].includes(request.echoVerification)
+        || (request.action === "xhs-comment-input"
+          && (typeof request.expectedEditorStateHash !== "string" || !/^[a-f0-9]{64}$/u.test(request.expectedEditorStateHash)))) {
+      throw new Error(`${request.action === "input" ? "device.input" : request.action === "xhs-comment-input" ? "xhs.comment.input" : "xhs.comment.reply-input"} request is invalid`);
+    }
+    if (request.action === "xhs-comment-reply-input"
+        && (!Number.isSafeInteger(request.replyOrdinal) || request.replyOrdinal < 1 || request.replyOrdinal > 50)) {
+      throw new Error("xhs.comment.reply-input request is invalid");
+    }
+  } else if (request.action === "xhs-dm-send") {
+    if (typeof request.expectedDraft !== "string" || !request.expectedDraft
+        || [...request.expectedDraft].length > 256 || /[\u0000\r\n]/u.test(request.expectedDraft)) {
+      throw new Error("xhs.dm.send request is invalid");
+    }
+  } else if (["tap-text", "tap-ocr"].includes(request.action)) {
     const postcondition = request.postcondition;
     if (typeof request.text !== "string" || !request.text.trim() || request.text.length > 1024
         || !plainObject(postcondition) || !(request.action === "tap-ocr" ? ["text"] : ["text", "package", "resource-id"]).includes(postcondition.kind)
-        || typeof postcondition.value !== "string" || !postcondition.value.trim() || postcondition.value.length > 1024) {
+        || typeof postcondition.value !== "string" || !postcondition.value.trim() || postcondition.value.length > 1024
+        || (request.action === "tap-text" && request.match !== undefined && !["exact", "suffix"].includes(request.match))
+        || (request.action === "tap-text" && request.ordinal !== undefined
+          && (!Number.isSafeInteger(request.ordinal) || request.ordinal < 1 || request.ordinal > 50))
+        || (request.action === "tap-text" && request.match === "suffix" && request.ordinal === undefined)) {
       throw new Error("Xiaowei tap-text request is invalid");
+    }
+  } else if (request.action === "tap-coords") {
+    const postcondition = request.postcondition;
+    if (![request.x, request.y].every((value) => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100)
+        || !plainObject(postcondition) || !["text", "package", "resource-id"].includes(postcondition.kind)
+        || typeof postcondition.value !== "string" || !postcondition.value.trim() || postcondition.value.length > 1024
+        || /[\u0000-\u001f\u007f]/u.test(postcondition.value)) {
+      throw new Error("device.tap-coords request is invalid");
     }
   } else if (request.action === "node-activate") {
     if (!plainObject(request.postcondition) || Object.keys(request.postcondition).length !== 2
@@ -1116,7 +2692,7 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
         || /[\u0000-\u001f\u007f]/u.test(request.postcondition.value)) {
       throw new Error("device.node.activate postcondition is invalid");
     }
-  } else if (request.text !== undefined || request.postcondition !== undefined) {
+  } else if (request.text !== undefined || request.postcondition !== undefined || request.expectedEditorStateHash !== undefined) {
     throw new Error("Xiaowei device-read text request is invalid");
   }
   if (["node-resolve", "node-activate"].includes(request.action)) {
@@ -1128,8 +2704,62 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
     if (!Number.isSafeInteger(request.ordinal) || request.ordinal < 1 || request.ordinal > 20) {
       throw new Error("xhs.open-visible ordinal is invalid");
     }
-  } else if (request.ordinal !== undefined) {
+  } else if (request.action !== "tap-text" && request.ordinal !== undefined) {
     throw new Error("Xiaowei device-read ordinal request is invalid");
+  }
+  if (request.action === "xhs-find-video") {
+    if (!Number.isSafeInteger(request.maxScrolls) || request.maxScrolls < 0 || request.maxScrolls > 10
+        || !Number.isSafeInteger(request.maxDurationMs) || request.maxDurationMs < 5_000 || request.maxDurationMs > 60_000) {
+      throw new Error("xhs.find-video request is invalid");
+    }
+  }
+  if (request.action === "xhs-comment-emoji") {
+    if (typeof request.emoji !== "string" || !request.emoji.trim() || [...request.emoji].length > 64
+        || /[\u0000-\u001f\u007f]/u.test(request.emoji)) {
+      throw new Error("xhs.comment-emoji emoji is invalid");
+    }
+    request = { ...request, emoji: request.emoji.normalize("NFKC").trim() };
+  } else if (request.emoji !== undefined) {
+    throw new Error("Xiaowei device-read emoji request is invalid");
+  }
+  if (request.action === "xhs-comment-send") {
+    if (typeof request.expectedDraft !== "string" || !request.expectedDraft
+        || [...request.expectedDraft].length > 256 || /[\u0000\r\n]/u.test(request.expectedDraft)
+        || !Number.isSafeInteger(request.expectedBeforeCount) || request.expectedBeforeCount < 0
+        || request.expectedBeforeCount > 999_999_999
+        || typeof request.expectedEmptyEditorStateHash !== "string" || !/^[a-f0-9]{64}$/u.test(request.expectedEmptyEditorStateHash)
+        || !plainObject(request.expectedTarget)
+        || Object.keys(request.expectedTarget).length !== 3
+        || typeof request.expectedTarget.title !== "string" || !request.expectedTarget.title.trim()
+        || request.expectedTarget.title.length > 512
+        || typeof request.expectedTarget.author !== "string" || !request.expectedTarget.author.trim()
+        || request.expectedTarget.author.length > 256
+        || !["image", "video"].includes(request.expectedTarget.mediaType)
+        || /[\u0000-\u001f\u007f]/u.test(`${request.expectedTarget.title}${request.expectedTarget.author}`)) {
+      throw new Error("xhs.comment.send expectedDraft is invalid");
+    }
+    request = {
+      ...request,
+      expectedDraft: request.expectedDraft.normalize("NFKC"),
+      expectedTarget: {
+        title: request.expectedTarget.title.normalize("NFKC").trim(),
+        author: request.expectedTarget.author.normalize("NFKC").trim(),
+        mediaType: request.expectedTarget.mediaType,
+      },
+    };
+  } else if (request.action === "xhs-dm-send") {
+    request = { ...request, expectedDraft: request.expectedDraft.normalize("NFKC") };
+  } else if (request.expectedDraft !== undefined || request.expectedBeforeCount !== undefined
+      || request.expectedTarget !== undefined || request.expectedEmptyEditorStateHash !== undefined) {
+    throw new Error("Xiaowei device-read comment-send binding is invalid");
+  }
+  if (request.action === "scroll") {
+    if (!["down", "up", "left", "right"].includes(request.direction)
+        || !Number.isSafeInteger(request.steps) || request.steps < 1 || request.steps > 5) {
+      throw new Error("device.scroll request is invalid");
+    }
+  } else if (request.direction !== undefined || request.steps !== undefined) {
+    throw new Error("Xiaowei device-read scroll request is invalid");
   }
   const projectRoot = path.resolve(runtime.projectRoot ?? PROJECT_ROOT);
   const approvedRoot = path.join(projectRoot, "data", "matrix", "runs");
@@ -1175,27 +2805,74 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
     endpoint: request.endpoint,
     sendRequest: runtime.sendRequest ?? sendXiaoweiRequest,
     timeoutMs: runtime.timeoutMs ?? 15_000,
+    uiDirectTimeoutMs: runtime.uiDirectTimeoutMs ?? 5_000,
     delay: runtime.delay ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds))),
+    now: runtime.now ?? Date.now,
     localOcr: runtime.localOcr ?? createWindowsLocalOcr(),
     cloudVision: runtime.cloudVision ?? requestCloudVision,
     xhsRulesPath: runtime.xhsRulesPath ?? path.join(projectRoot, "config", "xhs-page-rules.json"),
+    uiScratchDirectory: outputRoot,
+    replyOpenBudgetMs: runtime.replyOpenBudgetMs,
+    commentDraftVerifyBudgetMs: runtime.commentDraftVerifyBudgetMs,
   };
   const results = [];
-  if (["node-resolve", "node-activate", "wechat-wallet-balance", "xhs-observe", "xhs-open-visible"].includes(request.action)) {
-    const publicCommand = request.action === "wechat-wallet-balance" ? "wechat.wallet-balance"
+  if ([
+    "app-list", "recent", "back", "tap-coords", "input", "node-resolve", "node-activate", "scroll", "wechat-wallet-balance", "xhs-observe", "xhs-find-video", "xhs-open-visible",
+    "xhs-comment-open", "xhs-comment-input", "xhs-comment-reply-input", "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send",
+  ].includes(request.action)) {
+    const publicCommand = request.action === "app-list" ? "app.list"
+      : request.action === "recent" ? "device.recent"
+      : request.action === "back" ? "device.back"
+      : request.action === "wechat-wallet-balance" ? "wechat.wallet-balance"
       : request.action === "xhs-observe" ? "xhs.observe"
-        : request.action === "xhs-open-visible" ? "xhs.open-visible"
-          : request.action === "node-resolve" ? "device.node.resolve" : "device.node.activate";
+        : request.action === "xhs-find-video" ? "xhs.find-video"
+          : request.action === "xhs-open-visible" ? "xhs.open-visible"
+          : request.action === "xhs-comment-emoji" ? "xhs.comment-emoji"
+          : request.action === "xhs-comment-open" ? "xhs.comment.open"
+          : request.action === "xhs-comment-input" ? "xhs.comment.input"
+          : request.action === "xhs-comment-reply-input" ? "xhs.comment.reply-input"
+          : request.action === "xhs-comment-send" ? "xhs.comment.send"
+          : request.action === "xhs-dm-send" ? "xhs.dm.send"
+          : request.action === "tap-coords" ? "device.tap-coords"
+          : request.action === "input" ? "device.input"
+            : request.action === "scroll" ? "device.scroll"
+            : request.action === "node-resolve" ? "device.node.resolve" : "device.node.activate";
     if (targets.length !== 1) throw new Error(`${publicCommand} requires exactly one configured machine`);
     const target = targets[0];
     const deviceDirectory = path.join(outputRoot, target.alias);
     await mkdir(deviceDirectory, { recursive: true });
-    const publicResult = request.action === "wechat-wallet-balance"
+    const publicResult = request.action === "app-list"
+      ? await listApps(target, options)
+      : request.action === "recent"
+        ? await goRecent(target, options)
+      : request.action === "back"
+      ? await goBack(target, options)
+      : request.action === "tap-coords"
+        ? await tapCoordinates(target, request, options)
+      : request.action === "input"
+      ? await inputDeviceText(target, request, deviceDirectory, options)
+      : request.action === "xhs-comment-open"
+        ? await openXhsCommentComposer(target, options)
+      : request.action === "xhs-comment-input"
+        ? await inputXhsCommentDraft(target, request, deviceDirectory, options)
+      : request.action === "xhs-comment-reply-input"
+        ? await inputXhsReplyDraft(target, request, deviceDirectory, options)
+      : request.action === "xhs-comment-send"
+        ? await sendXhsCommentDraft(target, request, options)
+      : request.action === "xhs-dm-send"
+        ? await sendXhsDmDraft(target, request, options)
+      : request.action === "scroll"
+        ? await scrollDevice(target, request, deviceDirectory, options)
+      : request.action === "wechat-wallet-balance"
       ? await readWechatWalletBalance(target, deviceDirectory, options)
       : request.action === "xhs-observe"
         ? await readXhsPublicObservation(target, options)
-        : request.action === "xhs-open-visible"
+        : request.action === "xhs-find-video"
+          ? await findVisibleXhsVideo(target, request, options)
+          : request.action === "xhs-open-visible"
           ? await openVisibleXhsNote(target, request, options)
+          : request.action === "xhs-comment-emoji"
+            ? await submitXhsEmojiComment(target, request, options)
           : request.action === "node-resolve"
             ? await resolveDeviceNode(target, request, deviceDirectory, options)
             : await activateDeviceNode(target, request, deviceDirectory, options);

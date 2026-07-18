@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { randomBytes, randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync } from "node:fs";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import process from "node:process";
@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 
 import { validateDeviceNodeSelector } from "./device-node-engine.mjs";
 
-const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const GATEWAY_SOURCE_PATH = fileURLToPath(import.meta.url);
+const SCRIPT_DIR = path.dirname(GATEWAY_SOURCE_PATH);
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 17_891;
@@ -16,7 +17,27 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 120_000;
 const VISION_NODE_TIMEOUT_MS = 270_000;
+const COMMENT_INPUT_TRANSACTION_TIMEOUT_MS = 300_000;
 const AUDIT_PATH = path.join(PROJECT_ROOT, "data", "remote-gateway-audit.log");
+const GATEWAY_RESIDENT_SOURCE_PATHS = Object.freeze([
+  GATEWAY_SOURCE_PATH,
+  path.join(SCRIPT_DIR, "device-node-engine.mjs"),
+]);
+
+export function computeGatewayBuildId(sourcePaths = GATEWAY_RESIDENT_SOURCE_PATHS) {
+  if (!Array.isArray(sourcePaths) || sourcePaths.length < 1) throw new Error("Gateway build sources are invalid");
+  const hash = createHash("sha256");
+  for (const sourcePath of [...sourcePaths].sort()) {
+    hash.update(path.basename(sourcePath), "utf8");
+    hash.update("\0", "utf8");
+    hash.update(readFileSync(sourcePath));
+    hash.update("\0", "utf8");
+  }
+  return hash.digest("hex");
+}
+
+const GATEWAY_BUILD_ID = computeGatewayBuildId();
+const GATEWAY_BOOT_ID = randomUUID();
 
 const SIMPLE_COMMANDS = Object.freeze({
   "doctor": ["doctor"],
@@ -39,6 +60,7 @@ const TARGETED_COMMANDS = Object.freeze({
   "device.open-xhs": ["device", "open-xhs"],
   "device.open-profile": ["device", "open-profile"],
   "device.home": ["device", "home"],
+  "device.recent": ["device", "recent"],
   "device.back": ["device", "back"],
   "app.list": ["app", "list"],
 });
@@ -69,6 +91,18 @@ function machineArg(value) {
   const machine = boundedString(value, "machine", 16);
   if (!/^\d{2}$/u.test(machine)) throw new Error("machine must be a two-digit machine number");
   return ["--machine", machine];
+}
+
+function percentageArg(value, name) {
+  const textValue = typeof value === "number" ? String(value) : boundedString(value, name, 24);
+  if (!/^(?:100(?:\.0{1,6})?|(?:\d|[1-9]\d)(?:\.\d{1,6})?)$/u.test(textValue)) {
+    throw new Error(`${name} must be a percentage from 0 through 100`);
+  }
+  const numeric = Number(textValue);
+  if (!Number.isFinite(numeric) || numeric < 0 || numeric > 100) {
+    throw new Error(`${name} must be a percentage from 0 through 100`);
+  }
+  return String(numeric);
 }
 
 function confirmationArgs(input) {
@@ -103,11 +137,100 @@ export function buildRemoteArgv(input) {
     }
     return ["xhs", "open-visible", ...machineArg(input.machine), "--ordinal", String(input.ordinal)];
   }
+  if (command === "xhs.find-video") {
+    exactKeys(input, new Set(["command", "machine", "maxScrolls", "maxDurationMs"]));
+    const maxScrolls = input.maxScrolls ?? 3;
+    const maxDurationMs = input.maxDurationMs ?? 28_000;
+    if (!Number.isSafeInteger(maxScrolls) || maxScrolls < 0 || maxScrolls > 10) {
+      throw new Error("maxScrolls must be an integer from 0 through 10");
+    }
+    if (!Number.isSafeInteger(maxDurationMs) || maxDurationMs < 5_000 || maxDurationMs > 60_000) {
+      throw new Error("maxDurationMs must be an integer from 5000 through 60000");
+    }
+    return [
+      "xhs", "find-video", ...machineArg(input.machine),
+      "--max-scrolls", String(maxScrolls), "--max-duration-ms", String(maxDurationMs),
+    ];
+  }
+  if (command === "xhs.comment-emoji") {
+    exactKeys(input, new Set(["command", "machine", "emoji"]));
+    return [
+      "xhs", "comment-emoji", ...machineArg(input.machine),
+      "--emoji", boundedString(input.emoji, "emoji", 64),
+    ];
+  }
+  if (command === "xhs.comment.open") {
+    exactKeys(input, new Set(["command", "machine"]));
+    return ["xhs", "comment-open", ...machineArg(input.machine)];
+  }
+  if (command === "xhs.comment.input") {
+    exactKeys(input, new Set(["command", "machine", "text", "expectedEditorStateHash"]));
+    const expectedEditorStateHash = boundedString(input.expectedEditorStateHash, "expectedEditorStateHash", 64);
+    if (!/^[a-f0-9]{64}$/u.test(expectedEditorStateHash)) throw new Error("expectedEditorStateHash is invalid");
+    return [
+      "xhs", "comment-input", ...machineArg(input.machine),
+      "--text", boundedString(input.text, "text", 256),
+      "--expected-editor-state-hash", expectedEditorStateHash,
+    ];
+  }
+  if (command === "xhs.comment.reply-input") {
+    exactKeys(input, new Set(["command", "machine", "text", "ordinal"]));
+    if (!Number.isSafeInteger(input.ordinal) || input.ordinal < 1 || input.ordinal > 50) {
+      throw new Error("xhs.comment.reply-input ordinal is invalid");
+    }
+    return [
+      "xhs", "comment-reply-input", ...machineArg(input.machine),
+      "--text", boundedString(input.text, "text", 256),
+      "--ordinal", String(input.ordinal),
+    ];
+  }
+  if (command === "xhs.comment.send") {
+    exactKeys(input, new Set([
+      "command", "machine", "expectedDraft", "expectedBeforeCount", "expectedTarget", "expectedEmptyEditorStateHash",
+    ]));
+    if (!Number.isSafeInteger(input.expectedBeforeCount) || input.expectedBeforeCount < 0
+        || input.expectedBeforeCount > 999_999_999) {
+      throw new Error("expectedBeforeCount must be a non-negative integer");
+    }
+    if (!plainObject(input.expectedTarget)) throw new Error("expectedTarget is invalid");
+    exactKeys(input.expectedTarget, new Set(["title", "author", "mediaType"]));
+    const expectedTarget = {
+      title: boundedString(input.expectedTarget.title, "expectedTarget.title", 512),
+      author: boundedString(input.expectedTarget.author, "expectedTarget.author", 256),
+      mediaType: boundedString(input.expectedTarget.mediaType, "expectedTarget.mediaType", 16),
+    };
+    if (!["image", "video"].includes(expectedTarget.mediaType)) throw new Error("expectedTarget.mediaType is invalid");
+    const expectedEmptyEditorStateHash = boundedString(input.expectedEmptyEditorStateHash, "expectedEmptyEditorStateHash", 64);
+    if (!/^[a-f0-9]{64}$/u.test(expectedEmptyEditorStateHash)) throw new Error("expectedEmptyEditorStateHash is invalid");
+    return [
+      "xhs", "comment-send", ...machineArg(input.machine),
+      "--expected-draft", boundedString(input.expectedDraft, "expectedDraft", 256),
+      "--expected-before-count", String(input.expectedBeforeCount),
+      "--expected-target-base64", Buffer.from(JSON.stringify(expectedTarget), "utf8").toString("base64"),
+      "--expected-empty-editor-state-hash", expectedEmptyEditorStateHash,
+    ];
+  }
+  if (command === "xhs.dm.send") {
+    exactKeys(input, new Set(["command", "machine", "expectedDraft"]));
+    return [
+      "xhs", "dm-send", ...machineArg(input.machine),
+      "--expected-draft", boundedString(input.expectedDraft, "expectedDraft", 256),
+    ];
+  }
+  if (command === "device.scroll") {
+    exactKeys(input, new Set(["command", "machine", "direction", "steps", "package"]));
+    if (!["down", "up", "left", "right"].includes(input.direction)) throw new Error("direction must be down, up, left, or right");
+    const steps = input.steps === undefined ? 1 : input.steps;
+    if (!Number.isSafeInteger(steps) || steps < 1 || steps > 5) throw new Error("steps must be an integer from 1 through 5");
+    const args = ["device", "scroll", ...machineArg(input.machine), "--direction", input.direction, "--steps", String(steps)];
+    if (input.package !== undefined) args.push("--package", boundedString(input.package, "package", 256));
+    return args;
+  }
   if (CONFIRMED_COMMANDS[command]) {
     exactKeys(input, new Set(["command", "machine", "reason", "rollback"]));
     return [...CONFIRMED_COMMANDS[command], ...machineArg(input.machine), ...confirmationArgs(input)];
   }
-  if (command === "app.open") {
+  if (command === "app.open" || command === "device.start-apk") {
     exactKeys(input, new Set(["command", "machine", "package"]));
     return ["app", "open", ...machineArg(input.machine), "--package", boundedString(input.package, "package", 256)];
   }
@@ -120,15 +243,48 @@ export function buildRemoteArgv(input) {
   }
   if (command === "device.tap-text") {
     exactKeys(input, new Set([
-      "command", "machine", "text", "expectText", "expectPackage", "expectResourceId", "reason", "rollback",
+      "command", "machine", "package", "text", "match", "ordinal", "expectText", "expectPackage", "expectResourceId", "reason", "rollback",
     ]));
     const postconditions = [input.expectText, input.expectPackage, input.expectResourceId].filter((value) => value !== undefined);
     if (postconditions.length !== 1) throw new Error("device.tap-text requires exactly one postcondition");
-    const args = ["device", "tap-text", ...machineArg(input.machine), "--text", boundedString(input.text, "text", 1024)];
+    const args = [
+      "device", "tap-text", ...machineArg(input.machine),
+      "--text", boundedString(input.text, "text", 1024),
+      "--package", boundedString(input.package, "package", 256),
+    ];
+    if (input.match !== undefined) {
+      if (!["exact", "suffix"].includes(input.match)) throw new Error("device.tap-text match is invalid");
+      args.push("--match", input.match);
+    }
+    if (input.ordinal !== undefined) {
+      if (!Number.isSafeInteger(input.ordinal) || input.ordinal < 1 || input.ordinal > 50) {
+        throw new Error("device.tap-text ordinal is invalid");
+      }
+      args.push("--ordinal", String(input.ordinal));
+    }
+    if (input.match === "suffix" && input.ordinal === undefined) {
+      throw new Error("device.tap-text suffix matching requires ordinal");
+    }
     if (input.expectText !== undefined) args.push("--expect-text", boundedString(input.expectText, "expectText", 1024));
     if (input.expectPackage !== undefined) args.push("--expect-package", boundedString(input.expectPackage, "expectPackage", 256));
     if (input.expectResourceId !== undefined) args.push("--expect-resource-id", boundedString(input.expectResourceId, "expectResourceId", 512));
     return [...args, ...confirmationArgs(input)];
+  }
+  if (command === "device.tap-coords") {
+    exactKeys(input, new Set([
+      "command", "machine", "package", "x", "y", "expectText", "expectPackage", "expectResourceId",
+    ]));
+    const postconditions = [input.expectText, input.expectPackage, input.expectResourceId].filter((value) => value !== undefined);
+    if (postconditions.length !== 1) throw new Error("device.tap-coords requires exactly one postcondition");
+    const args = [
+      "device", "tap-coords", ...machineArg(input.machine),
+      "--package", boundedString(input.package, "package", 256),
+      "--x", percentageArg(input.x, "x"), "--y", percentageArg(input.y, "y"),
+    ];
+    if (input.expectText !== undefined) args.push("--expect-text", boundedString(input.expectText, "expectText", 1024));
+    if (input.expectPackage !== undefined) args.push("--expect-package", boundedString(input.expectPackage, "expectPackage", 256));
+    if (input.expectResourceId !== undefined) args.push("--expect-resource-id", boundedString(input.expectResourceId, "expectResourceId", 512));
+    return args;
   }
   if (command === "device.tap-ocr") {
     exactKeys(input, new Set([
@@ -140,6 +296,14 @@ export function buildRemoteArgv(input) {
       "--text", boundedString(input.text, "text", 256),
       "--expect-text", boundedString(input.expectText, "expectText", 256),
       ...confirmationArgs(input),
+    ];
+  }
+  if (command === "device.input") {
+    exactKeys(input, new Set(["command", "machine", "package", "text"]));
+    return [
+      "device", "input", ...machineArg(input.machine),
+      "--package", boundedString(input.package, "package", 256),
+      "--text", boundedString(input.text, "text", 256),
     ];
   }
   if (command === "device.node.resolve" || command === "device.node.activate") {
@@ -192,6 +356,15 @@ export function buildRemoteArgv(input) {
 }
 
 export function commandTimeoutMs(input) {
+  if (input?.command === "xhs.find-video") {
+    return Math.min(COMMAND_TIMEOUT_MS, (input.maxDurationMs ?? 28_000) + 15_000);
+  }
+  // Comment draft transactions include IME switches plus slow-device editor
+  // rebuild storms; machine 01 alone needs >78s before its reply editor even
+  // becomes focus-stable, so the generic 120s cap cuts these commands off.
+  if (input?.command === "xhs.comment.input" || input?.command === "xhs.comment.reply-input") {
+    return COMMENT_INPUT_TRANSACTION_TIMEOUT_MS;
+  }
   if ((input?.command === "device.node.resolve" || input?.command === "device.node.activate")
       && Array.isArray(input?.selector?.sources) && input.selector.sources.includes("vision")) {
     return VISION_NODE_TIMEOUT_MS;
@@ -200,12 +373,28 @@ export function commandTimeoutMs(input) {
 }
 
 const SENSITIVE_KEY = /(?:authorization|cookie|password|secret|token|serial|onlySerial|deviceId|profilePic|alias|path|key)$/iu;
+const ARTIFACT_PATH_KEY = /^(screenshot|hierarchy)Path$/u;
+
+function publicArtifactReference(kind, artifactPath) {
+  return {
+    id: createHash("sha256").update(String(artifactPath), "utf8").digest("hex").slice(0, 24),
+    kind,
+  };
+}
 
 function sanitizeValue(value) {
   if (Array.isArray(value)) return value.map(sanitizeValue);
   if (!plainObject(value)) return value;
   const result = {};
-  for (const [key, entry] of Object.entries(value)) result[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeValue(entry);
+  for (const [key, entry] of Object.entries(value)) {
+    const artifactMatch = ARTIFACT_PATH_KEY.exec(key);
+    if (artifactMatch && typeof entry === "string") {
+      result[key] = "[redacted]";
+      result[`${artifactMatch[1]}Artifact`] = publicArtifactReference(artifactMatch[1], entry);
+    } else {
+      result[key] = SENSITIVE_KEY.test(key) ? "[redacted]" : sanitizeValue(entry);
+    }
+  }
   return result;
 }
 
@@ -217,9 +406,30 @@ export function sanitizeCommandOutput(value) {
     .replace(/(^|\n)([A-Za-z0-9_-]{7,})\s+(device|offline|unauthorized)\b/gu, "$1[redacted] $3");
 }
 
+export function extractPublicArtifactReferences(value) {
+  const found = new Map();
+  function visit(entry) {
+    if (Array.isArray(entry)) {
+      for (const item of entry) visit(item);
+      return;
+    }
+    if (!plainObject(entry)) return;
+    if (/^[a-f0-9]{24}$/u.test(entry.id) && ["screenshot", "hierarchy"].includes(entry.kind)) {
+      found.set(`${entry.kind}:${entry.id}`, { id: entry.id, kind: entry.kind });
+    }
+    for (const item of Object.values(entry)) visit(item);
+  }
+  try { visit(typeof value === "string" ? JSON.parse(value) : value); } catch {}
+  return [...found.values()];
+}
+
 const STRUCTURED_COMMANDS = new Set([
-  "device.list", "device.size", "device.guide", "device.node.resolve", "device.node.activate",
-  "wechat.wallet-balance", "xhs.observe", "xhs.open-visible",
+  "device.list", "device.size", "app.list", "device.guide", "device.recent", "device.back", "device.tap-coords", "device.input", "device.node.resolve", "device.node.activate", "device.scroll",
+  "wechat.wallet-balance", "xhs.observe", "xhs.find-video", "xhs.open-visible", "xhs.comment.open", "xhs.comment.input", "xhs.comment.reply-input", "xhs.comment.send", "xhs.dm.send",
+  "xhs.comment-emoji",
+]);
+const PAGE_PRESERVING_COMMANDS = new Set([
+  "device.list", "device.size", "device.ui", "device.screen", "device.guide", "app.list", "xhs.observe",
 ]);
 
 function assertExactPublicKeys(value, keys, label) {
@@ -307,6 +517,64 @@ export function parseStructuredReadOutput(command, stdout) {
     }
     return value;
   }
+  if (command === "device.input") {
+    assertExactPublicKeys(value, ["machine", "status", "verification", "transport", "localAdbRequired"], "device.input result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !["exact_focused_editor_ui_echo_after_ime_restore", "exact_local_ocr_echo_after_ime_restore"].includes(value.verification)
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("device.input contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "device.back") {
+    assertExactPublicKeys(value, ["machine", "status", "verification", "transport", "localAdbRequired"], "device.back result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || value.verification !== "single_back_event_then_fresh_screen_change"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("device.back contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "device.recent") {
+    assertExactPublicKeys(value, ["machine", "status", "verification", "transport", "localAdbRequired"], "device.recent result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || value.verification !== "single_recent_event_then_fresh_ui_change"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("device.recent contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "device.tap-coords") {
+    assertExactPublicKeys(value, ["machine", "status", "verification", "transport", "localAdbRequired"], "device.tap-coords result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || value.verification !== "source_package_fast_rechecked_then_single_pointer_event_then_fresh_postcondition"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("device.tap-coords contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "device.scroll") {
+    assertExactPublicKeys(value, ["machine", "status", "direction", "steps", "verification", "transport", "localAdbRequired"], "device.scroll result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !["down", "up", "left", "right"].includes(value.direction)
+        || !Number.isSafeInteger(value.steps) || value.steps < 1 || value.steps > 5
+        || !["scrollable_container_rechecked_then_directional_events_then_fresh_ui_change", "foreground_rechecked_then_horizontal_events_then_fresh_screen_change"].includes(value.verification)
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("device.scroll contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "app.list") {
+    assertExactPublicKeys(value, ["machine", "packages", "transport", "localAdbRequired"], "app.list result");
+    if (!/^\d{2}$/u.test(value.machine) || !Array.isArray(value.packages) || value.packages.length < 1
+        || value.packages.length > 20_000 || new Set(value.packages).size !== value.packages.length
+        || value.packages.some((entry) => typeof entry !== "string" || entry.length > 255
+          || !/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+$/u.test(entry))
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("app.list contains an invalid public value");
+    }
+    return value;
+  }
   if (command === "wechat.wallet-balance") {
     const keys = ["machine", "currency", "balance", "transport", "localAdbRequired"];
     assertExactPublicKeys(value, keys, "wechat.wallet-balance result");
@@ -321,8 +589,119 @@ export function parseStructuredReadOutput(command, stdout) {
     validateXhsObservation(value);
     return value;
   }
+  if (command === "xhs.find-video") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "page", "note", "ordinal", "scrolls", "elapsedMs", "verification", "transport", "localAdbRequired",
+    ], "xhs.find-video result");
+    if (!/^\d{2}$/u.test(value.machine) || !["found", "not_found"].includes(value.status)
+        || !Number.isSafeInteger(value.scrolls) || value.scrolls < 0 || value.scrolls > 10
+        || !Number.isSafeInteger(value.elapsedMs) || value.elapsedMs < 0 || value.elapsedMs > 120_000
+        || value.verification !== "fresh_home_feed_ui_after_each_scroll"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.find-video contains an invalid public value");
+    }
+    assertExactPublicKeys(value.page, ["state", "score", "margin"], "xhs.find-video page");
+    if (value.page.state !== "HOME_FEED" || !Number.isFinite(value.page.score) || !Number.isFinite(value.page.margin)
+        || value.page.score < 0 || value.page.margin < 0) {
+      throw new Error("xhs.find-video page is invalid");
+    }
+    if (value.status === "found") {
+      validateXhsNote(value.note, "xhs.find-video note");
+      if (value.note.mediaType !== "video" || value.ordinal !== value.note.ordinal) {
+        throw new Error("xhs.find-video found result is inconsistent");
+      }
+    } else if (value.note !== null || value.ordinal !== null) {
+      throw new Error("xhs.find-video not-found result is inconsistent");
+    }
+    return value;
+  }
   if (command === "xhs.open-visible") {
     validateXhsObservation(value, true);
+    return value;
+  }
+  if (command === "xhs.comment-emoji") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "beforeCount", "afterCount", "verification", "transport", "localAdbRequired",
+    ], "xhs.comment-emoji result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !Number.isSafeInteger(value.beforeCount) || value.beforeCount < 0
+        || !Number.isSafeInteger(value.afterCount) || value.afterCount <= value.beforeCount
+        || value.verification !== "emoji_selected_then_package_bound_send_then_comment_count_increment_and_draft_clear"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comment-emoji contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.comment.open") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "commentCount", "target", "editorStateHash", "verification", "transport", "localAdbRequired",
+    ], "xhs.comment.open result");
+    assertExactPublicKeys(value.target, ["title", "author", "mediaType"], "xhs.comment.open target");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !Number.isSafeInteger(value.commentCount) || value.commentCount < 0
+        || typeof value.target.title !== "string" || !value.target.title.trim() || value.target.title.length > 512
+        || typeof value.target.author !== "string" || !value.target.author.trim() || value.target.author.length > 256
+        || !["image", "video"].includes(value.target.mediaType)
+        || typeof value.editorStateHash !== "string" || !/^[a-f0-9]{64}$/u.test(value.editorStateHash)
+        || value.verification !== "comment_box_rechecked_then_single_activation_then_editor_verified"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comment.open contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.comment.input") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "inputMethod", "draftLength", "verification", "transport", "localAdbRequired",
+    ], "xhs.comment.input result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !["shortcut", "ime"].includes(value.inputMethod)
+        || !Number.isSafeInteger(value.draftLength) || value.draftLength < 1 || value.draftLength > 256
+        || value.verification !== "xhs_comment_draft_exact_ui_echo"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comment.input contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.comment.reply-input") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "inputMethod", "draftLength", "commentCount", "editorStateHash", "replyOrdinal",
+      "verification", "transport", "localAdbRequired",
+    ], "xhs.comment.reply-input result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !["shortcut", "ime"].includes(value.inputMethod)
+        || !Number.isSafeInteger(value.draftLength) || value.draftLength < 1 || value.draftLength > 256
+        || !Number.isSafeInteger(value.commentCount) || value.commentCount < 0
+        || typeof value.editorStateHash !== "string" || !/^[a-f0-9]{64}$/u.test(value.editorStateHash)
+        || !Number.isSafeInteger(value.replyOrdinal) || value.replyOrdinal < 1 || value.replyOrdinal > 50
+        || value.verification !== "reply_target_rechecked_then_editor_recovered_after_ime_then_bound_draft_echo"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comment.reply-input contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.comment.send") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "beforeCount", "afterCount", "verification", "transport", "localAdbRequired",
+    ], "xhs.comment.send result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !Number.isSafeInteger(value.beforeCount) || value.beforeCount < 0
+        || !Number.isSafeInteger(value.afterCount) || value.afterCount <= value.beforeCount
+        || value.verification !== "expected_draft_and_send_rechecked_then_count_increment_and_draft_clear"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comment.send contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.dm.send") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "draftLength", "verification", "transport", "localAdbRequired",
+    ], "xhs.dm.send result");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !Number.isSafeInteger(value.draftLength) || value.draftLength < 1 || value.draftLength > 256
+        || value.verification !== "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.dm.send contains an invalid public value");
+    }
     return value;
   }
   const keys = ["machine", "width", "height", "transport", "localAdbRequired"];
@@ -348,6 +727,20 @@ function validateMetricSet(value) {
   }
 }
 
+function validateXhsNote(note, label = "xhs.observe note") {
+  const noteKeys = Object.hasOwn(note, "noteId")
+    ? ["noteId", "title", "author", "mediaType", "metrics", "ordinal"]
+    : ["title", "author", "mediaType", "metrics", "ordinal"];
+  assertExactPublicKeys(note, noteKeys, label);
+  if (!optionalPublicText(note.title, 300) || !note.title || !optionalPublicText(note.author, 120) || !note.author
+      || !["image", "video"].includes(note.mediaType)
+      || !Number.isSafeInteger(note.ordinal) || note.ordinal < 1 || note.ordinal > 20
+      || (Object.hasOwn(note, "noteId") && !/^[0-9a-f]{16,32}$/iu.test(note.noteId))) {
+    throw new Error(`${label} is invalid`);
+  }
+  validateMetricSet(note.metrics);
+}
+
 function validateXhsObservation(value, opened = false) {
   const keys = [
     "machine", ...(opened ? ["selected"] : []), "page", "notes", "detail", "profile", "visibleLabels", "stability",
@@ -355,7 +748,9 @@ function validateXhsObservation(value, opened = false) {
   ];
   assertExactPublicKeys(value, keys, "xhs.observe result");
   if (!/^\d{2}$/u.test(value.machine) || value.transport !== "xiaowei-api"
-      || value.localAdbRequired !== false || value.stability !== "two_fresh_ui_intersection") {
+      || value.localAdbRequired !== false
+      || (opened ? value.stability !== "single_fresh_matching_detail_ui"
+        : !["two_fresh_ui_intersection", "single_fresh_video_detail_ui"].includes(value.stability))) {
     throw new Error("xhs.observe contains an invalid public value");
   }
   if (opened) {
@@ -364,29 +759,22 @@ function validateXhsObservation(value, opened = false) {
         || !optionalPublicText(value.selected.title, 300) || !value.selected.title
         || !optionalPublicText(value.selected.author, 120) || !value.selected.author
         || !["image", "video"].includes(value.selected.mediaType)
-        || value.verification !== "single_pointer_event_then_two_fresh_detail_ui_reads") {
+        || value.verification !== "single_pointer_event_then_fresh_matching_detail_ui") {
       throw new Error("xhs.open-visible contains an invalid public value");
     }
   }
   assertExactPublicKeys(value.page, ["state", "score", "margin"], "xhs.observe page");
-  if (!["HOME_FEED", "IMAGE_NOTE", "VIDEO_NOTE", "COMMENT_PANEL"].includes(value.page.state)
+  if (!["HOME_FEED", "SEARCH_ENTRY", "SEARCH_SUGGESTIONS", "SEARCH_RESULTS", "TRENDING", "RECOMMENDED",
+    "IMAGE_NOTE", "VIDEO_NOTE", "COMMENT_PANEL", "PROFILE"].includes(value.page.state)
       || !Number.isFinite(value.page.score) || !Number.isFinite(value.page.margin)
       || value.page.score < 0 || value.page.margin < 0) {
     throw new Error("xhs.observe page is invalid");
   }
-  if (!Array.isArray(value.notes) || value.notes.length > 20) throw new Error("xhs.observe notes are invalid");
-  for (const note of value.notes) {
-    const noteKeys = Object.hasOwn(note, "noteId")
-      ? ["noteId", "title", "author", "mediaType", "metrics"]
-      : ["title", "author", "mediaType", "metrics"];
-    assertExactPublicKeys(note, noteKeys, "xhs.observe note");
-    if (!optionalPublicText(note.title, 300) || !note.title || !optionalPublicText(note.author, 120) || !note.author
-        || !["image", "video"].includes(note.mediaType)
-        || (Object.hasOwn(note, "noteId") && !/^[0-9a-f]{16,32}$/iu.test(note.noteId))) {
-      throw new Error("xhs.observe note is invalid");
-    }
-    validateMetricSet(note.metrics);
+  if (value.stability === "single_fresh_video_detail_ui" && value.page.state !== "VIDEO_NOTE") {
+    throw new Error("xhs.observe single-read stability is limited to video detail pages");
   }
+  if (!Array.isArray(value.notes) || value.notes.length > 20) throw new Error("xhs.observe notes are invalid");
+  for (const note of value.notes) validateXhsNote(note);
   if (!Array.isArray(value.visibleLabels) || value.visibleLabels.length > 40
       || value.visibleLabels.some((label) => !optionalPublicText(label, 300) || !label)) {
     throw new Error("xhs.observe labels are invalid");
@@ -494,29 +882,266 @@ function audit(event) {
   appendFileSync(AUDIT_PATH, `${JSON.stringify(event)}\n`, { encoding: "utf8", mode: 0o600 });
 }
 
-let queue = Promise.resolve();
-let queued = 0;
+function safeSecretEqual(left, right) {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  const leftBytes = Buffer.from(left, "utf8");
+  const rightBytes = Buffer.from(right, "utf8");
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
 
-function enqueue(work) {
-  if (queued >= 16) throw new Error("Remote command queue is full");
-  queued += 1;
-  const next = queue.then(work, work);
-  queue = next.finally(() => { queued -= 1; });
-  return next;
+function loopbackRequest(request) {
+  return ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress);
+}
+
+function lifecycleIdentity(value, name, pattern) {
+  if (typeof value !== "string" || !pattern.test(value)) throw new Error(`${name} is invalid`);
+  return value;
+}
+
+export function gatewayScheduleScope(input) {
+  return typeof input?.machine === "string" && /^\d{2}$/u.test(input.machine)
+    ? `machine:${input.machine}`
+    : "global";
+}
+
+export function createGatewayScheduler(options = {}) {
+  const maximumDepth = options.maximumDepth ?? 16;
+  if (!Number.isSafeInteger(maximumDepth) || maximumDepth < 1 || maximumDepth > 256) {
+    throw new Error("Gateway scheduler depth is invalid");
+  }
+  const pending = [];
+  const activeMachines = new Map();
+  const idleWaiters = new Set();
+  let globalActive = false;
+  let depth = 0;
+
+  function settleIdle() {
+    if (depth !== 0) return;
+    for (const resolve of idleWaiters) resolve();
+    idleWaiters.clear();
+  }
+
+  function start(job) {
+    job.startedAt = new Date().toISOString();
+    if (job.scope === "global") globalActive = job;
+    else activeMachines.set(job.scope, job);
+    Promise.resolve()
+      .then(job.work)
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        if (job.scope === "global") globalActive = false;
+        else activeMachines.delete(job.scope);
+        depth -= 1;
+        settleIdle();
+        pump();
+      });
+  }
+
+  function pump() {
+    if (globalActive || pending.length === 0) return;
+    if (activeMachines.size === 0 && pending[0].scope === "global") {
+      start(pending.shift());
+      return;
+    }
+    for (let index = 0; index < pending.length;) {
+      const job = pending[index];
+      if (job.scope === "global") break;
+      if (activeMachines.has(job.scope)) {
+        index += 1;
+        continue;
+      }
+      pending.splice(index, 1);
+      start(job);
+    }
+  }
+
+  return Object.freeze({
+    enqueue(scope, work, metadata = {}) {
+      if (scope !== "global" && !/^machine:\d{2}$/u.test(scope)) throw new Error("Gateway scheduler scope is invalid");
+      if (typeof work !== "function") throw new Error("Gateway scheduler work is invalid");
+      if (!plainObject(metadata)) throw new Error("Gateway scheduler metadata is invalid");
+      if (depth >= maximumDepth) throw new Error("Remote command queue is full");
+      depth += 1;
+      const result = new Promise((resolve, reject) => pending.push({
+        scope, work, resolve, reject,
+        metadata: sanitizeValue(metadata),
+        queuedAt: new Date().toISOString(),
+        startedAt: null,
+      }));
+      pump();
+      return result;
+    },
+    whenIdle() {
+      if (depth === 0) return Promise.resolve();
+      return new Promise((resolve) => idleWaiters.add(resolve));
+    },
+    get depth() { return depth; },
+    snapshot() {
+      const describe = (job) => ({
+        scope: job.scope,
+        ...job.metadata,
+        queuedAt: job.queuedAt,
+        startedAt: job.startedAt,
+      });
+      return {
+        active: [
+          ...(globalActive ? [describe(globalActive)] : []),
+          ...[...activeMachines.values()].map(describe),
+        ],
+        waiting: pending.map(describe),
+      };
+    },
+    get activeRequests() { return activeMachines.size + (globalActive ? 1 : 0); },
+    get waitingDepth() { return pending.length; },
+  });
 }
 
 export function createRemoteGateway(options = {}) {
   const execute = options.execute ?? runXhs;
   const auditImpl = options.audit ?? audit;
   const requireIdentity = options.requireIdentity ?? process.env.XHS_REMOTE_REQUIRE_IDENTITY === "true";
-  return http.createServer(async (request, response) => {
+  const buildId = lifecycleIdentity(options.buildId ?? GATEWAY_BUILD_ID, "buildId", /^[a-f0-9]{64}$/u);
+  const bootId = lifecycleIdentity(options.bootId ?? GATEWAY_BOOT_ID, "bootId", /^[a-f0-9-]{36}$/u);
+  const controlToken = options.controlToken ?? process.env.XHS_REMOTE_GATEWAY_CONTROL_TOKEN ?? null;
+  if (controlToken !== null) lifecycleIdentity(controlToken, "controlToken", /^[A-Za-z0-9+/_=-]{32,256}$/u);
+  const scheduler = options.scheduler ?? createGatewayScheduler();
+  const deviceStates = new Map();
+  let accepting = true;
+  let shutdownScheduled = false;
+
+  function deviceState(machine) {
+    if (!deviceStates.has(machine)) {
+      deviceStates.set(machine, {
+        machine,
+        name: null,
+        online: null,
+        lastKnownPage: null,
+        lastCompleted: null,
+        latestArtifacts: [],
+      });
+    }
+    return deviceStates.get(machine);
+  }
+
+  function publicRuntimeStatus() {
+    const schedule = scheduler.snapshot();
+    const activeByMachine = new Map();
+    const waitingByMachine = new Map();
+    for (const job of schedule.active) {
+      if (job.machine) {
+        deviceState(job.machine);
+        activeByMachine.set(job.machine, job);
+      }
+    }
+    for (const job of schedule.waiting) {
+      if (!job.machine) continue;
+      deviceState(job.machine);
+      if (!waitingByMachine.has(job.machine)) waitingByMachine.set(job.machine, []);
+      waitingByMachine.get(job.machine).push(job);
+    }
+    return {
+      ok: true,
+      service: "xhs-remote-gateway",
+      observedAt: new Date().toISOString(),
+      accepting,
+      queueDepth: scheduler.depth,
+      activeRequests: scheduler.activeRequests,
+      active: schedule.active,
+      waiting: schedule.waiting,
+      devices: [...deviceStates.values()]
+        .sort((left, right) => left.machine.localeCompare(right.machine))
+        .map((state) => ({
+          ...state,
+          active: activeByMachine.get(state.machine) ?? null,
+          waiting: waitingByMachine.get(state.machine) ?? [],
+        })),
+    };
+  }
+
+  function updateDeviceState(body, requestId, startedAt, completedAt, result, parsed) {
+    const artifacts = extractPublicArtifactReferences(result?.stdout);
+    if (body.command === "device.list" && Array.isArray(parsed)) {
+      for (const record of parsed) {
+        const state = deviceState(record.machine);
+        state.name = record.name;
+        state.online = record.online;
+      }
+      return artifacts;
+    }
+    if (typeof body.machine !== "string") return artifacts;
+    const state = deviceState(body.machine);
+    state.lastCompleted = {
+      requestId,
+      command: body.command,
+      startedAt,
+      completedAt,
+      outcome: result.code === 0 ? "success" : "failed",
+    };
+    if (artifacts.length) state.latestArtifacts = artifacts;
+    if (!PAGE_PRESERVING_COMMANDS.has(body.command) && state.lastKnownPage) {
+      state.lastKnownPage = { ...state.lastKnownPage, stale: true };
+    }
+    if (result.code === 0 && parsed?.page?.state) {
+      state.lastKnownPage = {
+        state: parsed.page.state,
+        observedAt: completedAt,
+        requestId,
+        source: body.command,
+        stale: false,
+      };
+    }
+    return artifacts;
+  }
+
+  let server;
+  function drainAndClose() {
+    if (shutdownScheduled) return;
+    shutdownScheduled = true;
+    accepting = false;
+    const close = () => server.close(() => options.onShutdown?.());
+    scheduler.whenIdle().then(close, close);
+  }
+
+  server = http.createServer(async (request, response) => {
     const requestId = randomUUID();
+    response.setHeader("x-request-id", requestId);
     if (request.method === "GET" && request.url === "/health") {
-      jsonResponse(response, 200, { ok: true, service: "xhs-remote-gateway", queueDepth: queued });
+      jsonResponse(response, 200, {
+        ok: true,
+        service: "xhs-remote-gateway",
+        queueDepth: scheduler.depth,
+        activeRequests: scheduler.activeRequests,
+        accepting,
+        buildId,
+        bootId,
+      });
+      return;
+    }
+    if (request.method === "GET" && request.url === "/v1/status") {
+      jsonResponse(response, 200, publicRuntimeStatus());
+      return;
+    }
+    if (request.method === "POST" && request.url === "/admin/drain-and-shutdown") {
+      const authorization = request.headers.authorization;
+      const authorized = controlToken !== null && loopbackRequest(request)
+        && typeof authorization === "string"
+        && safeSecretEqual(authorization, `Bearer ${controlToken}`);
+      if (!authorized) {
+        jsonResponse(response, 404, { ok: false, requestId, error: "not_found" });
+        return;
+      }
+      accepting = false;
+      response.setHeader("connection", "close");
+      jsonResponse(response, 202, { ok: true, draining: true, bootId });
+      setImmediate(drainAndClose);
       return;
     }
     if (request.method !== "POST" || request.url !== "/v1/command") {
       jsonResponse(response, 404, { ok: false, requestId, error: "not_found" });
+      return;
+    }
+    if (!accepting) {
+      jsonResponse(response, 503, { ok: false, requestId, error: "gateway_draining" });
       return;
     }
     let identity = sourceIdentity(request);
@@ -534,24 +1159,59 @@ export function createRemoteGateway(options = {}) {
       jsonResponse(response, 400, { ok: false, requestId, error: error.message });
       return;
     }
+    if (!accepting) {
+      jsonResponse(response, 503, { ok: false, requestId, error: "gateway_draining" });
+      return;
+    }
     const startedAt = new Date().toISOString();
     try {
-      const result = await enqueue(() => execute(argv, { timeoutMs: commandTimeoutMs(body) }));
-      auditImpl({ requestId, startedAt, completedAt: new Date().toISOString(), source: identity, command: body.command, exitCode: result.code });
+      const result = await scheduler.enqueue(
+        gatewayScheduleScope(body),
+        () => execute(argv, { timeoutMs: commandTimeoutMs(body) }),
+        { requestId, command: body.command, machine: body.machine ?? null },
+      );
+      const completedAt = new Date().toISOString();
+      let parsed = null;
       if (result.code === 0 && STRUCTURED_COMMANDS.has(body.command)) {
         try {
-          jsonResponse(response, 200, parseStructuredReadOutput(body.command, result.stdout));
+          parsed = parseStructuredReadOutput(body.command, result.stdout);
+          const artifactRefs = updateDeviceState(body, requestId, startedAt, completedAt, result, parsed);
+          auditImpl({
+            requestId, startedAt, completedAt, source: identity, command: body.command,
+            machine: body.machine ?? null, exitCode: result.code, artifactRefs,
+          });
+          jsonResponse(response, 200, parsed);
         } catch {
+          auditImpl({
+            requestId, startedAt, completedAt, source: identity, command: body.command,
+            machine: body.machine ?? null, exitCode: result.code, parseError: "invalid_structured_read_output",
+          });
           jsonResponse(response, 502, { ok: false, requestId, error: "invalid_structured_read_output" });
         }
         return;
       }
+      const artifactRefs = updateDeviceState(body, requestId, startedAt, completedAt, result, parsed);
+      auditImpl({
+        requestId, startedAt, completedAt, source: identity, command: body.command,
+        machine: body.machine ?? null, exitCode: result.code, artifactRefs,
+      });
       jsonResponse(response, result.code === 0 ? 200 : 502, { ok: result.code === 0, requestId, ...result });
     } catch (error) {
-      auditImpl({ requestId, startedAt, completedAt: new Date().toISOString(), source: identity, command: body.command, error: error.message });
+      const completedAt = new Date().toISOString();
+      if (typeof body.machine === "string") {
+        const state = deviceState(body.machine);
+        state.lastCompleted = {
+          requestId, command: body.command, startedAt, completedAt, outcome: "failed",
+        };
+      }
+      auditImpl({
+        requestId, startedAt, completedAt, source: identity, command: body.command,
+        machine: body.machine ?? null, error: error.message,
+      });
       jsonResponse(response, 503, { ok: false, requestId, error: error.message });
     }
   });
+  return server;
 }
 
 export function startRemoteGateway(options = {}) {
@@ -559,11 +1219,20 @@ export function startRemoteGateway(options = {}) {
   const port = Number(options.port ?? process.env.XHS_REMOTE_GATEWAY_PORT ?? DEFAULT_PORT);
   if (host !== "127.0.0.1") throw new Error("Remote gateway must listen on 127.0.0.1");
   if (!Number.isInteger(port) || port < 1024 || port > 65_535) throw new Error("Remote gateway port is invalid");
-  const server = createRemoteGateway(options);
+  const server = createRemoteGateway({
+    ...options,
+    onShutdown: options.onShutdown ?? (() => process.exit(0)),
+  });
   server.listen(port, host, () => process.stdout.write(`xhs remote gateway listening on http://${host}:${port}\n`));
   return server;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  startRemoteGateway();
+  if (process.argv.length === 3 && process.argv[2] === "--print-build-id") {
+    process.stdout.write(`${GATEWAY_BUILD_ID}\n`);
+  } else if (process.argv.length === 2) {
+    startRemoteGateway();
+  } else {
+    throw new Error("Unknown gateway startup argument");
+  }
 }

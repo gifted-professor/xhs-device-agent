@@ -17,6 +17,8 @@ GET http://127.0.0.1:17891/health
 GET https://desktop-3i1evhe.tail400674.ts.net/health
 ```
 
+健康结果包含 `queueDepth`、`activeRequests`、`accepting`、`buildId` 和每次进程启动都会变化的 `bootId`。`remote status` 会据此报告 `codeCurrent`，避免把仍在响应的旧进程误判为新代码。
+
 控制请求统一使用：
 
 ```text
@@ -55,6 +57,7 @@ Agent 不得直接调用裸 ADB、效卫私有 WebSocket 或未经网关封装�
 ```powershell
 .\xhs.cmd remote start
 .\xhs.cmd remote status
+.\xhs.cmd remote restart
 .\xhs.cmd remote install
 .\xhs.cmd remote stop
 .\xhs.cmd remote uninstall
@@ -62,6 +65,7 @@ Agent 不得直接调用裸 ADB、效卫私有 WebSocket 或未经网关封装�
 
 - `start`：启动本机网关；Tailscale Serve 路由由 Tailscale 服务持久保存。
 - `status`：检查进程、健康状态、监听地址和登录启动任务。
+- `restart`：使用本地密钥停止接收新请求，排空现有队列并重载；只有新 PID 持有 17891、`bootId` 已变化且 `buildId` 与当前源码一致时才成功。
 - `install`：安装 `XhsDeviceAgentRemoteStack` 登录启动任务，以最高权限启动私有通道和网关。
 - `stop`：只停止本机网关；现有 Serve 配置仍保留，但后端不可用。
 - `uninstall`：只移除登录启动任务，不自动停止当前进程或重置 Serve。
@@ -73,6 +77,8 @@ HTTPS 443 -> http://127.0.0.1:17891
 ```
 
 网关只允许监听 `127.0.0.1:17891`。不要把效卫的 `9223`、官方 WebSocket `22222` 或本机网关端口直接暴露到局域网/公网，也不要启用 Funnel。
+
+排空接口不是公共控制 API：它只接受 loopback 请求，并要求管理器保存在忽略目录中的随机密钥。普通 Tailnet 请求即使经 Serve 转发到 loopback，也没有该密钥。
 
 ## 4. 本机 API 调用示例
 
@@ -155,8 +161,12 @@ console.log(await response.json());
 | `device.settings` | `machine`, `reason`, `rollback` | 打开系统设置，需要确认信息 |
 | `app.list` | `machine` | 读取批准应用清单 |
 | `app.open` | `machine`, `package` | 打开批准应用 |
+| `device.start-apk` | `machine`, `package` | `app.open` 兼容别名；经 `apkList/startApk` 启动并验证前台包 |
+| `device.recent` | `machine` | 单次打开最近任务页，并验证新鲜 UI 变化 |
 | `app.stop` | `machine`, `package`, `reason`, `rollback` | 停止批准应用 |
-| `device.tap-text` | 见下文 | 语义点击一次，并验证一个后态 |
+| `device.tap-text` | 见下文 | 在指定来源包内唯一解析语义文本，点击一次并验证一个后态 |
+| `device.tap-coords` | `machine`, `package`, `x`, `y` 及一个后态 | 在两份新鲜来源包证据后按百分比坐标点击一次，并验证后态 |
+| `device.scroll` | `machine`, `direction`, 可选 `steps/package` | 支持 `down/up` 内容滚动及 `left/right` 页面翻页，并验证新鲜变化 |
 | `device.tap-ocr` | `machine`, `package`, `text`, `expectText`, `reason`, `rollback` | UI 层级为空时，基于新鲜截图唯一识别、复核并点击一次，再用新截图验证后态 |
 | `device.guide` | `failureCode` | 返回标准故障对应的有序策略，不包含设备信息 |
 | `device.node.resolve` | `machine`, `package`, `selector` | 用两份新鲜证据只读解析一个唯一语义节点，不返回坐标 |
@@ -164,6 +174,12 @@ console.log(await response.json());
 | `wechat.wallet-balance` | `machine` | 在微信零钱页双截图稳定读取余额，只返回人民币金额 |
 | `xhs.observe` | `machine` | 连续两次读取当前小红书公开页面，返回稳定交集 |
 | `xhs.open-visible` | `machine`, `ordinal` | 按一开始的可见卡片序号打开一条公开笔记，只点击一次并双 UI 验证详情 |
+| `xhs.comment.open` | `machine` | 只打开评论编辑器，返回评论数、帖子目标和空编辑器状态哈希 |
+| `xhs.comment.input` | `machine`, `text`, `expectedEditorStateHash` | 只输入文字或快捷表情，并验证草稿精确回显 |
+| `xhs.comment.reply-input` | `machine`, `ordinal`, `text` | 在评论面板中绑定当前可见回复序号，恢复输入法重建编辑器并验证精确草稿 |
+| `xhs.comment.send` | `machine`, `expectedDraft`, `expectedBeforeCount`, `expectedTarget`, `expectedEmptyEditorStateHash` | 只发送已绑定草稿，以同帖评论数增加和草稿清空双重验证 |
+| `xhs.comment-emoji` | `machine`, `emoji` | 在小红书包内选择一次表情并发送一次，以评论数增加和草稿清空双重验证 |
+| `xhs.dm.send` | `machine`, `expectedDraft` | 只发送私信页已绑定草稿，以编辑器清空和独立消息回显双重验证 |
 
 所有 `machine` 使用两位机器编号，例如 `01`、`04`。
 
@@ -173,6 +189,7 @@ console.log(await response.json());
 {
   "command": "device.tap-text",
   "machine": "01",
+  "package": "<source-package>",
   "text": "理财",
   "expectResourceId": "com.alipay.android.widget.fortunehome:id/fh_tv_assets_amount_num",
   "reason": "进入支付宝理财页读取总资产",
@@ -181,6 +198,16 @@ console.log(await response.json());
 ```
 
 `expectText`、`expectPackage`、`expectResourceId` 必须且只能提供一个。
+
+当文字只是一整段节点文本的末尾片段时，可额外提供 `"match":"suffix"` 和明确的 `"ordinal":1`。`ordinal` 按当前页面从上到下、从左到右计数；suffix 模式不接受缺省序号。默认 `match` 为 `exact`。
+
+坐标点击是独立的受验证命令。`x`、`y` 使用效卫百分比坐标，范围为 0–100；`package` 绑定点击前来源包，且仍需恰好一个后态：
+
+```json
+{"command":"device.tap-coords","machine":"01","package":"com.example.launcher","x":50,"y":25,"expectPackage":"com.xingin.xhs"}
+```
+
+服务端动作前读取两份新鲜 UI 复核来源包，只发送一次，再验证新鲜后态；响应不返回坐标。坐标必须由本次新鲜屏幕得出，不能跨页面、跨机器或跨旋转复用。后态失败时不得直接重发。
 
 ## 7. 开发期完整效卫能力
 
@@ -272,7 +299,7 @@ UI 与截图示例：
 
 `private.invoke` 的 `args` 仍按普通 JSON 对象提交。网关内部已改为 Base64 加临时 JSON 文件传递，避免 Windows 命令行破坏引号。效卫 9.10.113 的 `launch_app` 参数为 `serial` 和 `package`；普通任务仍优先使用不暴露原始序列号的 `app.open`。
 
-`app.open` 和 `device.home` 也不再依赖本机 ADB 在线列表。项目内部按两位机器号解析已验收的设备身份，并分别调用效卫正式 `startApk`、`pushEvent`；随后使用同一条效卫 `adb_shell + uiautomator` 通道验证前台包。`app.open` 会先通过 `apkList` 确认批准包已安装。普通 Agent 只提交 `machine` 和批准包名，不读取、提交或接收原始 `serial`。
+`app.list`、`app.open` 和 `device.home` 不依赖本机 ADB 在线列表。项目内部按两位机器号解析已验收的设备身份，分别调用效卫正式 `apkList`、`startApk`、`pushEvent`，再使用同一条效卫 `adb_shell + uiautomator` 通道验证后态。`device.start-apk` 是 `app.open` 的兼容别名，`device.open-xhs` 也复用该适配器。普通 Agent 只提交 `machine` 和包名，不读取、提交或接收原始 `serial`。
 
 2026-07-15 在 02 号机、本机 ADB 在线数为 0 的条件下补充验收：`device.home` 成功验证默认桌面前台；`app.open` 成功确认支付宝已安装、调用 `startApk` 并验证支付宝前台；本机 HTTP `app.open` 返回 200、`ok=true`。
 
@@ -337,6 +364,40 @@ UI 与截图示例：
 ```
 
 序号按本次新鲜首页 UI 中的公开卡片顺序从 1 开始。服务端在点击前再次解析同一序号并核对标题、作者和媒体类型，只发送一次 `pointerEvent`，随后要求详情页分类成立并连续两次读取稳定。调用方不能提交坐标或设备标识。04 号机真实验收打开“我将退出奶茶界”，稳定读取到作者“揽渡.”、6 张图、正文话题、`07-10广西`、点赞 804、收藏 220、评论 163。
+
+评论流程分三次调用。先调用 `xhs.comment.open`，再把响应中的 `editorStateHash` 传给 `xhs.comment.input`。最后把输入的精确草稿，以及打开响应中的 `commentCount`、`target`、`editorStateHash` 传给 `xhs.comment.send`：
+
+```json
+{"command":"xhs.comment.open","machine":"01"}
+```
+
+```json
+{"command":"xhs.comment.input","machine":"01","text":"[微笑R]","expectedEditorStateHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+```
+
+```json
+{"command":"xhs.comment.send","machine":"01","expectedDraft":"[微笑R]","expectedBeforeCount":3,"expectedTarget":{"title":"示例标题","author":"示例作者","mediaType":"image"},"expectedEmptyEditorStateHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+```
+
+示例哈希、评论数和目标必须替换为同一次 `open` 的原始类型和值，不能手工重建或跨帖子复用。发送只执行一次；若响应失败，应先只读观察，不得直接重发。成功条件是同一帖子 `afterCount > beforeCount` 且草稿回到已绑定的空编辑器状态。
+
+三步是严格事务：`xhs.open-visible` 或 `xhs.comment.open` 非 HTTP 200 时立即停止，不能继续构造后续请求。`xhs.comment.input` 的 400 通常表示缺少或复用了错误的 `expectedEditorStateHash`；`xhs.comment.send` 的 400 通常表示草稿、计数、目标或空编辑器哈希不完整。文字输入和快捷表情共用同一发送 API，但文字分支可能因输入法重建多花一些时间。
+
+回复可见评论时，先保存详情页同一次观察中的评论数和帖子目标，打开评论面板；滚动后使用当前新鲜页面的回复序号：
+
+```json
+{"command":"xhs.comment.reply-input","machine":"02","ordinal":1,"text":"感谢分享"}
+```
+
+成功响应会返回 `commentCount` 和回复编辑器的 `editorStateHash`。随后把精确草稿、此前保存的帖子目标、响应中的评论数和哈希传给 `xhs.comment.send`。输入法切换或恢复导致编辑器关闭时，回复输入命令只重新打开原序号一次；滚动后不能复用旧序号。
+
+私信发送先调用 `device.input`，确认返回 `status: verified` 后再提交同一份精确草稿：
+
+```json
+{"command":"xhs.dm.send","machine":"01","expectedDraft":"测试"}
+```
+
+`xhs.dm.send` 会把草稿绑定到同行右侧的发送控件，并以编辑框清空和聊天区同文消息回显验证成功。私信页存在多个“发送”节点时，通用 `device.tap-text` 会按设计失败关闭；不要改用模糊文本点击或在失败后直接重发。
 
 ## 8. 截图驱动的精确坐标控制
 
@@ -492,8 +553,10 @@ API 返回成功不等于手机业务动作已经完成。页面导航、应用�
 - 单个请求超时为 120 秒。
 - 请求体最大 64 KiB；开发调用的 `data`/`args` 最大 32 KiB。
 - 输出最多保留 1 MiB，并对设备序列号、令牌、密码等字段脱敏。
-- 当前网关全局串行执行请求，队列最多等待 16 个请求。
-- 同一设备禁止并发状态变化动作；未来多设备任务应由高层任务服务内部实现“跨设备并行、单设备串行”。
+- 网关最多接纳 16 个运行中或等待中的请求。同一 `machine` 严格串行，不同机器可并行执行。
+- 不带唯一 `machine` 的主机级、私有或全设备命令是公平的全局独占屏障；它会等待此前设备命令完成，后来的设备命令不能越过它。
+- `queueDepth` 表示运行与等待总数，`activeRequests` 表示实际并行执行数，两者都不暴露机器身份。
+- 高层多设备任务仍需保证每台机器内部按业务步骤串行，并独立验证每台机器的后态。
 - 审计日志位于 `data/remote-gateway-audit.log`，记录请求编号、来源、命令、时间和退出码，不提交到仓库。
 
 ## 11. 当前开发权限

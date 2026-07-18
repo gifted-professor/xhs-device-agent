@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -53,6 +53,7 @@ const HELP = `XHS Device Agent 统一入口
   .\\xhs.cmd remote start
   .\\xhs.cmd remote status
   .\\xhs.cmd remote stop
+  .\\xhs.cmd remote restart
   .\\xhs.cmd remote install
   .\\xhs.cmd remote uninstall
   .\\xhs.cmd device list
@@ -60,10 +61,23 @@ const HELP = `XHS Device Agent 统一入口
   .\\xhs.cmd device screen --machine 02
   .\\xhs.cmd device ui --machine 02
   .\\xhs.cmd device tap-text --machine 02 --text <text> --expect-package <package> --confirm --reason <reason> --rollback <rollback>
+  .\\xhs.cmd device tap-coords --machine 02 --package <source-package> --x <0-100> --y <0-100> --expect-package <package>
   .\\xhs.cmd device tap-ocr --machine 04 --package <package> --text <text> --expect-text <text> --confirm --reason <reason> --rollback <rollback>
+  .\\xhs.cmd device input --machine 02 --package <package> --text <text>
+  .\\xhs.cmd device scroll --machine 02 --direction down|up|left|right [--steps 1] [--package <package>]
+  .\\xhs.cmd device recent --machine 02
   .\\xhs.cmd wechat wallet-balance --machine 04
   .\\xhs.cmd xhs observe --machine 04
+  .\\xhs.cmd xhs find-video --machine 04 [--max-scrolls 3] [--max-duration-ms 28000]
+  .\\xhs.cmd xhs open-visible --machine 04 --ordinal 1
+  .\\xhs.cmd xhs comment-open --machine 01
+  .\\xhs.cmd xhs comment-input --machine 01 --text <text-or-emoji> --expected-editor-state-hash <hash>
+  .\\xhs.cmd xhs comment-reply-input --machine 01 --ordinal 1 --text <text>
+  .\\xhs.cmd xhs comment-send --machine 01 --expected-draft <text-or-emoji> --expected-before-count <count> --expected-target-base64 <base64-json> --expected-empty-editor-state-hash <hash>
+  .\\xhs.cmd xhs dm-send --machine 01 --expected-draft <text>
+  .\\xhs.cmd xhs comment-emoji --machine 01 --emoji <emoji-label>
   .\\xhs.cmd device open-xhs --machine 02
+  .\\xhs.cmd device start-apk --machine 02 --package <package>
   .\\xhs.cmd app list --machine 02
 
 开发验收通道（要求 config/local.psd1 中 Xiaowei.Api.DevelopmentMode = $true）：
@@ -212,8 +226,14 @@ function matrixDispatch(action, options, { targetRequired = true, packageRequire
 }
 
 function xiaoweiReadDispatch(action, options, {
-  targetRequired = true, packageRequired = false, tapText = false, tapOcr = false, nodeSelector = false,
-  nodeActivate = false, ordinal = false, confirmation = false,
+  targetRequired = true, packageRequired = false, tapText = false, tapCoords = false, tapOcr = false, nodeSelector = false,
+  nodeActivate = false, textInput = false, ordinal = false, scroll = false, emoji = false, expectedDraft = false,
+  expectedBeforeCount = false,
+  expectedTarget = false,
+  expectedEditorStateHash = false,
+  expectedEmptyEditorStateHash = false,
+  findVideo = false,
+  confirmation = false,
 } = {}) {
   const args = ["-Action", action];
   appendOption(args, options, "config", "-ConfigPath");
@@ -221,8 +241,20 @@ function xiaoweiReadDispatch(action, options, {
   if (packageRequired) args.push("-PackageName", String(requireOption(options, "package")));
   if (tapText) {
     args.push("-Text", String(requireOption(options, "text")));
+    if (options.package !== undefined) args.push("-PackageName", String(options.package));
+    appendOption(args, options, "match", "-TextMatch");
+    appendOption(args, options, "ordinal", "-Ordinal");
     if (!options["expect-text"] && !options["expect-package"] && !options["expect-resource-id"]) {
       throw new Error("device tap-text requires --expect-text, --expect-package, or --expect-resource-id");
+    }
+    appendOption(args, options, "expect-text", "-ExpectText");
+    appendOption(args, options, "expect-package", "-ExpectPackage");
+    appendOption(args, options, "expect-resource-id", "-ExpectResourceId");
+  }
+  if (tapCoords) {
+    args.push("-X", String(requireOption(options, "x")), "-Y", String(requireOption(options, "y")));
+    if (!options["expect-text"] && !options["expect-package"] && !options["expect-resource-id"]) {
+      throw new Error("device tap-coords requires --expect-text, --expect-package, or --expect-resource-id");
     }
     appendOption(args, options, "expect-text", "-ExpectText");
     appendOption(args, options, "expect-package", "-ExpectPackage");
@@ -232,9 +264,25 @@ function xiaoweiReadDispatch(action, options, {
     args.push("-Text", String(requireOption(options, "text")));
     args.push("-ExpectText", String(requireOption(options, "expect-text")));
   }
+  if (textInput) args.push("-Text", String(requireOption(options, "text")));
+  if (expectedDraft) args.push("-ExpectedDraft", String(requireOption(options, "expected-draft")));
+  if (expectedBeforeCount) args.push("-ExpectedBeforeCount", String(requireOption(options, "expected-before-count")));
+  if (expectedTarget) args.push("-ExpectedTargetBase64", String(requireOption(options, "expected-target-base64")));
+  if (expectedEditorStateHash) args.push("-ExpectedEditorStateHash", String(requireOption(options, "expected-editor-state-hash")));
+  if (expectedEmptyEditorStateHash) args.push("-ExpectedEmptyEditorStateHash", String(requireOption(options, "expected-empty-editor-state-hash")));
   if (nodeSelector) args.push("-SelectorBase64", String(requireOption(options, "selector-base64")));
   if (nodeActivate) args.push("-ExpectText", String(requireOption(options, "expect-text")));
   if (ordinal) args.push("-Ordinal", String(requireOption(options, "ordinal")));
+  if (findVideo) {
+    args.push("-MaxScrolls", String(options["max-scrolls"] ?? 3));
+    args.push("-MaxDurationMs", String(options["max-duration-ms"] ?? 28_000));
+  }
+  if (emoji) args.push("-Emoji", String(requireOption(options, "emoji")));
+  if (scroll) {
+    args.push("-Direction", String(requireOption(options, "direction")));
+    if (options.steps !== undefined) args.push("-Steps", String(options.steps));
+    if (options.package !== undefined) args.push("-PackageName", String(options.package));
+  }
   if (confirmation) {
     if (!options.confirm) throw new Error("This device-local change requires --confirm, --reason, and --rollback");
     appendConfirmation(args, options);
@@ -342,7 +390,7 @@ export function buildDispatch(parsed) {
     assertAllowedOptions(options, [], "api private-catalog");
     return nodeScript("xiaowei-private-api.mjs", ["catalog"]);
   }
-  if (area === "remote" && ["start", "status", "stop", "install", "uninstall"].includes(command)) {
+  if (area === "remote" && ["start", "status", "stop", "restart", "install", "uninstall"].includes(command)) {
     assertAllowedOptions(options, [], `remote ${command}`);
     const action = command[0].toUpperCase() + command.slice(1);
     return psScript("Manage-XhsRemoteGateway.ps1", ["-Action", action]);
@@ -390,15 +438,20 @@ export function buildDispatch(parsed) {
       ["ui", ["Ui", { xiaoweiRead: true }]],
       ["screen", ["Screen", { xiaoweiRead: true }]],
       ["tap-text", ["TapText", { confirmation: true, tapText: true, xiaoweiRead: true }]],
+      ["tap-coords", ["TapCoords", { tapCoords: true, packageRequired: true, xiaoweiRead: true }]],
       ["tap-ocr", ["TapOcr", { confirmation: true, tapOcr: true, packageRequired: true, xiaoweiRead: true }]],
+      ["input", ["Input", { textInput: true, packageRequired: true, xiaoweiRead: true }]],
       ["node-resolve", ["NodeResolve", { nodeSelector: true, packageRequired: true, xiaoweiRead: true }]],
       ["node-activate", ["NodeActivate", {
         nodeSelector: true, nodeActivate: true, confirmation: true, packageRequired: true, xiaoweiRead: true,
       }]],
-      ["open-xhs", ["OpenXhs", {}]],
+      ["scroll", ["Scroll", { scroll: true, xiaoweiRead: true }]],
+      ["open-xhs", ["OpenApp", { fixedPackage: "com.xingin.xhs", packageRequired: true, xiaoweiRead: true }]],
+      ["start-apk", ["OpenApp", { packageRequired: true, xiaoweiRead: true }]],
       ["open-profile", ["OpenProfile", {}]],
       ["home", ["Home", { xiaoweiRead: true }]],
-      ["back", ["Back", {}]],
+      ["recent", ["Recent", { xiaoweiRead: true }]],
+      ["back", ["Back", { xiaoweiRead: true }]],
       ["screen-off", ["ScreenOff", { confirmation: true }]],
       ["screen-on", ["ScreenOn", { confirmation: true }]],
       ["settings", ["OpenSettings", { confirmation: true }]],
@@ -406,19 +459,24 @@ export function buildDispatch(parsed) {
     const entry = actions.get(command);
     if (!entry) throw new Error(`Unknown device command: ${command || "(missing)"}`);
     const allowed = entry[1].noTargetOptions ? ["config"] : ["config", "machine", "machine-name", "device", "group"];
-    if (entry[1].tapText) allowed.push("text", "expect-text", "expect-package", "expect-resource-id");
+    if (entry[1].packageRequired && !entry[1].fixedPackage) allowed.push("package");
+    if (entry[1].tapText) allowed.push("package", "text", "match", "ordinal", "expect-text", "expect-package", "expect-resource-id");
+    if (entry[1].tapCoords) allowed.push("package", "x", "y", "expect-text", "expect-package", "expect-resource-id");
     if (entry[1].tapOcr) allowed.push("package", "text", "expect-text");
+    if (entry[1].textInput) allowed.push("package", "text");
     if (entry[1].nodeSelector) allowed.push("package", "selector-base64");
     if (entry[1].nodeActivate) allowed.push("expect-text");
+    if (entry[1].scroll) allowed.push("direction", "steps", "package");
     if (entry[1].confirmation) allowed.push("confirm", "reason", "rollback");
     assertAllowedOptions(options, allowed, `device ${command}`);
-    if (entry[1].xiaoweiRead) return xiaoweiReadDispatch(entry[0], options, entry[1]);
+    const dispatchOptions = entry[1].fixedPackage ? { ...options, package: entry[1].fixedPackage } : options;
+    if (entry[1].xiaoweiRead) return xiaoweiReadDispatch(entry[0], dispatchOptions, entry[1]);
     return matrixDispatch(entry[0], options, entry[1]);
   }
   if (area === "app") {
     if (command === "list") {
       assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "group"], "app list");
-      return matrixDispatch("ListApps", options);
+      return xiaoweiReadDispatch("AppList", options);
     }
     if (command === "open") {
       assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "group", "package"], "app open");
@@ -442,9 +500,48 @@ export function buildDispatch(parsed) {
     assertAllowedOptions(options, ["config", "machine", "machine-name", "device"], "xhs observe");
     return xiaoweiReadDispatch("XhsObserve", options);
   }
+  if (area === "xhs" && command === "find-video") {
+    assertAllowedOptions(options, [
+      "config", "machine", "machine-name", "device", "max-scrolls", "max-duration-ms",
+    ], "xhs find-video");
+    return xiaoweiReadDispatch("XhsFindVideo", options, { findVideo: true });
+  }
   if (area === "xhs" && command === "open-visible") {
     assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "ordinal"], "xhs open-visible");
     return xiaoweiReadDispatch("XhsOpenVisible", options, { ordinal: true });
+  }
+  if (area === "xhs" && command === "comment-open") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device"], "xhs comment-open");
+    return xiaoweiReadDispatch("XhsCommentOpen", options);
+  }
+  if (area === "xhs" && command === "comment-input") {
+    assertAllowedOptions(options, [
+      "config", "machine", "machine-name", "device", "text", "expected-editor-state-hash",
+    ], "xhs comment-input");
+    return xiaoweiReadDispatch("XhsCommentInput", options, { textInput: true, expectedEditorStateHash: true });
+  }
+  if (area === "xhs" && command === "comment-reply-input") {
+    assertAllowedOptions(options, [
+      "config", "machine", "machine-name", "device", "text", "ordinal",
+    ], "xhs comment-reply-input");
+    return xiaoweiReadDispatch("XhsCommentReplyInput", options, { textInput: true, ordinal: true });
+  }
+  if (area === "xhs" && command === "comment-send") {
+    assertAllowedOptions(options, [
+      "config", "machine", "machine-name", "device", "expected-draft", "expected-before-count", "expected-target-base64",
+      "expected-empty-editor-state-hash",
+    ], "xhs comment-send");
+    return xiaoweiReadDispatch("XhsCommentSend", options, {
+      expectedDraft: true, expectedBeforeCount: true, expectedTarget: true, expectedEmptyEditorStateHash: true,
+    });
+  }
+  if (area === "xhs" && command === "comment-emoji") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "emoji"], "xhs comment-emoji");
+    return xiaoweiReadDispatch("XhsCommentEmoji", options, { emoji: true });
+  }
+  if (area === "xhs" && command === "dm-send") {
+    assertAllowedOptions(options, ["config", "machine", "machine-name", "device", "expected-draft"], "xhs dm-send");
+    return xiaoweiReadDispatch("XhsDmSend", options, { expectedDraft: true });
   }
   if (["like", "favorite", "collect", "follow", "comment", "publish", "delete"].includes(area)) {
     throw new Error(`${area} is retired as a direct command; use an implemented approved workflow through xhs.cmd`);

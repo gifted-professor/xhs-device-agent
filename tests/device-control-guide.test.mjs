@@ -30,4 +30,9 @@ test("current request authority and compatibility fallback do not become approva
   assert.equal(missing.automatic, true);
   assert.equal(missing.terminal, false);
   assert.equal(missing.next[0].strategy, "PROJECT_COMPATIBILITY_ROUTE");
+
+  const transport = await getDeviceControlGuide("TRANSPORT_FAILED");
+  assert.equal(transport.next[0].strategy, "VERSION_VERIFIED_GATEWAY_RELOAD");
+  assert.equal(transport.next[0].readCommand, "remote.status");
+  assert.equal(transport.next[0].writeCommand, "remote.restart");
 });

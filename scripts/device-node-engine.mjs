@@ -1,5 +1,11 @@
 const SAFE_ROLES = new Set(["control", "tab", "button", "item"]);
 const SAFE_SOURCES = new Set(["accessibility", "ocr", "relation", "vision"]);
+const ACCESSIBILITY_SELECTOR_FIELDS = new Set([
+  "text", "contentDesc", "className", "resourceId", "clickable", "nearText", "nearTextPosition",
+  "screenRegion", "regionOrdinal",
+]);
+const NEAR_TEXT_POSITIONS = new Set(["right", "left", "above", "below"]);
+const SCREEN_REGIONS = new Set(["top_left", "top_right", "bottom_left", "bottom_right", "bottom_navigation", "right_edge"]);
 
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -33,17 +39,23 @@ export class DeviceNodeError extends Error {
 }
 
 export function validateDeviceNodeSelector(value) {
-  exactKeys(value, new Set(["label", "role", "sources", "relation", "visionPrompt"]), "selector");
-  const label = cleanText(value.label, "selector.label");
-  if (!SAFE_ROLES.has(value.role)) throw new Error("selector.role is invalid");
-  if (!Array.isArray(value.sources) || value.sources.length < 1 || value.sources.length > SAFE_SOURCES.size
-      || value.sources.some((source) => !SAFE_SOURCES.has(source))
-      || new Set(value.sources).size !== value.sources.length) {
+  exactKeys(value, new Set([
+    "label", "role", "sources", "relation", "visionPrompt", ...ACCESSIBILITY_SELECTOR_FIELDS,
+  ]), "selector");
+  const derivedLabel = value.label ?? value.text ?? value.contentDesc ?? value.resourceId;
+  const label = cleanText(derivedLabel, "selector.label");
+  const role = value.role ?? ((value.relation === undefined && value.visionPrompt === undefined) ? "button" : null);
+  if (!SAFE_ROLES.has(role)) throw new Error("selector.role is invalid");
+  const sources = value.sources ?? ((value.relation !== undefined || value.visionPrompt !== undefined)
+    ? null : ["accessibility"]);
+  if (!Array.isArray(sources) || sources.length < 1 || sources.length > SAFE_SOURCES.size
+      || sources.some((source) => !SAFE_SOURCES.has(source))
+      || new Set(sources).size !== sources.length) {
     throw new Error("selector.sources is invalid");
   }
 
   let relation;
-  if (value.sources.includes("relation")) {
+  if (sources.includes("relation")) {
     exactKeys(value.relation, new Set(["algorithm", "region", "anchors", "targetOrdinal"]), "selector.relation");
     if (value.relation.algorithm !== "horizontal_equal_spacing"
         || value.relation.region !== "bottom_navigation"
@@ -72,16 +84,47 @@ export function validateDeviceNodeSelector(value) {
   }
 
   let visionPrompt;
-  if (value.sources.includes("vision")) {
+  if (sources.includes("vision")) {
     visionPrompt = cleanText(value.visionPrompt ?? label, "selector.visionPrompt", 4096);
   } else if (value.visionPrompt !== undefined) {
     throw new Error("selector.visionPrompt requires the vision source");
   }
 
+  const accessibility = {};
+  for (const field of ["text", "contentDesc", "className", "resourceId", "nearText"]) {
+    if (value[field] !== undefined) accessibility[field] = cleanText(value[field], `selector.${field}`);
+  }
+  if (value.nearTextPosition !== undefined) {
+    if (!NEAR_TEXT_POSITIONS.has(value.nearTextPosition)) {
+      throw new Error("selector.nearTextPosition is invalid");
+    }
+    if (value.nearText === undefined) throw new Error("selector.nearTextPosition requires selector.nearText");
+    accessibility.nearTextPosition = value.nearTextPosition;
+  }
+  if (value.clickable !== undefined) {
+    if (typeof value.clickable !== "boolean") throw new Error("selector.clickable is invalid");
+    accessibility.clickable = value.clickable;
+  }
+  if (value.screenRegion !== undefined) {
+    if (!SCREEN_REGIONS.has(value.screenRegion)) throw new Error("selector.screenRegion is invalid");
+    accessibility.screenRegion = value.screenRegion;
+  }
+  if (value.regionOrdinal !== undefined) {
+    if (!Number.isSafeInteger(value.regionOrdinal) || value.regionOrdinal < 1 || value.regionOrdinal > 12) {
+      throw new Error("selector.regionOrdinal is invalid");
+    }
+    if (value.screenRegion === undefined) throw new Error("selector.regionOrdinal requires selector.screenRegion");
+    accessibility.regionOrdinal = value.regionOrdinal;
+  }
+  if (Object.keys(accessibility).length && !sources.includes("accessibility")) {
+    throw new Error("selector accessibility fields require the accessibility source");
+  }
+
   return {
     label,
-    role: value.role,
-    sources: [...value.sources],
+    role,
+    sources: [...sources],
+    ...accessibility,
     ...(relation ? { relation } : {}),
     ...(visionPrompt ? { visionPrompt } : {}),
   };

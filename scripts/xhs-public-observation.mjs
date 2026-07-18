@@ -25,8 +25,8 @@ function descriptorNote(value) {
   if (fromIndex <= 0) return null;
   const title = boundedPublicText(body.slice(0, fromIndex), 300);
   let authorAndMetric = boundedPublicText(body.slice(fromIndex + 3), 160);
-  const likesMatch = /\s+(\d[\d,.]*\s*(?:万|[kKwW])?)赞$/u.exec(authorAndMetric);
-  const likes = likesMatch ? likesMatch[1].replace(/\s+/gu, "") : null;
+  const likesMatch = /\s+(?:(\d[\d,.]*\s*(?:万|[kKwW])?)\s*)?赞$/u.exec(authorAndMetric);
+  const likes = likesMatch?.[1] ? likesMatch[1].replace(/\s+/gu, "") : null;
   if (likesMatch) authorAndMetric = authorAndMetric.slice(0, likesMatch.index).trim();
   const author = boundedPublicText(authorAndMetric, 120);
   if (!title || !author) return null;
@@ -45,26 +45,37 @@ function publicNoteId(node) {
     ?? null;
 }
 
-function extractNotes(document) {
+function extractVisibleNoteCandidates(document) {
   const output = [];
   const seen = new Set();
   for (const node of document.nodes) {
     const note = descriptorNote(node.contentDesc) ?? descriptorNote(node.text);
-    if (!note) continue;
+    const bounds = nodeBounds(node);
+    if (!note || !bounds) continue;
     const key = `${note.mediaType}\u0000${note.author}\u0000${note.title}`;
     if (seen.has(key)) continue;
     seen.add(key);
     const noteId = publicNoteId(node);
     output.push({
-      ...(noteId ? { noteId } : {}),
-      title: note.title,
-      author: note.author,
-      mediaType: note.mediaType,
-      metrics: note.metrics,
+      note: {
+        ...(noteId ? { noteId } : {}),
+        title: note.title,
+        author: note.author,
+        mediaType: note.mediaType,
+        metrics: note.metrics,
+      },
+      bounds,
     });
     if (output.length >= MAX_NOTES) break;
   }
   return output;
+}
+
+function extractNotes(document) {
+  return extractVisibleNoteCandidates(document).map(({ note }, index) => ({
+    ...note,
+    ordinal: index + 1,
+  }));
 }
 
 function nodeBounds(node) {
@@ -85,23 +96,16 @@ export function resolveVisibleXhsNote(hierarchy, ordinal, displaySize) {
     throw new Error("XHS visible note resolution is invalid");
   }
   const document = parseUiAutomatorXml(hierarchy);
-  const candidates = [];
-  const seen = new Set();
-  for (const node of document.nodes) {
-    const note = descriptorNote(node.contentDesc) ?? descriptorNote(node.text);
-    const bounds = nodeBounds(node);
-    if (!note || !bounds) continue;
-    const key = `${note.mediaType}\u0000${note.author}\u0000${note.title}`;
-    if (seen.has(key)) throw new Error("XHS visible note identity was duplicated");
-    seen.add(key);
+  const candidates = extractVisibleNoteCandidates(document).map(({ note, bounds }, index) => {
     const x = (bounds.left + bounds.right) / 2;
     const y = (bounds.top + bounds.bottom) / 2;
-    if (x < 0 || y < 0 || x > width || y > height) continue;
-    candidates.push({ note, x, y });
-    if (candidates.length >= MAX_NOTES) break;
-  }
+    return { note: { ...note, ordinal: index + 1 }, x, y };
+  });
   const selected = candidates[ordinal - 1];
   if (!selected) throw new Error("XHS visible note ordinal is not present in the fresh UI hierarchy");
+  if (selected.x < 0 || selected.y < 0 || selected.x > width || selected.y > height) {
+    throw new Error("XHS visible note ordinal is outside the fresh display bounds");
+  }
   const decimal = (value) => value.toFixed(6).replace(/\.?0+$/u, "");
   return {
     note: selected.note,
@@ -275,12 +279,8 @@ export function intersectXhsObservations(first, second) {
     .filter((note) => secondNotes.has(`${note.mediaType}\u0000${note.author}\u0000${note.title}`))
     .map((note) => {
       const current = secondNotes.get(`${note.mediaType}\u0000${note.author}\u0000${note.title}`);
-      return stableJson(note) === stableJson(current) ? note : {
-        title: note.title,
-        author: note.author,
-        mediaType: note.mediaType,
-        metrics: { likes: null },
-      };
+      if (stableJson(note.metrics) === stableJson(current.metrics)) return current;
+      return { ...current, metrics: { likes: null } };
     });
   const labelSet = new Set(second.visibleLabels);
   const detail = stableJson(first.detail) === stableJson(second.detail) ? first.detail : null;

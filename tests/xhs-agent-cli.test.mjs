@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { buildDispatch, parseCliArgs, runCli } from "../scripts/xhs-agent.mjs";
@@ -67,11 +68,14 @@ test("task run enters through the unified dry-run planner and supervised live wr
   );
 });
 
-test("unified CLI routes a targeted XHS open through the matrix action wrapper", () => {
+test("unified CLI routes a targeted XHS open through the Xiaowei app adapter", () => {
   const dispatch = buildDispatch(parseCliArgs(["device", "open-xhs", "--machine", "04"]));
   assert.equal(dispatch.executable, POWERSHELL_EXECUTABLE);
-  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
-  assert.deepEqual(dispatch.args.slice(-4), ["-Action", "OpenXhs", "-MachineNumber", "04"]);
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-6), [
+    "-Action", "OpenApp", "-MachineNumber", "04", "-PackageName", "com.xingin.xhs",
+  ]);
+  assert.ok(!dispatch.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
 });
 
 test("device UI and screen use the Xiaowei API read adapter instead of local ADB", () => {
@@ -137,6 +141,60 @@ test("device home and app open use the Xiaowei API adapter without local ADB", (
   assert.deepEqual(open.args.slice(-6), [
     "-Action", "OpenApp", "-MachineNumber", "02", "-PackageName", "com.example.approved",
   ]);
+
+  const alias = buildDispatch(parseCliArgs([
+    "device", "start-apk", "--machine", "02", "--package", "com.example.approved",
+  ]));
+  assert.deepEqual(alias.args.slice(-6), [
+    "-Action", "OpenApp", "-MachineNumber", "02", "-PackageName", "com.example.approved",
+  ]);
+
+  const recent = buildDispatch(parseCliArgs(["device", "recent", "--machine", "02"]));
+  assert.deepEqual(recent.args.slice(-4), ["-Action", "Recent", "-MachineNumber", "02"]);
+
+  const appList = buildDispatch(parseCliArgs(["app", "list", "--machine", "02"]));
+  assert.deepEqual(appList.args.slice(-4), ["-Action", "AppList", "-MachineNumber", "02"]);
+  assert.ok(!appList.args.some((value) => value.endsWith("Invoke-MatrixAction.ps1")));
+});
+
+test("device input routes a bounded text value through the Xiaowei adapter", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "device", "input", "--machine", "02", "--package", "com.xingin.xhs", "--text", "通勤穿搭",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-8), [
+    "-Action", "Input", "-MachineNumber", "02", "-PackageName", "com.xingin.xhs", "-Text", "通勤穿搭",
+  ]);
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "device", "input", "--machine", "02", "--package", "com.xingin.xhs",
+  ])), /text is required/u);
+});
+
+test("device scroll routes a semantic direction and bounded step count through the Xiaowei adapter", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "device", "scroll", "--machine", "02", "--direction", "down", "--steps", "2", "--package", "com.xingin.xhs",
+  ]));
+  assert.ok(dispatch.args.some((value) => value.endsWith("Invoke-XiaoweiDeviceRead.ps1")));
+  assert.deepEqual(dispatch.args.slice(-10), [
+    "-Action", "Scroll", "-MachineNumber", "02", "-Direction", "down", "-Steps", "2", "-PackageName", "com.xingin.xhs",
+  ]);
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "device", "scroll", "--machine", "02",
+  ])), /direction is required/u);
+});
+
+test("device coordinate tap routes bounded percentages with one postcondition", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "device", "tap-coords", "--machine", "02", "--package", "com.example.launcher",
+    "--x", "50", "--y", "8.5", "--expect-package", "com.xingin.xhs",
+  ]));
+  assert.deepEqual(dispatch.args.slice(-12), [
+    "-Action", "TapCoords", "-MachineNumber", "02", "-PackageName", "com.example.launcher",
+    "-X", "50", "-Y", "8.5", "-ExpectPackage", "com.xingin.xhs",
+  ]);
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "device", "tap-coords", "--machine", "02", "--package", "com.example.launcher", "--x", "50", "--y", "8.5",
+  ])), /expect-text|expect-package|expect-resource-id/u);
 });
 
 test("manual safe-label tap requires one machine, confirmation, and a postcondition", () => {
@@ -159,6 +217,21 @@ test("manual safe-label tap requires one machine, confirmation, and a postcondit
     "-ExpectPackage", "com.xingin.xhs", "-ConfirmAction", "-ConfirmationReason",
     "dismiss local overlay", "-RollbackInfo", "press back",
   ]);
+  const packageBound = buildDispatch(parseCliArgs([
+    "device", "tap-text", "--machine", "01", "--package", "com.xingin.xhs", "--text", "发送",
+    "--expect-text", "已发送", "--confirm", "--reason", "submit prepared comment", "--rollback", "inspect comment count",
+  ]));
+  assert.ok(packageBound.args.includes("-PackageName"));
+  assert.ok(packageBound.args.includes("com.xingin.xhs"));
+  const secondReply = buildDispatch(parseCliArgs([
+    "device", "tap-text", "--machine", "01", "--package", "com.xingin.xhs", "--text", "回复",
+    "--match", "suffix", "--ordinal", "2", "--expect-text", "发送",
+    "--confirm", "--reason", "open selected reply composer", "--rollback", "press back once",
+  ]));
+  assert.ok(secondReply.args.includes("-TextMatch"));
+  assert.ok(secondReply.args.includes("suffix"));
+  assert.ok(secondReply.args.includes("-Ordinal"));
+  assert.ok(secondReply.args.includes("2"));
 });
 
 test("OCR tap routes through the Xiaowei adapter without exposing coordinates or device identifiers", () => {
@@ -198,6 +271,57 @@ test("XHS observation is a named read-only machine command", () => {
   );
 });
 
+test("XHS find-video exposes bounded scroll and duration budgets", () => {
+  const defaults = buildDispatch(parseCliArgs(["xhs", "find-video", "--machine", "04"]));
+  assert.deepEqual(defaults.args.slice(-8), [
+    "-Action", "XhsFindVideo", "-MachineNumber", "04", "-MaxScrolls", "3", "-MaxDurationMs", "28000",
+  ]);
+  const explicit = buildDispatch(parseCliArgs([
+    "xhs", "find-video", "--machine", "04", "--max-scrolls", "5", "--max-duration-ms", "30000",
+  ]));
+  assert.deepEqual(explicit.args.slice(-8), [
+    "-Action", "XhsFindVideo", "-MachineNumber", "04", "-MaxScrolls", "5", "-MaxDurationMs", "30000",
+  ]);
+  assert.throws(
+    () => buildDispatch(parseCliArgs(["xhs", "find-video", "--machine", "04", "--ordinal", "1"])),
+    /does not support option/u,
+  );
+});
+
+test("XHS comment workflow exposes independent open, input, and send commands", () => {
+  const opened = buildDispatch(parseCliArgs(["xhs", "comment-open", "--machine", "01"]));
+  assert.deepEqual(opened.args.slice(-4), ["-Action", "XhsCommentOpen", "-MachineNumber", "01"]);
+  const input = buildDispatch(parseCliArgs([
+    "xhs", "comment-input", "--machine", "01", "--text", "[微笑R]", "--expected-editor-state-hash", "a".repeat(64),
+  ]));
+  assert.deepEqual(input.args.slice(-8), [
+    "-Action", "XhsCommentInput", "-MachineNumber", "01", "-Text", "[微笑R]", "-ExpectedEditorStateHash", "a".repeat(64),
+  ]);
+  const replyInput = buildDispatch(parseCliArgs([
+    "xhs", "comment-reply-input", "--machine", "04", "--ordinal", "2", "--text", "感谢分享",
+  ]));
+  assert.deepEqual(replyInput.args.slice(-8), [
+    "-Action", "XhsCommentReplyInput", "-MachineNumber", "04", "-Text", "感谢分享", "-Ordinal", "2",
+  ]);
+  const sent = buildDispatch(parseCliArgs([
+    "xhs", "comment-send", "--machine", "01", "--expected-draft", "[微笑R]", "--expected-before-count", "192",
+    "--expected-target-base64", "dGFyZ2V0", "--expected-empty-editor-state-hash", "a".repeat(64),
+  ]));
+  assert.deepEqual(sent.args.slice(-12), [
+    "-Action", "XhsCommentSend", "-MachineNumber", "01", "-ExpectedDraft", "[微笑R]", "-ExpectedBeforeCount", "192",
+    "-ExpectedTargetBase64", "dGFyZ2V0", "-ExpectedEmptyEditorStateHash", "a".repeat(64),
+  ]);
+});
+
+test("XHS private-message send binds one expected draft", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "xhs", "dm-send", "--machine", "01", "--expected-draft", "测试",
+  ]));
+  assert.deepEqual(dispatch.args.slice(-6), [
+    "-Action", "XhsDmSend", "-MachineNumber", "01", "-ExpectedDraft", "测试",
+  ]);
+});
+
 test("XHS visible-card opening accepts only a machine and ordinal", () => {
   const dispatch = buildDispatch(parseCliArgs(["xhs", "open-visible", "--machine", "04", "--ordinal", "2"]));
   assert.deepEqual(dispatch.args.slice(-6), ["-Action", "XhsOpenVisible", "-MachineNumber", "04", "-Ordinal", "2"]);
@@ -206,6 +330,18 @@ test("XHS visible-card opening accepts only a machine and ordinal", () => {
     () => buildDispatch(parseCliArgs(["xhs", "open-visible", "--machine", "04"])),
     /ordinal is required/u,
   );
+});
+
+test("XHS emoji commenting routes one bounded label through the Xiaowei adapter", () => {
+  const dispatch = buildDispatch(parseCliArgs([
+    "xhs", "comment-emoji", "--machine", "01", "--emoji", "[微笑R]",
+  ]));
+  assert.deepEqual(dispatch.args.slice(-6), [
+    "-Action", "XhsCommentEmoji", "-MachineNumber", "01", "-Emoji", "[微笑R]",
+  ]);
+  assert.throws(() => buildDispatch(parseCliArgs([
+    "xhs", "comment-emoji", "--machine", "01",
+  ])), /emoji is required/u);
 });
 
 test("host status and start remain available through the unified entry", () => {
@@ -238,12 +374,25 @@ test("Xiaowei private API setup and status stay behind the host wrapper", () => 
 
 test("remote gateway lifecycle stays behind the unified entry", () => {
   for (const [command, action] of [
-    ["start", "Start"], ["status", "Status"], ["stop", "Stop"], ["install", "Install"], ["uninstall", "Uninstall"],
+    ["start", "Start"], ["status", "Status"], ["stop", "Stop"], ["restart", "Restart"], ["install", "Install"], ["uninstall", "Uninstall"],
   ]) {
     const dispatch = buildDispatch(parseCliArgs(["remote", command]));
     assert.ok(dispatch.args.some((value) => value.endsWith("Manage-XhsRemoteGateway.ps1")));
     assert.deepEqual(dispatch.args.slice(-2), ["-Action", action]);
   }
+});
+
+test("remote gateway manager proves listener ownership, build identity, and a fresh boot before success", () => {
+  const source = readFileSync(new URL("../scripts/Manage-XhsRemoteGateway.ps1", import.meta.url), "utf8");
+  assert.match(source, /Get-NetTCPConnection[^\r\n]+17891[^\r\n]+Listen/u);
+  assert.match(source, /\[int\]\$listener\.OwningProcess -eq \$child\.Id/u);
+  assert.match(source, /\$health\.buildId -eq \$expectedBuildId/u);
+  assert.match(source, /--print-build-id/u);
+  assert.match(source, /\$health\.bootId -ne \$PreviousBootId/u);
+  assert.match(source, /admin\/drain-and-shutdown/u);
+  assert.match(source, /authenticated_drain/u);
+  assert.match(source, /refusing to overwrite the PID file/u);
+  assert.match(source, /\[ValidateSet\([^\r\n]+"Restart"/u);
 });
 
 test("development invoke routes through the explicit Xiaowei development wrapper", () => {
