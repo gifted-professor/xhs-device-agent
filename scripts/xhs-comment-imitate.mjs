@@ -13,8 +13,17 @@
 //
 // 安全：测试全 mock，不真发。真发需 notifier 裁决 decision="send" 且调用方提供
 //   sendContext.expectedEmptyEditorStateHash（真机验收时先 observe 空编辑器拿到）。
+//
+// imitate 后端有两种，由 runtime 决定：
+//   - CPA CLI helper（推荐生产用）：spawn Codex 的 remote-cpa skill helper
+//     `python3 ~/.codex/skills/remote-cpa/scripts/cpa_request.py chat ...`，helper 内部解析
+//     base_url + key（CPA_API_KEY env 或 SSH fallback 读 config.local.yaml），node 不碰 key。
+//     触发条件：runtime.cpaRequestPath 或 runtime.useCpaCli 为真。
+//   - fetch 直连（测试/备选）：runtime.cpaUrl + runtime.cpaApiKey，需自备 key。
 
+import os from "node:os";
 import path from "node:path";
+import { spawn as defaultSpawn } from "node:child_process";
 import readline from "node:readline/promises";
 import { stdin as defaultStdin, stdout as defaultStdout } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -24,6 +33,11 @@ export const DEFAULT_CPA_URL = "http://localhost:8317";
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_TOP_N = 3;
 export const DEFAULT_TIMEOUT_MS = 300_000; // 5 分钟；超时自动放弃不发
+export const DEFAULT_CPA_REQUEST_PY = path.join(
+  os.homedir(), ".codex", "skills", "remote-cpa", "scripts", "cpa_request.py",
+);
+export const DEFAULT_CPA_PYTHON = "python3";
+export const DEFAULT_CPA_MAX_TOKENS = 60;
 
 const MACHINE_RE = /^\d{2}$/u;
 const SHA256_RE = /^[a-f0-9]{64}$/u;
@@ -100,10 +114,10 @@ export function buildImitatePrompt(sourceComments) {
   ].join("\n");
 }
 
-export async function imitate(sourceComments, runtime = {}) {
+export async function imitateViaFetch(sourceComments, runtime = {}) {
   const prompt = buildImitatePrompt(sourceComments);
   const fetchImpl = runtime.fetch ?? globalThis.fetch;
-  if (typeof fetchImpl !== "function") throw new Error("imitate requires a fetch implementation");
+  if (typeof fetchImpl !== "function") throw new Error("imitateViaFetch requires a fetch implementation");
   const cpaUrl = (runtime.cpaUrl ?? DEFAULT_CPA_URL).replace(/\/+$/u, "") + "/v1/chat/completions";
   const model = runtime.model ?? DEFAULT_MODEL;
   const headers = { "content-type": "application/json" };
@@ -127,8 +141,46 @@ export async function imitate(sourceComments, runtime = {}) {
   }
   const text = data?.choices?.[0]?.message?.content?.trim();
   if (!text) throw new Error("CPA imitate returned empty content");
-  // 折叠空白并限长（网关 comment.input 限制 text ≤256）
   return text.replace(/\s+/gu, " ").trim().slice(0, 256);
+}
+
+// CPA CLI helper：spawn Codex remote-cpa skill 的 cpa_request.py chat，stdout 即回复文本。
+// helper 内部解析 base_url + key（CPA_API_KEY env 或 SSH fallback 读 config.local.yaml），
+// node 进程不接触 key。已用 doctor + 一次真实 chat 实测可用（返回"很会穿，氛围感直接拉满。"）。
+export async function imitateViaCli(sourceComments, runtime = {}) {
+  const prompt = buildImitatePrompt(sourceComments);
+  const spawnImpl = runtime.spawn ?? defaultSpawn;
+  if (typeof spawnImpl !== "function") throw new Error("imitateViaCli requires a spawn implementation");
+  const py = runtime.cpaPython ?? DEFAULT_CPA_PYTHON;
+  const script = runtime.cpaRequestPath ?? DEFAULT_CPA_REQUEST_PY;
+  const model = runtime.model ?? DEFAULT_MODEL;
+  const maxTokens = runtime.cpaMaxTokens ?? DEFAULT_CPA_MAX_TOKENS;
+  const args = [script, "chat", "--model", model, "--message", prompt, "--max-tokens", String(maxTokens)];
+  return new Promise((resolve, reject) => {
+    const child = spawnImpl(py, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk.toString("utf8"); });
+    child.stderr.on("data", (chunk) => { stderr += chunk.toString("utf8"); });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code !== 0) {
+        reject(new Error(`cpa_request.py exited ${code}: ${stderr.trim() || stdout.trim()}`));
+        return;
+      }
+      const text = stdout.replace(/\s+/gu, " ").trim();
+      if (!text) reject(new Error("cpa_request.py returned empty content"));
+      else resolve(text.slice(0, 256));
+    });
+  });
+}
+
+// 分派：runtime.cpaRequestPath 或 runtime.useCpaCli → CLI helper；否则 fetch 直连。
+export async function imitate(sourceComments, runtime = {}) {
+  if (runtime.cpaRequestPath || runtime.useCpaCli) {
+    return imitateViaCli(sourceComments, runtime);
+  }
+  return imitateViaFetch(sourceComments, runtime);
 }
 
 // ---------------------------------------------------------------------------

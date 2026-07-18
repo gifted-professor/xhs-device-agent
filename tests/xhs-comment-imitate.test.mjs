@@ -2,10 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  callGateway, readComments, topByLikes, imitate, buildImitatePrompt,
+  callGateway, readComments, topByLikes, imitate, imitateViaCli, buildImitatePrompt,
   postComment, runCommentImitate,
 } from "../scripts/xhs-comment-imitate.mjs";
 import { buildConfirmCard } from "../scripts/xhs-lark-notifier.mjs";
+import {
+  buildWechatPrompt, createWechatNotifier, DEFAULT_WEIXIN_HOME_CHAT,
+} from "../scripts/xhs-wechat-notifier.mjs";
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -251,4 +254,169 @@ test("buildConfirmCard produces Card 2.0 with callback buttons tagged by request
 
 test("buildConfirmCard rejects missing requestId", () => {
   assert.throws(() => buildConfirmCard({ machine: "01", sourceComments: [], candidate: "x", timeoutMs: 1000 }));
+});
+
+// ---- CPA CLI imitator -------------------------------------------------------
+
+function fakeChild({ stdoutLines = [], exitCode = 0, lineDelayMs = 0, autoClose = true }) {
+  const cbs = { stdoutData: null, stderrData: null, close: [], error: [] };
+  let killed = false;
+  const child = {
+    stdout: { on: (ev, cb) => { if (ev === "data") cbs.stdoutData = cb; return child.stdout; } },
+    stderr: { on: (ev, cb) => { if (ev === "data") cbs.stderrData = cb; return child.stderr; } },
+    on: (ev, cb) => {
+      if (ev === "close") cbs.close.push(cb);
+      else if (ev === "error") cbs.error.push(cb);
+      return child;
+    },
+    kill: () => { killed = true; },
+  };
+  let t = 0;
+  for (const line of stdoutLines) {
+    const when = t;
+    setTimeout(() => { if (!killed && cbs.stdoutData) cbs.stdoutData(Buffer.from(`${line}\n`, "utf8")); }, when);
+    t += lineDelayMs;
+  }
+  if (autoClose) setTimeout(() => { if (!killed) cbs.close.forEach((cb) => cb(exitCode)); }, t + 5);
+  return child;
+}
+
+function makeSpawnRouter(handlers) {
+  const calls = [];
+  const spawn = (cmd, args, opts) => {
+    calls.push({ cmd, args });
+    const h = handlers[cmd];
+    if (!h) throw new Error(`unexpected spawn: ${cmd}`);
+    return h(args, opts, calls);
+  };
+  spawn.calls = calls;
+  return spawn;
+}
+
+test("imitateViaCli spawns cpa_request.py chat and returns stdout text", async () => {
+  const spawn = makeSpawnRouter({
+    python3: () => fakeChild({ stdoutLines: ["很会穿，氛围感直接拉满。"], exitCode: 0 }),
+  });
+  const text = await imitateViaCli(sampleComments.slice(0, 2), { spawn, model: "gpt-5.4" });
+  assert.equal(text, "很会穿，氛围感直接拉满。");
+  const a = spawn.calls[0].args;
+  assert.match(a.join(" "), /chat --model gpt-5\.4 --message /);
+  assert.match(a.join(" "), /--max-tokens 60/);
+  assert.ok(a.some((x) => /cpa_request\.py$/.test(x)));
+});
+
+test("imitateViaCli rejects on non-zero exit", async () => {
+  const spawn = makeSpawnRouter({
+    python3: () => fakeChild({ stdoutLines: [], exitCode: 1 }),
+  });
+  await assert.rejects(() => imitateViaCli(sampleComments.slice(0, 1), { spawn }), /exited 1/);
+});
+
+test("imitate dispatches to CLI when useCpaCli=true, else fetch", async () => {
+  const cliSpawn = makeSpawnRouter({
+    python3: () => fakeChild({ stdoutLines: ["cli-result"], exitCode: 0 }),
+  });
+  const cliText = await imitate(sampleComments.slice(0, 1), { spawn: cliSpawn, useCpaCli: true });
+  assert.equal(cliText, "cli-result");
+
+  const { fetch } = mockTransport({ cpa: "fetch-result" });
+  const fetchText = await imitate(sampleComments.slice(0, 1), { fetch });
+  assert.equal(fetchText, "fetch-result");
+});
+
+// ---- WechatNotifier (Hermes weixin channel) --------------------------------
+
+const HOME = DEFAULT_WEIXIN_HOME_CHAT;
+
+function inboundLine(chat, msg) {
+  return `2026-07-18 12:00:00,000 INFO gateway.run: inbound message: platform=weixin user=${chat} chat=${chat} msg='${msg}' reply_to_id=None reply_to_text=''`;
+}
+
+test("buildWechatPrompt includes candidate, requestId and timeout hint", () => {
+  const prompt = buildWechatPrompt({
+    machine: "01", sourceComments: sampleComments.slice(0, 2),
+    candidate: "种草了", requestId: "req-1", timeoutMs: 300_000,
+  });
+  assert.match(prompt, /种草了/);
+  assert.match(prompt, /\[req-1\]/);
+  assert.match(prompt, /超时/);
+  assert.match(prompt, /\/approve/);
+  assert.throws(() => buildWechatPrompt({ machine: "01", sourceComments: [], candidate: "x", timeoutMs: 1 }));
+});
+
+test("WechatNotifier /approve sends candidate", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 0 }),
+    tail: () => fakeChild({ stdoutLines: [inboundLine(HOME, "/approve")], lineDelayMs: 0 }),
+  });
+  const notifier = createWechatNotifier({ homeChat: HOME });
+  const verdict = await notifier.sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 2), candidate: "种草了", timeoutMs: 1000 },
+    { spawn },
+  );
+  assert.equal(verdict.decision, "send");
+  assert.equal(verdict.reason, "confirmed");
+  assert.equal(verdict.text, null);
+  assert.equal(spawn.calls[0].cmd, "hermes");
+  assert.match(spawn.calls[0].args.join(" "), /--to weixin/);
+  assert.equal(spawn.calls[1].cmd, "tail");
+});
+
+test("WechatNotifier /deny skips", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 0 }),
+    tail: () => fakeChild({ stdoutLines: [inboundLine(HOME, "/deny")], lineDelayMs: 0 }),
+  });
+  const verdict = await createWechatNotifier({ homeChat: HOME }).sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 1), candidate: "x", timeoutMs: 1000 }, { spawn });
+  assert.equal(verdict.decision, "skip");
+  assert.equal(verdict.reason, "rejected");
+});
+
+test("WechatNotifier free text counts as rewritten send", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 0 }),
+    tail: () => fakeChild({ stdoutLines: [inboundLine(HOME, "我改成了这句")], lineDelayMs: 0 }),
+  });
+  const verdict = await createWechatNotifier({ homeChat: HOME }).sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 1), candidate: "x", timeoutMs: 1000 }, { spawn });
+  assert.equal(verdict.decision, "send");
+  assert.equal(verdict.reason, "rewritten");
+  assert.equal(verdict.text, "我改成了这句");
+});
+
+test("WechatNotifier ignores non-home inbound and waits for home reply", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 0 }),
+    tail: () => fakeChild({
+      stdoutLines: [
+        inboundLine("other@im.wechat", "别的话题"),
+        inboundLine(HOME, "/ok"),
+      ], lineDelayMs: 0,
+    }),
+  });
+  const verdict = await createWechatNotifier({ homeChat: HOME }).sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 1), candidate: "x", timeoutMs: 1000 }, { spawn });
+  assert.equal(verdict.decision, "send");
+  assert.equal(verdict.reason, "confirmed");
+});
+
+test("WechatNotifier times out and skips when no home reply", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 0 }),
+    tail: () => fakeChild({ stdoutLines: [], autoClose: false }),
+  });
+  const verdict = await createWechatNotifier({ homeChat: HOME }).sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 1), candidate: "x", timeoutMs: 1000 }, { spawn });
+  assert.equal(verdict.decision, "skip");
+  assert.equal(verdict.reason, "timeout");
+});
+
+test("WechatNotifier rejects when hermes send fails", async () => {
+  const spawn = makeSpawnRouter({
+    hermes: () => fakeChild({ exitCode: 1 }),
+  });
+  await assert.rejects(() => createWechatNotifier({ homeChat: HOME }).sendConfirm(
+    { machine: "01", sourceComments: sampleComments.slice(0, 1), candidate: "x", timeoutMs: 1000 }, { spawn }),
+    /hermes send exited 1/);
 });
