@@ -698,12 +698,15 @@ export function parseStructuredReadOutput(command, stdout) {
       "machine", "status", "draftLength", "verification", "transport", "localAdbRequired",
     ], "xhs.dm.send result");
     const dmSendOutcomes = {
-      verified: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo",
-      mitigated: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+      verified: ["expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo"],
+      mitigated: [
+        "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+        "dm_draft_already_sent_before_tap_detected_via_bubble",
+      ],
     };
     if (!/^\d{2}$/u.test(value.machine)
         || !Number.isSafeInteger(value.draftLength) || value.draftLength < 1 || value.draftLength > 256
-        || dmSendOutcomes[value.status] !== value.verification
+        || !dmSendOutcomes[value.status] || !dmSendOutcomes[value.status].includes(value.verification)
         || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
       throw new Error("xhs.dm.send contains an invalid public value");
     }

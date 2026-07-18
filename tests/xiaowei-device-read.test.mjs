@@ -2076,6 +2076,169 @@ test("xhs.dm.send degrades to mitigated when the editor node vanishes after send
   }
 });
 
+test("xhs.dm.send recovers via re-focus when the editor reverts to hint before the tap (Shape 1a)", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-refocus-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-refocus");
+  // device.input left the editor destabilized: the first read shows the hint
+  // (draft not visible), so xhsDmEditor(h, draft) is null. Re-focusing the
+  // composer structurally restores the draft in the next read, then the real
+  // send tap delivers it. Two pointer events: editor re-focus tap (x≈45%) and
+  // the aligned send tap (x≈90%).
+  let refocused = false;
+  let sent = false;
+  let pointerCalls = 0;
+  const ui = () => {
+    const editorText = sent ? "请友善发言..." : (refocused ? "测试" : "请友善发言...");
+    const bubble = sent
+      ? '<node package="com.xingin.xhs" class="android.widget.TextView" text="测试" bounds="[600,900][950,1000]" />'
+      : "";
+    return `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+      ${bubble}
+      <node package="com.xingin.xhs" class="android.widget.EditText" focused="true" text="${editorText}" bounds="[165,1333][811,1443]" />
+      <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[921,1344][1025,1432]" />
+    </node></hierarchy>`;
+  };
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+      outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      delay: async () => {},
+      sendRequest: async (request) => {
+        if (request.action === "pointerEvent") {
+          pointerCalls += 1;
+          if (request.data.x === "45.185185") refocused = true;
+          else if (request.data.x === "90.092593") sent = true;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(pointerCalls, 2);
+    assert.deepEqual(result, {
+      machine: "02", status: "verified", draftLength: 2,
+      verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_and_message_echo",
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("xhs.dm.send returns mitigated already-sent when the draft is gone and a sent bubble is present before the tap (Shape 1b)", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-already-sent-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-already-sent");
+  // The composer has already collapsed (no EditText) and the sent bubble is
+  // visible — the hermes P0 shape where device.input's IME storm delivered the
+  // message before dm.send could tap. No send-button tap should occur.
+  let pointerCalls = 0;
+  const ui = () => `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+    <node package="com.xingin.xhs" class="android.widget.TextView" text="测试" bounds="[600,900][950,1000]" />
+  </node></hierarchy>`;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+      outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      delay: async () => {},
+      sendRequest: async (request) => {
+        if (request.action === "pointerEvent") {
+          pointerCalls += 1;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(pointerCalls, 0);
+    assert.deepEqual(result, {
+      machine: "02", status: "mitigated", draftLength: 2,
+      verification: "dm_draft_already_sent_before_tap_detected_via_bubble",
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("xhs.dm.send throws PRECONDITION_MISS when the draft is gone and no sent bubble exists (Shape 1c)", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-failed-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-failed");
+  // No composer, no bubble: the draft is gone and nothing was sent. dm.send
+  // must report a true failure so the caller re-inputs, not a silent success.
+  let pointerCalls = 0;
+  const ui = () => `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]" /></hierarchy>`;
+  try {
+    await assert.rejects(
+      () => runXiaoweiDeviceRead({
+        action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+        outputRoot, targets: [target()],
+      }, {
+        projectRoot,
+        delay: async () => {},
+        sendRequest: async (request) => {
+          if (request.action === "pointerEvent") {
+            pointerCalls += 1;
+            return { code: 10_000, message: "SUCCESS", data: null };
+          }
+          const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+          return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+        },
+      }),
+      (error) => error.code === "PRECONDITION_MISS",
+    );
+    assert.equal(pointerCalls, 0);
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
+test("xhs.dm.send returns mitigated (not POSTCONDITION_MISS) when the editor reverts to hint in the verify loop", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-dm-send-hint-loop-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-dm-send-hint-loop");
+  // Happy precondition (draft present, send aligned, stable). After the tap the
+  // editor stays present but reverts to the placeholder hint with no readable
+  // bubble — the hint-overwrite-in-verify-loop gap. xhsDmEditorIsEmpty already
+  // treats the hint as cleared, so this degrades to mitigated instead of
+  // burning the budget and throwing POSTCONDITION_MISS.
+  let sent = false;
+  let pointerCalls = 0;
+  const ui = () => `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+    <node package="com.xingin.xhs" class="android.widget.EditText" focused="true" text="${sent ? "请友善发言..." : "测试"}" bounds="[165,1333][811,1443]" />
+    <node package="com.xingin.xhs" class="android.widget.TextView" text="发送" clickable="true" enabled="true" bounds="[921,1344][1025,1432]" />
+  </node></hierarchy>`;
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-dm-send", expectedDraft: "测试", endpoint: "ws://127.0.0.1:22222/",
+      outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      delay: async () => {},
+      dmDegradedEchoBudgetMs: 0,
+      sendRequest: async (request) => {
+        if (request.action === "pointerEvent") {
+          pointerCalls += 1;
+          sent = true;
+          return { code: 10_000, message: "SUCCESS", data: null };
+        }
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : ui();
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(pointerCalls, 1);
+    assert.deepEqual(result, {
+      machine: "02", status: "mitigated", draftLength: 2,
+      verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+      transport: "xiaowei-api", localAdbRequired: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
+});
+
 test("device screen composes screencap and pullFile then removes the phone artifact", async () => {
   const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-read-screen-"));
   const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-screen");
