@@ -124,8 +124,8 @@ function validateAuthorization(definition, request, authorization = {}, { develo
     if (definition.action === "pointerEvent" && authorization.semanticTargetResolved !== true) {
       fail("SEMANTIC_TARGET_REQUIRED", "pointerEvent requires a target resolved from a fresh device hierarchy", { action: definition.action });
     }
-    if (definition.action === "pushEvent" && !["2", "3"].includes(request.data?.type)) {
-      fail("PUSH_EVENT_NOT_PUBLIC", "the ordinary client exposes only HOME and BACK push events", { action: definition.action });
+    if (definition.action === "pushEvent" && !["1", "2", "3"].includes(request.data?.type)) {
+      fail("PUSH_EVENT_NOT_PUBLIC", "the ordinary client exposes only RECENT, HOME, and BACK push events", { action: definition.action });
     }
     requireApprovedPackage(definition, request, authorization);
     return;

@@ -4,12 +4,17 @@
   "description": "Machine-readable failure taxonomy and deterministic fallback ladder for named device APIs.",
   "decisionOrder": [
     "ACCESSIBILITY_EXACT_NODE",
+    "UI_HIERARCHY_FILE_FALLBACK",
     "OCR_EXACT_NODE",
     "OCR_SCALED_EXACT_NODE",
     "RELATIONAL_LAYOUT_NODE",
     "VISION_NODE",
     "LOCAL_ICON_NODE",
+    "VERIFIED_PERCENTAGE_POINTER",
     "PROJECT_COMPATIBILITY_ROUTE",
+    "VERSION_VERIFIED_GATEWAY_RELOAD",
+    "PER_DEVICE_GATEWAY_SCHEDULER",
+    "XHS_FRESH_ORDINAL_VIDEO_FLOW",
     "REQUEST_SCOPED_ACTION",
     "HUMAN_REQUIRED"
   ],
@@ -19,7 +24,14 @@
       "status": "implemented",
       "readCommand": "device.node.resolve",
       "writeCommand": "device.node.activate",
-      "description": "Resolve one exact visible accessibility node and recheck it before one send."
+      "description": "Resolve one exact visible accessibility node from closed text, description, class, resource, clickable, or bounded near-text relation fields; map an exact child to its current clickable ancestor and recheck it before one send."
+    },
+    {
+      "id": "UI_HIERARCHY_FILE_FALLBACK",
+      "status": "implemented",
+      "readCommand": "device.ui",
+      "writeCommand": null,
+      "description": "When uiautomator dump /dev/tty returns status text or incomplete XML, create a compressed XML artifact under the device shell-readable sdcard root, pull it through the official file channel, verify exact bounded size and a complete hierarchy, then remove both temporary copies."
     },
     {
       "id": "OCR_EXACT_NODE",
@@ -51,10 +63,17 @@
     },
     {
       "id": "LOCAL_ICON_NODE",
-      "status": "not_implemented",
-      "readCommand": null,
-      "writeCommand": null,
-      "description": "Resolve a locally classified icon without cloud upload or caller coordinates."
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one no-text accessibility icon by closed class, clickable, content-description, near-text, or bounded screen-region ordinal fields without cloud upload or caller coordinates; recheck before one send."
+    },
+    {
+      "id": "VERIFIED_PERCENTAGE_POINTER",
+      "status": "implemented",
+      "readCommand": "device.screen",
+      "writeCommand": "device.tap-coords",
+      "description": "Use one percentage point derived from the current fresh screen only after rechecking the source package; send once, require a fresh explicit postcondition, and never return coordinates in the result."
     },
     {
       "id": "PROJECT_COMPATIBILITY_ROUTE",
@@ -62,6 +81,27 @@
       "readCommand": "device.guide",
       "writeCommand": null,
       "description": "Continue through an existing project-wrapped compatibility, development, or private adapter when a named high-level capability is missing; then capture the gap for a reusable named API."
+    },
+    {
+      "id": "VERSION_VERIFIED_GATEWAY_RELOAD",
+      "status": "implemented",
+      "readCommand": "remote.status",
+      "writeCommand": "remote.restart",
+      "description": "Drain the authenticated loopback gateway, release the shared port, and accept a replacement only when its PID owns the listener, its boot identity is fresh, and its build identity matches the current gateway source."
+    },
+    {
+      "id": "PER_DEVICE_GATEWAY_SCHEDULER",
+      "status": "implemented",
+      "readCommand": "gateway.status",
+      "writeCommand": null,
+      "description": "Serialize requests for the same two-digit machine while running different machines concurrently; expose safe active/waiting request metadata, last known page freshness, and non-reversible artifact references through the runtime status endpoint."
+    },
+    {
+      "id": "XHS_FRESH_ORDINAL_VIDEO_FLOW",
+      "status": "implemented",
+      "readCommand": "xhs.find-video",
+      "writeCommand": "xhs.open-visible",
+      "description": "Derive visible note ordinals from the same fresh hierarchy order used for opening, search for a video with bounded verified feed scrolls, and use a single fresh hierarchy for an already-classified video detail observation."
     },
     {
       "id": "REQUEST_SCOPED_ACTION",
@@ -84,7 +124,15 @@
       "stage": "observe",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE"],
+      "nextStrategies": ["UI_HIERARCHY_FILE_FALLBACK", "OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "VERIFIED_PERCENTAGE_POINTER"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "UI_HIERARCHY_INCOMPLETE",
+      "stage": "observe",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["UI_HIERARCHY_FILE_FALLBACK", "OCR_EXACT_NODE", "VISION_NODE"],
       "stopConditions": ["FOREGROUND_DRIFT"]
     },
     {
@@ -92,7 +140,7 @@
       "stage": "resolve",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE"],
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE", "VERIFIED_PERCENTAGE_POINTER"],
       "stopConditions": ["NODE_AMBIGUOUS"]
     },
     {
@@ -100,7 +148,7 @@
       "stage": "resolve",
       "automatic": true,
       "terminal": false,
-      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE"],
+      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE", "VERIFIED_PERCENTAGE_POINTER"],
       "stopConditions": ["OCR_AMBIGUOUS"]
     },
     {
@@ -172,7 +220,7 @@
       "stage": "transport",
       "automatic": false,
       "terminal": true,
-      "nextStrategies": ["HUMAN_REQUIRED"],
+      "nextStrategies": ["VERSION_VERIFIED_GATEWAY_RELOAD", "HUMAN_REQUIRED"],
       "stopConditions": ["TRANSPORT_FAILED"]
     }
   ]

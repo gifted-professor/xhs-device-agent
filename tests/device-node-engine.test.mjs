@@ -57,6 +57,48 @@ test("node selector accepts vision and validates its prompt contract", () => {
   }), /requires the vision source/u);
 });
 
+test("node selector accepts closed accessibility attributes and near-text relation", () => {
+  const selector = {
+    label: "评论点赞",
+    role: "button",
+    sources: ["accessibility"],
+    className: "android.widget.ImageView",
+    clickable: true,
+    nearText: "一条唯一评论",
+    nearTextPosition: "right",
+  };
+  assert.deepEqual(validateDeviceNodeSelector(selector), selector);
+  assert.throws(() => validateDeviceNodeSelector({
+    ...selector, sources: ["ocr"],
+  }), /require the accessibility source/u);
+  assert.throws(() => validateDeviceNodeSelector({
+    ...selector, clickable: "true",
+  }), /clickable is invalid/u);
+  assert.throws(() => validateDeviceNodeSelector({
+    ...selector, nearTextPosition: "diagonal",
+  }), /nearTextPosition is invalid/u);
+});
+
+test("content-description shorthand derives a bounded accessibility button selector", () => {
+  assert.deepEqual(validateDeviceNodeSelector({ contentDesc: "打开评论" }), {
+    label: "打开评论", role: "button", sources: ["accessibility"], contentDesc: "打开评论",
+  });
+  assert.throws(() => validateDeviceNodeSelector({ className: "android.widget.ImageView" }), /selector.label is invalid/u);
+  assert.throws(() => validateDeviceNodeSelector({
+    label: "我", sources: ["vision"], visionPrompt: "底部个人页图标",
+  }), /selector.role is invalid/u);
+});
+
+test("node selector accepts a bounded local icon region and ordinal", () => {
+  const selector = {
+    label: "分享", role: "button", sources: ["accessibility"],
+    className: "android.widget.ImageView", clickable: true, screenRegion: "top_right", regionOrdinal: 2,
+  };
+  assert.deepEqual(validateDeviceNodeSelector(selector), selector);
+  assert.throws(() => validateDeviceNodeSelector({ ...selector, screenRegion: "middle" }), /screenRegion is invalid/u);
+  assert.throws(() => validateDeviceNodeSelector({ ...selector, screenRegion: undefined }), /requires selector.screenRegion/u);
+});
+
 test("vision node response requires one unique in-display integer rectangle", () => {
   assert.deepEqual(parseVisionNodeResponse(JSON.stringify({
     matches: [{ left: 810, top: 2100, right: 900, bottom: 2190 }],

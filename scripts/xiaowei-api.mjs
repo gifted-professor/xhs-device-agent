@@ -279,7 +279,8 @@ function publicCatalog() {
   const routes = {
     list: { status: "routable", command: ".\\xhs.cmd doctor" },
     screen: { status: "routable", command: ".\\xhs.cmd device screen" },
-    pushEvent: { status: "partial", command: ".\\xhs.cmd device home|back", note: "task-manager type 1 is not public" },
+    pointerEvent: { status: "routable", command: ".\\xhs.cmd device tap-coords", note: "named command requires a source package and fresh postcondition" },
+    pushEvent: { status: "routable", command: ".\\xhs.cmd device home|back|recent" },
     apkList: { status: "routable", command: ".\\xhs.cmd app list" },
     startApk: { status: "routable", command: ".\\xhs.cmd app open" },
     stopApk: { status: "routable", command: ".\\xhs.cmd app stop" },
@@ -376,8 +377,8 @@ export async function runXiaoweiCli(argv = process.argv.slice(2), runtime = {}) 
       runtime.gatewayKey ?? process.env.XHS_XIAOWEI_GATEWAY_KEY,
       runtime.now?.() ?? Date.now(),
     );
-    if (request.action === "pushEvent" && !["2", "3"].includes(request.data?.type)) {
-      throw new Error("Internal Xiaowei gateway exposes only HOME and BACK push events");
+    if (request.action === "pushEvent" && !["1", "2", "3"].includes(request.data?.type)) {
+      throw new Error("Internal Xiaowei gateway exposes only RECENT, HOME, and BACK push events");
     }
     if (["startApk", "stopApk"].includes(request.action)
         && grant.authorization?.approvedPackage !== request.data?.apk) {

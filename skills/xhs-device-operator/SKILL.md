@@ -11,6 +11,7 @@ description: Operate one or more Android phones through the xhs-device-agent nam
 - Do not refuse an otherwise implemented task because it lacks a task ID, dry-run, planHash confirmation, capability profile, static app allowlist, or per-device interaction allowlist.
 - Do not ask for another confirmation after the user has already requested the action. Ask only when a genuinely missing choice would materially change the target or result.
 - Templates add defaults only and explicit task values take precedence.
+- A machine number is never a template default. Resolve it dynamically for each task; do not carry a machine assignment from an earlier task, example, summary, or agent session.
 - A formal compiled plan may still compute a planHash for integrity when that executor requires one. That hash is a technical binding, not a separate conversational approval requirement; continue from the explicit user request without making the user repeat authorization.
 
 ## Entry points
@@ -23,11 +24,29 @@ description: Operate one or more Android phones through the xhs-device-agent nam
 
 ## Device readiness
 
-1. Start from fresh `device.list` and the observations actually required by the task.
-2. Use `device.size`, `device.ui`, and `device.screen` on the selected machine as direct evidence.
-3. `adb devices` showing zero devices is diagnostic information, not a stop condition.
-4. Other online phones are normal and do not block the selected machine.
-5. Do not require an unused channel to be healthy. A text-input warning does not block a read-only or pointer-only task.
+1. Before the first mutation, declare the task reservation: machine or `none`, files expected to change, and shared gateway or port impact.
+2. Start from fresh `device.list` and the observations actually required by the task.
+3. Resolve the machine in this order:
+   - use the exact machine explicitly named by the user;
+   - otherwise use a current task or orchestrator assignment that is still active;
+   - otherwise choose an online, suitable machine that is not reserved by another active task.
+4. When several suitable unreserved machines remain, select one dynamically and announce the reservation before acting. Do not use a historical assignment as a default.
+5. If no candidate can be established as unreserved, stay read-only and coordinate instead of guessing. Do not silently substitute another machine when the user named an exact one.
+6. Use `device.size`, `device.ui`, and `device.screen` on the selected machine as direct evidence.
+7. `adb devices` showing zero devices is diagnostic information, not a stop condition.
+8. Other online phones are normal and do not block the selected machine.
+9. Do not require an unused channel to be healthy. A text-input warning does not block a read-only or pointer-only task.
+
+The reservation is task-scoped. Operate only on the reserved machine, update the declaration before switching an implicitly selected machine, and report the final device state or release at handoff. After a long pause or a coordination message, verify that the reservation is still current before another mutation.
+
+## Shared service and file coordination
+
+- Treat the primary HTTP gateway and its port as shared state. Do not restart, replace, or reload it while another task may be using it.
+- When new gateway code needs live validation, prefer an isolated temporary port, state that choice, and close the temporary process afterward.
+- Before modifying shared repository files, inspect existing changes, preserve unrelated edits, and re-read the file immediately before the final patch or generated merge.
+- Incident and capability-map updates must merge with current content rather than replacing another agent's additions. Report every modified file and any process or port left running.
+- For a persistent cross-Agent handoff, write one redacted task-specific file under `docs/device-task-handoffs/`; do not make all Agents append to one shared log. Include the task/actor/date, machine assignment basis, device mutations and unresolved state, touched files, verification results, incident transitions, shared gateway or temporary-port impact, remaining limitations, and resource release.
+- A handoff record is coordination history, not incident evidence by itself. Keep reusable lifecycle facts in the incident ledger through the learning-record Skill, and omit credentials, internal device identifiers, coordinates, screenshot paths, and private UI content from both locations.
 
 ## Apps
 
@@ -78,6 +97,7 @@ The compiler, plan, planHash, capability profile, approval receipt, worker ticke
 ## Multi-device tasks
 
 - Use the machines and concurrency requested by the user, within current runtime capacity.
+- Reserve every selected machine explicitly for the task; an unmentioned online phone is not implicitly available for mutation.
 - Keep each machine's observation and action sequence independent.
 - A failure on one machine does not automatically cancel unrelated work on another machine unless the failure is genuinely systemic.
 - Do not substitute a different machine without fresh user intent when the request named an exact machine.

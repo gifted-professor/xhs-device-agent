@@ -85,7 +85,7 @@ test("ordinary client repeats the single-device, key subset, and exact-package g
   await assert.rejects(() => readClient.invoke("apkList", { devices: "all" }), /exactly one device/u);
 
   const keyClient = createXiaoweiClient({ endpoint, acceptedActions: ["pushEvent"] }, { sendRequest });
-  await assert.rejects(() => keyClient.invoke("pushEvent", {
+  const recent = await keyClient.invoke("pushEvent", {
     devices: "test-device",
     data: { type: "1" },
   }, {
@@ -94,7 +94,9 @@ test("ordinary client repeats the single-device, key subset, and exact-package g
       singleDevice: true,
       expectedPostcondition: "task manager is visible",
     },
-  }), /only HOME and BACK/u);
+  });
+  assert.equal(recent.outcome, "accepted_unverified");
+  sent = false;
 
   const appClient = createXiaoweiClient({ endpoint, acceptedActions: ["startApk"] }, { sendRequest });
   await assert.rejects(() => appClient.invoke("startApk", {
