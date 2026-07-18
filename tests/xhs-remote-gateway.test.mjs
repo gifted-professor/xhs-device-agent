@@ -399,6 +399,17 @@ test("structured device reads expose only their public fields", () => {
     transport: "xiaowei-api", localAdbRequired: false,
   }));
   assert.equal(dmSent.status, "verified");
+  const dmMitigated = parseStructuredReadOutput("xhs.dm.send", JSON.stringify({
+    machine: "01", status: "mitigated", draftLength: 2,
+    verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+    transport: "xiaowei-api", localAdbRequired: false,
+  }));
+  assert.equal(dmMitigated.status, "mitigated");
+  assert.throws(() => parseStructuredReadOutput("xhs.dm.send", JSON.stringify({
+    machine: "01", status: "verified", draftLength: 2,
+    verification: "expected_dm_draft_and_aligned_send_rechecked_then_editor_clear_without_message_echo",
+    transport: "xiaowei-api", localAdbRequired: false,
+  })), /invalid public value/u);
   assert.throws(() => parseStructuredReadOutput("device.node.resolve", JSON.stringify({
     ...resolved, x: 900,
   })), /invalid public shape/u);

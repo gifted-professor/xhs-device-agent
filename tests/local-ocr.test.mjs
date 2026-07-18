@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 
 import { classifyLocalOcrText, createWindowsLocalOcr } from "../scripts/local-ocr.mjs";
@@ -45,7 +46,10 @@ test("Windows OCR adapter parses compact JSON and returns semantic hints only", 
     },
   });
   const result = await localOcr({ imagePath: "C:\\temp\\screen.png" });
-  assert.equal(invocation.file, POWERSHELL_EXECUTABLE);
+  const expectedOcrShell = process.platform === "win32" && process.env.SystemRoot
+    ? path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    : POWERSHELL_EXECUTABLE;
+  assert.equal(invocation.file, expectedOcrShell);
   assert.equal(invocation.args.at(-1), "C:\\temp\\screen.png");
   assert.deepEqual(result, {
     pageType: "NETWORK_ERROR",
@@ -133,6 +137,44 @@ test("exact local OCR passes only semantic crop coordinates and a normalized has
   assert.equal(JSON.stringify(result).includes(input.expectedText), false);
   assert.equal(JSON.stringify(result).includes(input.imagePath), false);
   assert.equal(JSON.stringify(result).includes(digest), false);
+});
+
+test("Windows OCR adapter prefers the Windows PowerShell 5.1 executable for WinRT interop", async () => {
+  const invocations = [];
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async (input) => {
+      invocations.push(input);
+      return { exitCode: 0, stdout: '{"available":true,"matched":true}' };
+    },
+  });
+  await localOcr({
+    mode: "exact_text", imagePath: "screen.png",
+    bounds: { left: 1, top: 2, right: 101, bottom: 42 }, expectedText: "测试",
+  });
+  assert.match(invocations[0].file, /powershell\.exe$/iu);
+  assert.doesNotMatch(invocations[0].file, /pwsh/iu);
+});
+
+test("exact local OCR joins topic-tag markers with spaced Han characters", async () => {
+  const hashes = [];
+  const localOcr = createWindowsLocalOcr({
+    enabled: true,
+    commandRunner: async ({ args }) => {
+      hashes.push(args.at(-1));
+      return { exitCode: 0, stdout: '{"available":true,"matched":false}' };
+    },
+  });
+  const base = {
+    mode: "exact_text",
+    imagePath: "screen.png",
+    bounds: { left: 1, top: 2, right: 101, bottom: 42 },
+  };
+  await localOcr({ ...base, expectedText: "#酸奶推荐" });
+  await localOcr({ ...base, expectedText: "# 酸 奶 推 荐" });
+  await localOcr({ ...base, expectedText: "# 酸 奶 推 荐 ！" });
+  assert.equal(hashes[0], hashes[1]);
+  assert.notEqual(hashes[0], hashes[2]);
 });
 
 test("exact local OCR normalizes script-boundary spacing but never accepts a substring", async () => {

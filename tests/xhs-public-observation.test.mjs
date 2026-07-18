@@ -100,3 +100,16 @@ test("stable XHS note ordinals always come from the second fresh hierarchy", () 
     { title: "第二条", ordinal: 1 },
   ]);
 });
+
+test("comment panel with minute-based reply metadata and a translate chip classifies as COMMENT_PANEL", async () => {
+  const { loadRules } = await import("../scripts/xhs-page-engine.mjs");
+  const { fileURLToPath } = await import("node:url");
+  const rules = await loadRules(fileURLToPath(new URL("../config/xhs-page-rules.json", import.meta.url)));
+  const hierarchy = `<hierarchy><node package="com.xingin.xhs" bounds="[0,0][1080,2400]">
+    <node package="com.xingin.xhs" text="共 1 条评论" clickable="true" bounds="[41,267][228,324]" />
+    <node package="com.xingin.xhs" text="留下你的想法吧" bounds="[222,395][488,451]" />
+    <node package="com.xingin.xhs" text="7分钟前 中国台湾 回复 翻译" bounds="[168,769][810,824]" />
+  </hierarchy>`;
+  const observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: "device-public" });
+  assert.equal(observation.page.state, "COMMENT_PANEL");
+});

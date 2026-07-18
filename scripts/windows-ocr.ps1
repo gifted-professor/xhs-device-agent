@@ -33,7 +33,12 @@ function Normalize-ExactOcrText {
     $han = '[\u2E80-\u2FFF\u3007\u31C0-\u31EF\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]'
     $letterOrNumber = '[\p{L}\p{N}]'
     $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, "($han)\s+(?=$letterOrNumber)", '$1')
-    [System.Text.RegularExpressions.Regex]::Replace($normalized, "($letterOrNumber)\s+(?=$han)", '$1')
+    $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, "($letterOrNumber)\s+(?=$han)", '$1')
+    # Windows OCR also inserts spaces around topic/@-mention markers next to
+    # Han text ("# 酸 奶 推 荐"); join marker and Han so topic-tag targets
+    # hash identically to their on-screen rendering.
+    $normalized = [System.Text.RegularExpressions.Regex]::Replace($normalized, "([#@])\s+(?=$han)", '$1')
+    [System.Text.RegularExpressions.Regex]::Replace($normalized, "($han)\s+(?=[#@])", '$1')
 }
 
 function Get-TextSha256 {
@@ -93,6 +98,24 @@ function Get-LocateMatches {
                     top = $OffsetY + [int][Math]::Floor($rect.Y / $Scale)
                     right = $OffsetX + [int][Math]::Ceiling(($rect.X + $rect.Width) / $Scale)
                     bottom = $OffsetY + [int][Math]::Ceiling(($rect.Y + $rect.Height) / $Scale)
+                }
+            }
+        }
+        # Targets such as topic tags and @-mentions live inside longer OCR
+        # lines; match any contiguous word window whose normalized text equals
+        # the expected hash and report its union bounds.
+        for ($start = 0; $start -lt $words.Count - 1; $start++) {
+            $windowText = [string]$words[$start].Text
+            for ($end = $start + 1; $end -lt $words.Count; $end++) {
+                $windowText = "$windowText $($words[$end].Text)"
+                if ((Get-TextSha256 $windowText).Equals($ExpectedHash, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $windowWords = @($words[$start..$end])
+                    $found += [ordered]@{
+                        left = $OffsetX + [int][Math]::Floor((($windowWords | ForEach-Object { $_.BoundingRect.X } | Measure-Object -Minimum).Minimum) / $Scale)
+                        top = $OffsetY + [int][Math]::Floor((($windowWords | ForEach-Object { $_.BoundingRect.Y } | Measure-Object -Minimum).Minimum) / $Scale)
+                        right = $OffsetX + [int][Math]::Ceiling((($windowWords | ForEach-Object { $_.BoundingRect.X + $_.BoundingRect.Width } | Measure-Object -Maximum).Maximum) / $Scale)
+                        bottom = $OffsetY + [int][Math]::Ceiling((($windowWords | ForEach-Object { $_.BoundingRect.Y + $_.BoundingRect.Height } | Measure-Object -Maximum).Maximum) / $Scale)
+                    }
                 }
             }
         }
