@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/cpa-comment-count.schema.json",
+  "title": "Typed CPA comment count result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "requestId",
+    "artifactSha256",
+    "status",
+    "result",
+    "provider"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "cpa-comment-count/v1"
+    },
+    "requestId": {
+      "type": "string",
+      "pattern": "^[a-f0-9-]{36}$"
+    },
+    "artifactSha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "unknown"
+      ]
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "countKind",
+        "confidence"
+      ],
+      "properties": {
+        "count": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "countKind": {
+          "enum": [
+            "exact",
+            "lower_bound",
+            "unknown"
+          ]
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "adapterId",
+        "modelId"
+      ],
+      "properties": {
+        "adapterId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+        },
+        "modelId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+        }
+      }
+    }
+  }
+}

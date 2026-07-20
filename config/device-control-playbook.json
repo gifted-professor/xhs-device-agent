@@ -1,0 +1,227 @@
+{
+  "schemaVersion": 1,
+  "protocol": "observe_resolve_recheck_execute_verify",
+  "description": "Machine-readable failure taxonomy and deterministic fallback ladder for named device APIs.",
+  "decisionOrder": [
+    "ACCESSIBILITY_EXACT_NODE",
+    "UI_HIERARCHY_FILE_FALLBACK",
+    "OCR_EXACT_NODE",
+    "OCR_SCALED_EXACT_NODE",
+    "RELATIONAL_LAYOUT_NODE",
+    "VISION_NODE",
+    "LOCAL_ICON_NODE",
+    "VERIFIED_PERCENTAGE_POINTER",
+    "PROJECT_COMPATIBILITY_ROUTE",
+    "VERSION_VERIFIED_GATEWAY_RELOAD",
+    "PER_DEVICE_GATEWAY_SCHEDULER",
+    "XHS_FRESH_ORDINAL_VIDEO_FLOW",
+    "REQUEST_SCOPED_ACTION",
+    "HUMAN_REQUIRED"
+  ],
+  "strategies": [
+    {
+      "id": "ACCESSIBILITY_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one exact visible accessibility node from closed text, description, class, resource, clickable, or bounded near-text relation fields; map an exact child to its current clickable ancestor and recheck it before one send."
+    },
+    {
+      "id": "UI_HIERARCHY_FILE_FALLBACK",
+      "status": "implemented",
+      "readCommand": "device.ui",
+      "writeCommand": null,
+      "description": "When uiautomator dump /dev/tty returns status text or incomplete XML, create a compressed XML artifact under the device shell-readable sdcard root, pull it through the official file channel, verify exact bounded size and a complete hierarchy, then remove both temporary copies."
+    },
+    {
+      "id": "OCR_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one exact local OCR node without returning OCR text or coordinates."
+    },
+    {
+      "id": "OCR_SCALED_EXACT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Retry exact local OCR on bounded two-times tiles and map the result back internally."
+    },
+    {
+      "id": "RELATIONAL_LAYOUT_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Infer one node from exact anchors using a closed layout algorithm and restricted region."
+    },
+    {
+      "id": "VISION_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve a visual node through explicit or Hermes auxiliary vision configuration, normalize model extents to an internal safe center, recheck it on a second fresh screenshot within bounded time, and keep coordinates internal."
+    },
+    {
+      "id": "LOCAL_ICON_NODE",
+      "status": "implemented",
+      "readCommand": "device.node.resolve",
+      "writeCommand": "device.node.activate",
+      "description": "Resolve one no-text accessibility icon by closed class, clickable, content-description, near-text, or bounded screen-region ordinal fields without cloud upload or caller coordinates; recheck before one send."
+    },
+    {
+      "id": "VERIFIED_PERCENTAGE_POINTER",
+      "status": "implemented",
+      "readCommand": "device.screen",
+      "writeCommand": "device.tap-coords",
+      "description": "Use one percentage point derived from the current fresh screen only after rechecking the source package; send once, require a fresh explicit postcondition, and never return coordinates in the result."
+    },
+    {
+      "id": "PROJECT_COMPATIBILITY_ROUTE",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Continue through an existing project-wrapped compatibility, development, or private adapter when a named high-level capability is missing; then capture the gap for a reusable named API."
+    },
+    {
+      "id": "VERSION_VERIFIED_GATEWAY_RELOAD",
+      "status": "implemented",
+      "readCommand": "remote.status",
+      "writeCommand": "remote.restart",
+      "description": "Drain the authenticated loopback gateway, release the shared port, and accept a replacement only when its PID owns the listener, its boot identity is fresh, and its build identity matches the current gateway source."
+    },
+    {
+      "id": "PER_DEVICE_GATEWAY_SCHEDULER",
+      "status": "implemented",
+      "readCommand": "gateway.status",
+      "writeCommand": null,
+      "description": "Serialize requests for the same two-digit machine while running different machines concurrently; expose safe active/waiting request metadata, last known page freshness, and non-reversible artifact references through the runtime status endpoint."
+    },
+    {
+      "id": "XHS_FRESH_ORDINAL_VIDEO_FLOW",
+      "status": "implemented",
+      "readCommand": "xhs.find-video",
+      "writeCommand": "xhs.open-visible",
+      "description": "Derive visible note ordinals from the same fresh hierarchy order used for opening, search for a video with bounded verified feed scrolls, and use a single fresh hierarchy for an already-classified video detail observation."
+    },
+    {
+      "id": "REQUEST_SCOPED_ACTION",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Treat an action explicitly included in the current user request as authorized without adding a second approval, dry-run, plan hash, allowlist, or per-step confirmation gate."
+    },
+    {
+      "id": "HUMAN_REQUIRED",
+      "status": "implemented",
+      "readCommand": "device.guide",
+      "writeCommand": null,
+      "description": "Ask only when a genuinely missing target or user choice changes the requested outcome, or when every bounded route is exhausted and physical takeover is required; never use this as a second approval gate."
+    }
+  ],
+  "failureCodes": [
+    {
+      "code": "UI_EMPTY",
+      "stage": "observe",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["UI_HIERARCHY_FILE_FALLBACK", "OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "VERIFIED_PERCENTAGE_POINTER"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "UI_HIERARCHY_INCOMPLETE",
+      "stage": "observe",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["UI_HIERARCHY_FILE_FALLBACK", "OCR_EXACT_NODE", "VISION_NODE"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "NODE_NOT_FOUND",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["OCR_EXACT_NODE", "OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE", "VERIFIED_PERCENTAGE_POINTER"],
+      "stopConditions": ["NODE_AMBIGUOUS"]
+    },
+    {
+      "code": "OCR_MISS",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["OCR_SCALED_EXACT_NODE", "RELATIONAL_LAYOUT_NODE", "VISION_NODE", "LOCAL_ICON_NODE", "VERIFIED_PERCENTAGE_POINTER"],
+      "stopConditions": ["OCR_AMBIGUOUS"]
+    },
+    {
+      "code": "OCR_AMBIGUOUS",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["VISION_NODE", "HUMAN_REQUIRED"],
+      "stopConditions": ["OCR_AMBIGUOUS"]
+    },
+    {
+      "code": "NODE_AMBIGUOUS",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["VISION_NODE", "HUMAN_REQUIRED"],
+      "stopConditions": ["NODE_AMBIGUOUS"]
+    },
+    {
+      "code": "LAYOUT_DRIFT",
+      "stage": "recheck",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["ACCESSIBILITY_EXACT_NODE", "OCR_EXACT_NODE", "VISION_NODE", "HUMAN_REQUIRED"],
+      "stopConditions": ["LAYOUT_DRIFT"]
+    },
+    {
+      "code": "FOREGROUND_DRIFT",
+      "stage": "recheck",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["ACCESSIBILITY_EXACT_NODE", "PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
+      "stopConditions": ["FOREGROUND_DRIFT"]
+    },
+    {
+      "code": "POSTCONDITION_MISS",
+      "stage": "verify",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["HUMAN_REQUIRED"],
+      "stopConditions": ["POSTCONDITION_MISS"]
+    },
+    {
+      "code": "SENSITIVE_SURFACE",
+      "stage": "observe",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["REQUEST_SCOPED_ACTION"],
+      "stopConditions": ["TARGET_UNSPECIFIED"]
+    },
+    {
+      "code": "IDENTITY_DRIFT",
+      "stage": "preflight",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
+      "stopConditions": ["IDENTITY_DRIFT"]
+    },
+    {
+      "code": "CAPABILITY_MISSING",
+      "stage": "resolve",
+      "automatic": true,
+      "terminal": false,
+      "nextStrategies": ["PROJECT_COMPATIBILITY_ROUTE", "HUMAN_REQUIRED"],
+      "stopConditions": ["TARGET_UNSPECIFIED"]
+    },
+    {
+      "code": "TRANSPORT_FAILED",
+      "stage": "transport",
+      "automatic": false,
+      "terminal": true,
+      "nextStrategies": ["VERSION_VERIFIED_GATEWAY_RELOAD", "HUMAN_REQUIRED"],
+      "stopConditions": ["TRANSPORT_FAILED"]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "taskId": "hermes-acceptance-YYYYMMDD-01",
+  "mode": "research_read_only",
+  "topic": "夏季通勤穿搭",
+  "seedKeywords": [
+    "夏季通勤穿搭"
+  ],
+  "sources": [
+    "search",
+    "suggestions",
+    "trending",
+    "recommended"
+  ],
+  "deviceGroup": "acceptance-single-device",
+  "commentMode": "metadata",
+  "interactionPolicy": "human_final",
+  "budgets": {
+    "wallClockSeconds": 300,
+    "maxQueries": 1,
+    "maxNotes": 3,
+    "maxNotesPerQuery": 3,
+    "maxResultScrollsPerQuery": 1,
+    "maxNoteScrolls": 1,
+    "maxCommentPanels": 1,
+    "maxCommentsPerNote": 0,
+    "maxNoNewScrolls": 1
+  },
+  "aiPolicy": {
+    "topicPlanner": false,
+    "pageFallback": true,
+    "resultAnalysis": false,
+    "maxAutomaticCalls": 1
+  }
+}

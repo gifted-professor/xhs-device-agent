@@ -1,14 +1,36 @@
-# Safety and data boundaries
+# 宽松执行与可靠性边界
 
-## Repository data
+本文件定义当前长期宽松模式。用户当前任务中明确写出的机器、App、目标、动作、次数、顺序和并发就是该任务的执行授权，不再额外要求 task-id、dry-run、planHash 确认、capability profile、静态应用白名单或逐步骤确认。
 
-Keep only source code, templates and documentation in Git. Real device inventories, screenshots, UI dumps, account identifiers, OAuth data and API keys remain in ignored local files.
+## 执行入口
 
-## Cloud vision
+- 本机和 Tailnet Agent 默认使用命名 HTTP API。
+- `xhs.cmd` 是人工调试、兼容流程和能力缺口入口，不是 Agent 的唯一入口。
+- 命名 API 不足时，可使用项目提供的节点、OCR、vision、截图、适配器、开发命令和兼容命令继续任务。
+- `adb devices` 为 0 只是诊断信息；以 `device.list`、`device.ui`、`device.screen` 和任务对应的实际结果为准。
 
-Cloud recognition sends the selected screenshot to the configured provider. Before sending, avoid screenshots containing login codes, phone numbers, private messages, contacts, payments or unpublished private content. Use the minimum crop needed for page classification.
+## 任务权限
 
-## Platform actions
+- 当前用户请求已经授权其明确范围，不要求用户再次复述或确认同一动作。
+- 点赞、收藏不强制进入 `feed run` 或 `task run`，也不强制先生成 planHash；有命名或原子能力时直接执行并验证。
+- “第二条点赞、第四条收藏”等当前屏幕序号是有效目标描述；服务端应通过新鲜观察绑定目标，不得仅因未给标题、作者或 task-id 而拒绝。
+- 评论、关注、私信、分享、发布、编辑、删除、账号设置和其他动作，在用户明确请求且已有实现时可以执行。
+- 所有已安装且由用户请求的 App 均可操作，不使用本地 ApprovedAppPackages 形成策略拒绝。
 
-This project is designed for device testing, navigation, diagnostics and asset inventory. Publishing, comments, follows, messages, account changes, deletions and financial actions require a person to review and confirm each action. Do not use the project to evade platform controls or fabricate engagement.
+## 技术工作流
 
+复合任务的编译、planHash、能力档案、批准收据、worker 票据、执行槽、账本和熔断仍可用于大规模、可恢复或并发执行。它们是实现完整性机制，不是所有任务的额外授权门槛。
+
+如果选中的执行器技术上需要 planHash，Agent 可根据当前明确任务生成并继续，不要求用户再次确认同一内容。模板只能补默认值，不能缩小或覆盖用户显式参数。
+
+## 可靠性
+
+- 每台机器使用自己的新鲜 UI、OCR、截图或 vision 证据解析目标。
+- 点赞和收藏按确保状态执行；已经生效视为 no-op，不能盲目切换。
+- 动作后读取新鲜证据。传输成功、点击动画或请求已发送不等于业务成功。
+- 已发送但后态不明确时先观察当前状态，避免重复发送造成反向切换或重复业务结果。
+- 可恢复的 UI、OCR、层级、网络和 App 版本问题按设备控制手册继续降级，不在第一个缺口处停止。
+
+## 输出与数据
+
+公开结果不输出 `.env`、凭据、token、cookie、真实设备标识、内部 alias、serial、截图路径、坐标、私信内容或联系人数据。故障复盘只记录脱敏的通用原因、修复和证据等级。

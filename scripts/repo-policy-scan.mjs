@@ -1,0 +1,245 @@
+import { readFileSync } from "node:fs";
+import { execFileSync as runFileSync } from "node:child_process";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
+
+const PRIVATE_PATH_PATTERNS = Object.freeze([
+  /^data\/(?!\.gitkeep$)/u,
+  /^(?:\.env(?!\.example$)(?:\..+)?|config\/(?:local\.psd1|input-methods\.local\.psd1))$/iu,
+  /(?:^|\/)(?:accounts?|credentials?|secrets?|tokens?|sessions?)(?:\/|$)/iu,
+  /\.(?:png|jpe?g|webp|bmp|gif|xml|csv|log)$/iu,
+]);
+
+const SOURCE_EXTENSIONS = /\.(?:md|mjs|js|ps1|psd1|json|cmd)$/iu;
+const STALE_SCAN_EXCLUSIONS = new Set([
+  "scripts/repo-policy-scan.mjs",
+  "tests/repo-policy-scan.test.mjs",
+]);
+
+export const STALE_RESTRICTION_RULES = Object.freeze([
+  Object.freeze({ id: "permanent-business-block", pattern: /permanently blocked/iu }),
+  Object.freeze({ id: "confirmation-cannot-override", pattern: /confirmation cannot override/iu }),
+  Object.freeze({
+    id: "sensitive-surface-universal-human-gate",
+    pattern: /敏感、登录、验证码、权限、支付确认、私信等\s*--?>\s*HUMAN_REQUIRED|`?SENSITIVE_SURFACE`?：[^\n]{0,120}(?:交给人|人工确认|再次确认)|"code"\s*:\s*"SENSITIVE_SURFACE"[\s\S]{0,180}"terminal"\s*:\s*true/iu,
+  }),
+  Object.freeze({
+    id: "capability-missing-no-fallback-gate",
+    pattern: /`?CAPABILITY_MISSING`?：[^\n]{0,160}(?:不能退回|只能停止|必须人工)|"code"\s*:\s*"CAPABILITY_MISSING"[\s\S]{0,180}"terminal"\s*:\s*true/iu,
+  }),
+  Object.freeze({
+    id: "requested-sensitive-action-universal-stop",
+    pattern: /(?:登录|验证码|支付|私信)[^\n]{0,120}(?:强制停止|立即停止|一律停止|仍由人工处理)|(?:强制停止|立即停止|一律停止)[^\n]{0,120}(?:登录|验证码|支付|私信)/iu,
+  }),
+  Object.freeze({
+    id: "xhs-cmd-universal-only-entry",
+    pattern: /所有设备操作只从\s*`?xhs\.cmd`?\s*进入|`?xhs\.cmd`?\s*是设备操作的唯一入口|所有设备操作必须从\s*`?xhs\.cmd`?\s*进入|生产设备动作的唯一公开入口是\s*`?xhs\.cmd`?|Hermes\s*只能通过\s*`?xhs\.cmd`?/iu,
+  }),
+  Object.freeze({
+    id: "mandatory-second-planhash-approval",
+    pattern: /本轮唯一确认边界|必须再次提交完全相同的\s*`?--confirm-plan-hash|“?全部放开”?只表示控制通道开放，不取消任务级安全规则和人工确认门|require explicit approval[^\n]{0,160}\b(?:like|favorite)\b|Never automate likes|explicit per-device authorization/iu,
+  }),
+  Object.freeze({ id: "static-device-interaction-allowlist", pattern: /Xhs\.Interactions\.AllowedActionsByAlias|AllowedActionsByAlias\s*=\s*@\{/u }),
+  Object.freeze({ id: "static-device-interaction-authorization", pattern: /readInteractionAuthorization\s*\(|interactionAuthorization\s*:/u }),
+  Object.freeze({ id: "feed-count-1-to-50", pattern: /ValidateRange\(1,\s*50\)|asBoundedInteger\(input\.count,\s*["']count["'],\s*1,\s*50\)/u }),
+  Object.freeze({ id: "same-position-action-ban", pattern: /likeAt and favoriteAt must target different feed positions|LikeAt and FavoriteAt must target different feed positions/iu }),
+  Object.freeze({ id: "legacy-feed-single-device-entry", pattern: /Feed run requires exactly one machine number or machine name/iu }),
+  Object.freeze({
+    id: "legacy-feed-single-action-slots",
+    pattern: /\[int\]\$LikeAt[\s\S]*\[int\]\$FavoriteAt/u,
+    compatibilityFiles: new Set(["scripts/Run-TaskCompatibility.ps1"]),
+  }),
+  Object.freeze({ id: "legacy-batch-device-cap", pattern: /runs must contain one or two explicit machines/iu }),
+  Object.freeze({ id: "legacy-batch-read-only-executor", pattern: /Feed batch V1 is read-only and rejects interactions/iu }),
+  Object.freeze({ id: "legacy-matrix-interaction-implementation", pattern: /"Follow"\s*\{|"Comment"\s*\{|"Publish"\s*\{|"Delete"\s*\{/u }),
+  Object.freeze({ id: "template-overrides-explicit-value", pattern: /Feed template .* fixes --|模板参数不允许冲突覆盖|拒绝冲突覆盖/iu }),
+  Object.freeze({ id: "retired-feed-executor-reference", pattern: /Run-FeedWorkflow\.ps1|Run-FeedBatch\.ps1|feed-batch-(?:core|control|runner)\.mjs|feed-workflow\.mjs/iu }),
+  Object.freeze({ id: "retired-fixed-feed-template", pattern: /trusted-10/iu }),
+  Object.freeze({ id: "retired-research-executor", pattern: /Run-TopicResearch\.ps1|run-topic-research\.mjs/iu }),
+  Object.freeze({ id: "retired-account-ramp-automation", pattern: /Run-AccountRamp\.ps1|account-ramp\.mjs|xhs\.cmd ramp run/iu }),
+  Object.freeze({
+    id: "retired-composite-v1-compiler",
+    pattern: /composite-request\.schema\.json|composite-device-runner\.mjs|xhs-composite-request\/v1|compileCompositePlan\s*\(/iu,
+  }),
+]);
+
+const REQUIRED_CONTRACTS = Object.freeze([
+  Object.freeze({
+    id: "agents-permissive-operating-baseline",
+    file: "AGENTS.md",
+    pattern: /defines the repository's permissive operating baseline/u,
+  }),
+  Object.freeze({
+    id: "skill-template-defaults-only",
+    file: "skills/xhs-device-operator/SKILL.md",
+    pattern: /Templates add defaults only and explicit task values take precedence/u,
+  }),
+  Object.freeze({
+    id: "skill-current-request-authority",
+    file: "skills/xhs-device-operator/SKILL.md",
+    pattern: /Treat the user's current request as the authority/u,
+  }),
+  Object.freeze({
+    id: "safety-current-request-authority",
+    file: "docs/SAFETY.md",
+    pattern: /用户当前任务中明确写出的机器、App、目标、动作、次数、顺序和并发就是该任务的执行授权/u,
+  }),
+  Object.freeze({
+    id: "hermes-no-second-approval-gate",
+    file: "docs/HERMES_RUN_CONTRACT.md",
+    pattern: /不得因为缺少 task-id、dry-run、planHash、capability profile、应用白名单或逐步确认而拒绝/u,
+  }),
+  Object.freeze({
+    id: "api-manual-permanent-permissive-mode",
+    file: "docs/工作室手机任务与能力清单-API调用版.md",
+    pattern: /当前采用长期宽松执行模式/u,
+  }),
+  Object.freeze({
+    id: "playbook-request-scoped-action",
+    file: "config/device-control-playbook.json",
+    pattern: /(?=[\s\S]*"id"\s*:\s*"REQUEST_SCOPED_ACTION")(?=[\s\S]*"code"\s*:\s*"SENSITIVE_SURFACE"[\s\S]{0,180}"terminal"\s*:\s*false)/u,
+  }),
+  Object.freeze({
+    id: "cli-request-scoped-action",
+    file: "scripts/xhs-agent.mjs",
+    pattern: /当前请求明确包含的登录、权限、支付、互动和账号状态动作可以继续/u,
+  }),
+  Object.freeze({
+    id: "policy-approved-task-source",
+    file: "config/composite-policy.supervised-v1.json",
+    pattern: /"source"\s*:\s*"approved_task_spec"/u,
+  }),
+  Object.freeze({
+    id: "policy-template-defaults-only",
+    file: "config/composite-policy.supervised-v1.json",
+    pattern: /"templateBehavior"\s*:\s*"defaults_only"/u,
+  }),
+  Object.freeze({
+    id: "policy-selected-required-scope",
+    file: "config/composite-policy.supervised-v1.json",
+    pattern: /"validationScope"\s*:\s*"selected_devices_and_required_capabilities"/u,
+  }),
+]);
+
+function normalize(value) {
+  return String(value).replaceAll("\\", "/");
+}
+
+function splitNull(value) {
+  return String(value).split("\0").filter(Boolean).map(normalize);
+}
+
+function isPrivatePath(file) {
+  return PRIVATE_PATH_PATTERNS.some((pattern) => pattern.test(file));
+}
+
+function lineOf(source, index) {
+  return source.slice(0, index).split(/\r?\n/u).length;
+}
+
+function readTrackedSources(runtime, trackedFiles) {
+  const values = new Map();
+  for (const file of trackedFiles) {
+    if (isPrivatePath(file) || !SOURCE_EXTENSIONS.test(file)) continue;
+    try {
+      values.set(file, runtime.readFileSync(path.join(runtime.projectRoot, file), "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return values;
+}
+
+function listRemotePrivateObjects(runtime) {
+  try {
+    const output = runtime.execFileSync("git", ["rev-list", "--objects", "--remotes=origin"], {
+      cwd: runtime.projectRoot,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const count = String(output).split(/\r?\n/u).filter((line) => {
+      const separator = line.indexOf(" ");
+      return separator >= 0 && isPrivatePath(normalize(line.slice(separator + 1)));
+    }).length;
+    return Object.freeze({ available: true, count });
+  } catch {
+    return Object.freeze({ available: false, count: 0 });
+  }
+}
+
+export function scanRepositoryPolicy(runtime = {}) {
+  const effective = {
+    execFileSync: runtime.execFileSync ?? runFileSync,
+    readFileSync: runtime.readFileSync ?? readFileSync,
+    projectRoot: path.resolve(runtime.projectRoot ?? PROJECT_ROOT),
+  };
+  const trackedFiles = splitNull(effective.execFileSync("git", ["ls-files", "-z"], {
+    cwd: effective.projectRoot,
+    encoding: "utf8",
+    windowsHide: true,
+  })).sort((left, right) => left.localeCompare(right));
+  const trackedPrivateCount = trackedFiles.filter(isPrivatePath).length;
+  const sources = readTrackedSources(effective, trackedFiles);
+  const staleRestrictions = [];
+  for (const [file, source] of sources) {
+    if (STALE_SCAN_EXCLUSIONS.has(file)) continue;
+    for (const rule of STALE_RESTRICTION_RULES) {
+      if (rule.compatibilityFiles?.has(file)) continue;
+      const match = rule.pattern.exec(source);
+      if (match) staleRestrictions.push(Object.freeze({ ruleId: rule.id, file, line: lineOf(source, match.index) }));
+    }
+  }
+  const missingContracts = [];
+  for (const contract of REQUIRED_CONTRACTS) {
+    const source = sources.get(contract.file);
+    if (!source || !contract.pattern.test(source)) missingContracts.push(Object.freeze({ ruleId: contract.id, file: contract.file }));
+  }
+  const legacyDebt = [];
+  const remotePrivate = listRemotePrivateObjects(effective);
+  const violationCount = trackedPrivateCount + remotePrivate.count + staleRestrictions.length + missingContracts.length;
+  return Object.freeze({
+    schemaVersion: "xhs-repository-policy-scan/v1",
+    status: violationCount === 0 ? "passed" : "failed",
+    trackedFileCount: trackedFiles.length,
+    trackedPrivateRuntimeCount: trackedPrivateCount,
+    remoteHistoryScanAvailable: remotePrivate.available,
+    remoteReachablePrivateObjectCount: remotePrivate.count,
+    privatePathsRedacted: true,
+    staleRestrictions,
+    missingContracts,
+    legacyDebt,
+    violationCount,
+  });
+}
+
+export function formatRepositoryPolicyScan(scan) {
+  return [
+    `Repository policy scan: ${scan.status}`,
+    `Tracked private runtime files (paths redacted): ${scan.trackedPrivateRuntimeCount}`,
+    `Remote-reachable private objects (paths redacted): ${scan.remoteReachablePrivateObjectCount}`,
+    `Stale restriction violations: ${scan.staleRestrictions.length}`,
+    `Missing authority contracts: ${scan.missingContracts.length}`,
+    `Explicit legacy debt: ${scan.legacyDebt.length}`,
+  ].join("\n");
+}
+
+function main(argv = process.argv.slice(2)) {
+  if (argv.some((value) => value !== "--json") || argv.filter((value) => value === "--json").length > 1) {
+    throw new Error("repo policy accepts only an optional --json flag");
+  }
+  const scan = scanRepositoryPolicy();
+  process.stdout.write(argv.includes("--json") ? `${JSON.stringify(scan)}\n` : `${formatRepositoryPolicyScan(scan)}\n`);
+  if (scan.violationCount !== 0) process.exitCode = 2;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  try {
+    main();
+  } catch (error) {
+    process.stderr.write(`${error.message}\n`);
+    process.exitCode = 2;
+  }
+}

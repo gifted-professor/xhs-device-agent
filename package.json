@@ -2,13 +2,18 @@
   "name": "xhs-device-agent",
   "version": "0.1.0",
   "private": true,
-  "description": "ADB-first multi-device inventory with optional cloud vision and Feishu Base sync",
+  "description": "Xiaowei matrix and ADB multi-device control with optional cloud vision and Feishu Base sync",
   "type": "module",
   "scripts": {
-    "check": "node --check scripts/cloud-vision.mjs && node --check scripts/greenarrow-api.mjs"
+    "check": "node --check skills/record-device-control-learning/scripts/record-learning.mjs && node --check scripts/powershell-runtime.mjs && node --check scripts/device-control-guide.mjs && node --check scripts/device-node-engine.mjs && node --check scripts/xhs-public-observation.mjs && node --check scripts/cloud-vision.mjs && node --check scripts/greenarrow-api.mjs && node --check scripts/xiaowei-transport.mjs && node --check scripts/xiaowei-action-catalog.mjs && node --check scripts/xiaowei-client.mjs && node --check scripts/xiaowei-api.mjs && node --check scripts/xiaowei-private-api.mjs && node --check scripts/xiaowei-device-read.mjs && node --check scripts/xhs-remote-gateway.mjs && node --check scripts/xiaowei-text-input.mjs && node --check scripts/xhs-agent.mjs && node --check scripts/repo-status.mjs && node --check scripts/repo-audit.mjs && node --check scripts/repo-policy-scan.mjs && node --check scripts/xhs-page-engine.mjs && node --check scripts/feed-device-runner.mjs && node --check scripts/local-environment.mjs && node --check scripts/local-ocr.mjs && node --check scripts/ai-role-runner.mjs && node --check scripts/research-core.mjs && node --check scripts/research-session.mjs && node --check scripts/adb-research-provider.mjs && node --check scripts/navigate-review-candidate.mjs && node --check scripts/sync-research-review.mjs && node --check scripts/task-compiler.mjs && node --check scripts/task-source-device-adapter.mjs && node --check scripts/task-runner.mjs && node --check scripts/task-live-runner.mjs && node --check scripts/task-live-executor.mjs && node --check scripts/composite-execution-coordinator.mjs && node --check scripts/capability-cli.mjs && node --check scripts/legacy-task-converter.mjs",
+    "policy:scan": "node scripts/repo-policy-scan.mjs",
+    "test": "node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "dependencies": {
+    "pinyin-pro": "^3.28.1",
+    "ws": "^8.21.0"
   }
 }
-

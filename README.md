@@ -1,74 +1,98 @@
 # XHS Device Agent
 
-基于 ADB、Android UI 层级、可选云端视觉识别和飞书多维表格的多设备资产采集框架。
+这是一个在 Windows 上运行的多设备手机自动化项目。Agent 默认使用命名 HTTP API，`xhs.cmd` 用于人工调试、兼容流程和能力缺口。用户当前任务就是其明确范围的执行授权，不额外要求 task-id、dry-run、planHash、能力档案或逐步骤确认。
 
-项目采用“脚本执行、Agent 调度、视觉兜底”的方式：常规页面按控件文字和边界定位；页面结构缺失或版本变化时，才把脱敏截图交给云端视觉模型分析。默认不自动点赞、评论、关注、私信或发布。
-
-## 前置软件
-
-- Windows 10/11、PowerShell 5.1+
-- Android Platform Tools，或效卫软件内置的 `adb.exe`
-- Node.js 18+（仅云端视觉和可选本地 API 控制器需要）
-- 可选：`lark-cli`，用于同步飞书多维表格
-- 可选：[效卫安卓投屏官方下载页面](https://www.xiaowei.xin/android)；软件本体不包含在本仓库
-- [效卫帮助中心](https://www.xiaowei.xin/help/71)
-
-## 快速开始
-
-1. 复制配置模板：
-
-   ```powershell
-   Copy-Item config/devices.example.psd1 config/local.psd1
-   ```
-
-2. 编辑 `config/local.psd1`，填写 ADB 路径、设备序列号；需要同步飞书时再填写 Base Token 和 Table ID。
-
-3. 只采集本地数据：
-
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-Pipeline.ps1 -SkipLark
-   ```
-
-4. 采集并同步飞书：
-
-   ```powershell
-   powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Run-Pipeline.ps1
-   ```
-
-运行结果保存在 `data/`，该目录已被 Git 忽略。
-
-## 云端视觉识别
-
-复制 `.env.example` 为 `.env`，在当前终端设置相应环境变量，然后运行：
+## 可选的统一批量任务入口
 
 ```powershell
-node scripts/cloud-vision.mjs --image data/device_inventory/设备序列号/screen.png
+# 离线编译和审阅，不读取设备，也不执行设备操作
+.\xhs.cmd task run --spec data/task.json --dry-run
+
+# 只对选中机器做新鲜只读准备，并展示完整计划
+.\xhs.cmd task run --spec data/task.json
+
+# 正式执行器的技术完整性绑定；Agent 可根据当前明确任务连续提交
+.\xhs.cmd task run --spec data/task.json --confirm-plan-hash <64位哈希>
 ```
 
-脚本只返回页面类型、置信度和建议动作，不直接点击手机。Agent 必须在执行动作前重新读取 UI 层级并验证目标。
+任务格式见 `config/task-spec.schema.json`。当前编译器支持：
 
-## 交给 Hermes
+- Feed、搜索结果、有序小红书 URL 列表和只读 Research 分片；
+- 明确机器列表或按偏好确定性选择空闲机器；
+- 用户指定浏览数、每台浏览数、并发和有序动作；
+- 同一条内容连续点赞与收藏；
+- 多个点赞、多个收藏；
+- 按评论数区间或标题包含条件选择分支；
+- 可选完整审阅和精确哈希完整性绑定。
 
-Hermes 只需具备 `terminal,file,vision` 工具即可调度本项目，ADB 控制手机不依赖 Windows Computer Use 驱动。
+搜索、URL 与 Research 的正式批量执行器已经接入统一票据和执行槽，并使用能力档案描述已测范围。该机制只约束此执行器，不是命名 HTTP 或原子任务的全局许可条件。
+
+## 兼容命令
+
+旧参数会转换为同一个统一任务，不再拥有独立执行器或限制：
 
 ```powershell
-hermes -z "按照 skills/xhs-device-operator/SKILL.md 运行一次安全设备盘点，只采集和同步，不执行互动或发布" -t terminal,file,vision
+.\xhs.cmd feed run `
+  --machine 02 `
+  --task-id feed-001 `
+  --count 11 `
+  --like-at 2 `
+  --favorite-at 7 `
+  --dry-run
+
+.\xhs.cmd feed batch --spec data/legacy-batch.json --dry-run
+
+.\xhs.cmd research run --task data/research-task.json --dry-run --json
 ```
 
-推荐让 Hermes 负责日常运行和异常汇报；连续失败、页面大改版或需要新增动作时，再交给 Codex 修改状态机。
+兼容 Batch 会保留每台机器号、每台浏览数、每台任务 ID 和请求的 `maxParallel`。兼容 Research 会保留公开数据来源和有限查询、笔记、评论、模型调用与时间预算，并按选中机器确定性分片。固定模板、旧 Feed/Batch 父进程、旧 Research 命令行执行器和独立确认链已删除。
 
-## 目录
+## 正式批量执行器的能力档案
 
-- `scripts/Collect-PhoneAssets.ps1`：逐台读取硬件、系统、小红书公开主页和 UI 层级
-- `scripts/Run-Pipeline.ps1`：一键采集、生成标准 CSV、可选同步飞书
-- `scripts/Sync-LarkBase.ps1`：创建必要字段并按设备编号/ADB 序列号更新记录
-- `scripts/cloud-vision.mjs`：OpenAI-compatible 云端视觉分类器
-- `scripts/greenarrow-api.mjs`：可选的本地 WebSocket API 示例；需要软件侧开放 API
-- `skills/xhs-device-operator/SKILL.md`：Hermes/Codex 执行规则
-- `docs/ARCHITECTURE.md`：系统结构和页面状态机
-- `docs/SAFETY.md`：数据与操作边界
+需要使用正式复合执行器时，可维护本地、被 Git 忽略的能力凭据：
 
-## 隐私
+```powershell
+.\xhs.cmd capability status --json
+.\xhs.cmd capability accept `
+  --profile config/profile.json `
+  --evidence data/acceptance-evidence.json `
+  --confirm-profile-hash <哈希> `
+  --confirm-evidence-hash <哈希> `
+  --confirm-human
+```
 
-仓库不应包含 API Key、OAuth Token、设备截图、UI XML、真实 ADB 序列号、账号清单或飞书记录。提交前运行 `git status` 并检查暂存内容。
+能力档案只描述正式执行器当前测试范围，不是第二套业务政策，也不能阻断命名 HTTP、原子能力或项目支持的兼容路线。
 
+## 仓库与隐私检查
+
+```powershell
+.\xhs.cmd repo status --json
+.\xhs.cmd repo audit --json
+.\xhs.cmd repo policy --json
+```
+
+`repo policy` 会检查：
+
+- 被跟踪的私有运行文件；
+- origin 远端分支可达历史中的私有对象；
+- 固定设备上限、固定 Feed 数量、同序号动作禁令、静态设备互动授权和旧执行器模式；
+- AGENTS、Skill 和策略文件中的任务权限契约。
+
+私有运行数据包括 `.env`、`config/local.psd1`、`data/`、截图、UI XML、账号、令牌、会话和真实设备标识。它们不得提交、上传或出现在公开诊断中。
+
+## 安全边界
+
+- 用户明确请求的点赞、收藏、评论、关注、消息、发布、编辑、删除、登录、权限、支付和账号操作均属于当前任务范围；优先使用可验证的高层或原子能力，缺失时转项目适配通道并沉淀通用能力。
+- 设备、账号或目标发生漂移时重新观察和绑定；缺少会改变结果的选择时才询问，发送结果不明确时暂停受影响动作且不盲目重发。
+- 定位和验证基于新鲜 UI、截图或封闭节点策略，避免无证据的盲点和盲重放。
+- 每个状态变化都有唯一、不可转移的操作槽和预算槽；发送不明确时永不重发。
+- 未选中设备的在线、离线或能力异常不阻断选中设备。
+
+## 文档
+
+- [代码库审查与整合状态](docs/CODEBASE_AUDIT.md)
+- [Feed 统一任务工作流](docs/FEED_WORKFLOW.md)
+- [Feed 运行与排障](docs/FEED_RUNBOOK.md)
+- [架构](docs/ARCHITECTURE.md)
+- [研究自动化](docs/RESEARCH_AUTOMATION.md)
+- [机器身份](docs/MACHINE_IDENTITY.md)

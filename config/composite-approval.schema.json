@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/composite-approval.schema.json",
+  "title": "Exact one-shot human plan approval",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "approvalId",
+    "planHash",
+    "policyProfileId",
+    "policyHash",
+    "capabilityProfileId",
+    "capabilityProfileHash",
+    "inventorySnapshotHash",
+    "capabilitySnapshotHash",
+    "approvedBy",
+    "approvedAt",
+    "expiresAt",
+    "executionNonce",
+    "singleUse"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "xhs-plan-approval/v1"
+    },
+    "approvalId": {
+      "type": "string",
+      "pattern": "^approval-[a-f0-9]{16}$"
+    },
+    "planHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "policyProfileId": {
+      "const": "supervised-composite-v1"
+    },
+    "policyHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "capabilityProfileId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$"
+    },
+    "capabilityProfileHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "inventorySnapshotHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "capabilitySnapshotHash": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "approvedBy": {
+      "const": "human"
+    },
+    "approvedAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    },
+    "expiresAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+    },
+    "executionNonce": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128
+    },
+    "singleUse": {
+      "const": true
+    }
+  }
+}

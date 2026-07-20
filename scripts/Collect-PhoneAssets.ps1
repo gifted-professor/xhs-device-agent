@@ -1,11 +1,22 @@
 ﻿param(
     [string]$AdbPath = "D:\download\lvjian\tools\adb.exe",
-    [string]$OutputDir = "$PSScriptRoot\..\data\device_inventory",
-    [switch]$OpenXhsProfile
+    [string]$OutputDir,
+    [switch]$OpenXhsProfile,
+    [string]$DeviceSerialsCsv = $env:XHS_LOCKED_DEVICE_SERIALS_CSV,
+    [string]$DeviceAliasesCsv = $env:XHS_LOCKED_DEVICE_ALIASES_CSV
 )
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$dataRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot "data"))
+if (!$OutputDir) { $OutputDir = Join-Path $dataRoot "device_inventory" }
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
+$dataRootPrefix = $dataRoot.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+if (!$OutputDir.Equals($dataRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+    !$OutputDir.StartsWith($dataRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "资产、截图和 UI 层级只能写入项目中已忽略的 data 目录"
+}
 
 function Invoke-Adb {
     param(
@@ -56,9 +67,79 @@ function Get-UiSummary {
 
 function Save-UiHierarchy {
     param([string]$Serial, [string]$LocalPath, [string]$RemotePath = "/sdcard/codex_inventory_window.xml")
-    Invoke-Adb $Serial shell uiautomator dump $RemotePath | Out-Null
-    Invoke-Adb $Serial pull $RemotePath $LocalPath | Out-Null
-    Test-Path -LiteralPath $LocalPath
+    Remove-Item -LiteralPath $LocalPath -Force -ErrorAction SilentlyContinue
+    try {
+        Invoke-Adb $Serial shell rm -f $RemotePath | Out-Null
+        Invoke-Adb $Serial shell uiautomator dump $RemotePath | Out-Null
+        Invoke-Adb $Serial pull $RemotePath $LocalPath | Out-Null
+        Test-Path -LiteralPath $LocalPath
+    } finally {
+        # Device-side diagnostics are temporary and may contain account data.
+        try { Invoke-Adb $Serial shell rm -f $RemotePath | Out-Null } catch {}
+    }
+}
+
+function Normalize-UiFingerprintText {
+    param([string]$Value)
+    if ($null -eq $Value) { return "" }
+    $normalized = ($Value -replace '\s+', ' ').Trim()
+    $normalized = $normalized -replace '(?i)\b(?:just now|today|yesterday|\d+\s*(?:sec(?:ond)?s?|min(?:ute)?s?|hours?|days?|weeks?|months?|years?)\s+ago)\b', '<relative-time>'
+    $normalized = $normalized -replace '(?:\u521A\u521A|\u6628\u5929|\u524D\u5929|\u4ECA\u5929|\d+\s*(?:\u79D2|\u5206\u949F|\u5C0F\u65F6|\u5929|\u5468|\u6708|\u5E74)\u524D)', '<relative-time>'
+    $normalized = $normalized -replace '(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)', '<clock>'
+    $normalized = $normalized -replace '\d+(?:[.,]\d+)?', '<number>'
+    $normalized
+}
+
+function Get-UiFingerprint {
+    param([string]$XmlPath)
+    if (!(Test-Path -LiteralPath $XmlPath -PathType Leaf)) { throw "UI hierarchy file was not created: $XmlPath" }
+
+    [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
+    $builder = New-Object System.Text.StringBuilder
+    $attributeNames = @("class", "resource-id", "text", "content-desc", "clickable", "enabled", "checked", "selected", "scrollable")
+    foreach ($node in $doc.SelectNodes("//node")) {
+        foreach ($name in $attributeNames) {
+            $value = ([string]$node.GetAttribute($name) -replace '\s+', ' ').Trim()
+            if ($name -in @("text", "content-desc")) { $value = Normalize-UiFingerprintText $value }
+            [void]$builder.Append($name).Append("=").Append($value).Append([char]31)
+        }
+        [void]$builder.Append([char]30)
+    }
+
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($builder.ToString())
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Wait-UiStable {
+    param(
+        [string]$Serial,
+        [string]$DeviceDir,
+        [string]$Prefix,
+        [int]$TimeoutMilliseconds = 8000
+    )
+
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    $previousFingerprint = $null
+    $sample = 0
+    while ($timer.ElapsedMilliseconds -lt $TimeoutMilliseconds) {
+        $sample++
+        $path = Join-Path $DeviceDir "$Prefix-$sample.xml"
+        if (!(Save-UiHierarchy $Serial $path)) { throw "Unable to save UI hierarchy while waiting for a stable page" }
+        $fingerprint = Get-UiFingerprint $path
+        if ($timer.ElapsedMilliseconds -ge $TimeoutMilliseconds) { break }
+        if ($null -ne $previousFingerprint -and $fingerprint -eq $previousFingerprint) {
+            return [pscustomobject]@{ path = $path; fingerprint = $fingerprint; samples = $sample }
+        }
+        $previousFingerprint = $fingerprint
+        if (($timer.ElapsedMilliseconds + 500) -ge $TimeoutMilliseconds) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    throw "UI did not produce two identical normalized hierarchy fingerprints 500ms apart within 8 seconds"
 }
 
 function Get-SemanticTapPoint {
@@ -81,6 +162,36 @@ function Get-SemanticTapPoint {
     return $null
 }
 
+function Find-SemanticTapPoint {
+    param([string]$Serial, [string]$Label, [string]$DeviceDir)
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $xml = Join-Path $DeviceDir "profile-target-$attempt.xml"
+        if (Save-UiHierarchy $Serial $xml) {
+            $point = Get-SemanticTapPoint $xml $Label
+            if ($point) { return $point }
+        }
+        if ($attempt -eq 1) { Start-Sleep -Milliseconds 500 }
+    }
+    return $null
+}
+
+function Test-XmlText {
+    param([string]$XmlPath, [string]$Label)
+    if (!(Test-Path -LiteralPath $XmlPath -PathType Leaf)) { return $false }
+    [xml]$doc = Get-Content -LiteralPath $XmlPath -Raw -Encoding UTF8
+    [bool]@($doc.SelectNodes("//node") | Where-Object {
+        ([string]$_.text).IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0 -or
+        ([string]$_.'content-desc').IndexOf($Label, [System.StringComparison]::Ordinal) -ge 0
+    } | Select-Object -First 1).Count
+}
+
+function Test-FocusedPackage {
+    param([string]$Serial, [string]$PackageName)
+    $raw = Invoke-Adb $Serial shell dumpsys window windows | Out-String
+    $focus = @($raw -split '\r?\n' | Where-Object { $_ -match 'mCurrentFocus|mFocusedApp' }) -join " "
+    $focus -match [regex]::Escape($PackageName)
+}
+
 function Get-ProfileValue {
     param([string[]]$Texts, [string]$Pattern)
     foreach ($value in $Texts) {
@@ -96,17 +207,57 @@ if (!(Test-Path -LiteralPath $AdbPath)) {
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $deviceLines = & $AdbPath devices | Select-Object -Skip 1
-$serials = @(
+$onlineSerials = @(
     foreach ($line in $deviceLines) {
         if ($line -match '^([^\s]+)\s+device$') { $matches[1] }
     }
 )
 
-if (!$serials.Count) { throw "没有发现在线 ADB 设备" }
+if (!$onlineSerials.Count) { throw "没有发现在线 ADB 设备" }
 
-$inventory = foreach ($serial in $serials) {
-    Write-Host "采集设备 $serial ..."
-    $deviceDir = Join-Path $OutputDir $serial
+$serials = $onlineSerials
+if ($DeviceSerialsCsv) {
+    $requestedSerials = @($DeviceSerialsCsv -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if (!$requestedSerials.Count -or @($requestedSerials | Select-Object -Unique).Count -ne $requestedSerials.Count) {
+        throw "显式设备清单为空或包含重复项"
+    }
+    if (@($requestedSerials | Where-Object { $_ -notmatch '^[A-Za-z0-9._:-]{1,128}$' }).Count) {
+        throw "显式设备清单包含无效序列号格式"
+    }
+    if (@($requestedSerials | Where-Object { $_ -notin $onlineSerials }).Count) {
+        throw "锁定后的目标设备已离线；停止采集"
+    }
+    $serials = $requestedSerials
+}
+
+$displayAliases = @()
+if ($DeviceAliasesCsv) {
+    $displayAliases = @($DeviceAliasesCsv -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if ($displayAliases.Count -ne $serials.Count) {
+        throw "设备别名数量必须与锁定设备数量一致"
+    }
+    if (@($displayAliases | Select-Object -Unique).Count -ne $displayAliases.Count) {
+        throw "设备别名必须唯一"
+    }
+    if (@($displayAliases | Where-Object { $_ -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$' }).Count) {
+        throw "设备别名格式无效"
+    }
+    for ($aliasIndex = 0; $aliasIndex -lt $displayAliases.Count; $aliasIndex++) {
+        if ($displayAliases[$aliasIndex].Equals([string]$serials[$aliasIndex], [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "设备别名不能等于真实设备序列号"
+        }
+    }
+} else {
+    # Direct local runs still avoid revealing raw hardware identifiers in
+    # console output and directory names.
+    for ($i = 0; $i -lt $serials.Count; $i++) { $displayAliases += "device-$($i + 1)" }
+}
+
+$inventory = for ($deviceIndex = 0; $deviceIndex -lt $serials.Count; $deviceIndex++) {
+    $serial = [string]$serials[$deviceIndex]
+    $deviceAlias = [string]$displayAliases[$deviceIndex]
+    Write-Host "采集设备别名 $deviceAlias ..."
+    $deviceDir = Join-Path $OutputDir $deviceAlias
     New-Item -ItemType Directory -Force -Path $deviceDir | Out-Null
 
     $wmSizeText = (Invoke-Adb $serial shell wm size | Out-String).Trim()
@@ -124,26 +275,40 @@ $inventory = foreach ($serial in $serials) {
 
     $xhsInstalled = $packageText -match 'Package \[com\.xingin\.xhs\]'
     $xhsVersion = Get-FirstMatch $packageText '^\s*versionName=([^\r\n]+)'
+    $profileNavigationStatus = "not_requested"
+    $profileNavigationError = $null
 
-    if ($OpenXhsProfile -and $xhsInstalled) {
-        Invoke-Adb $serial shell am start -n com.xingin.xhs/.index.v2.IndexActivityV2 | Out-Null
-        Start-Sleep -Seconds 4
+    if ($OpenXhsProfile -and !$xhsInstalled) {
+        $profileNavigationStatus = "unavailable"
+        $profileNavigationError = "XHS is not installed"
+    } elseif ($OpenXhsProfile -and $xhsInstalled) {
+        $profileNavigationStatus = "pending"
+        try {
+            # Resolve the launcher through Android instead of pinning an XHS
+            # activity name that changes between app versions.
+            Invoke-Adb $serial shell monkey -p com.xingin.xhs -c android.intent.category.LAUNCHER 1 | Out-Null
+            Wait-UiStable $serial $deviceDir "profile-entry" | Out-Null
+            if (!(Test-FocusedPackage $serial "com.xingin.xhs")) { throw "Profile precondition failed: XHS was not focused; device navigation stopped" }
 
-        # 每台手机和每个小红书版本布局可能不同：优先按控件语义定位“我”，坐标仅作兜底。
-        $navigationXml = Join-Path $deviceDir "navigation.xml"
-        Save-UiHierarchy $serial $navigationXml | Out-Null
-        $tapPoint = Get-SemanticTapPoint $navigationXml '我'
-        if ($tapPoint) {
+            $profileLabel = -join @([char]25105)
+            $tapPoint = Find-SemanticTapPoint $serial $profileLabel $deviceDir
+            if (!$tapPoint) { throw "Profile target was not found after two semantic hierarchy reads; device navigation stopped" }
+
             Invoke-Adb $serial shell input tap $tapPoint.x $tapPoint.y | Out-Null
-        } else {
-            $parts = $size -split 'x'
-            if ($parts.Count -eq 2) {
-                $tapX = [math]::Round([int]$parts[0] * 0.93)
-                $tapY = [math]::Round([int]$parts[1] * 0.95)
-                Invoke-Adb $serial shell input tap $tapX $tapY | Out-Null
-            }
+            $stable = Wait-UiStable $serial $deviceDir "profile-after"
+            $publicIdLabel = -join @(23567, 32418, 20070, 21495 | ForEach-Object { [char]$_ })
+            $followerLabel = -join @(31881, 19997 | ForEach-Object { [char]$_ })
+            $followingLabel = -join @(20851, 27880 | ForEach-Object { [char]$_ })
+            $engagementLabel = -join @(33719, 36190, 19982, 25910, 34255 | ForEach-Object { [char]$_ })
+            $hasId = Test-XmlText $stable.path $publicIdLabel
+            $hasMetric = (Test-XmlText $stable.path $followerLabel) -or (Test-XmlText $stable.path $followingLabel) -or (Test-XmlText $stable.path $engagementLabel)
+            if (!$hasId -or !$hasMetric) { throw "Profile verification failed: public ID and profile metrics were not both present; device navigation stopped" }
+            $profileNavigationStatus = "verified"
+        } catch {
+            $profileNavigationStatus = "failed"
+            $profileNavigationError = $_.Exception.Message
+            Write-Warning "Profile navigation failed for one device; see inventory status"
         }
-        Start-Sleep -Seconds 3
         $windowText = Invoke-Adb $serial shell dumpsys window windows | Out-String
     }
 
@@ -152,10 +317,19 @@ $inventory = foreach ($serial in $serials) {
     $localXml = Join-Path $deviceDir "window.xml"
     $localPng = Join-Path $deviceDir "screen.png"
 
-    Save-UiHierarchy $serial $localXml $remoteXml | Out-Null
+    $hierarchyCaptured = Save-UiHierarchy $serial $localXml $remoteXml
     # 直接执行二进制截图与拉取，避免 PowerShell 包装函数吞掉文件输出。
-    & $AdbPath -s $serial shell screencap -p $remotePng 2>$null | Out-Null
-    & $AdbPath -s $serial pull $remotePng $localPng 2>$null | Out-Null
+    Remove-Item -LiteralPath $localPng -Force -ErrorAction SilentlyContinue
+    $screenshotCaptured = $false
+    try {
+        Invoke-Adb $serial shell rm -f $remotePng | Out-Null
+        & $AdbPath -s $serial shell screencap -p $remotePng 2>$null | Out-Null
+        & $AdbPath -s $serial pull $remotePng $localPng 2>$null | Out-Null
+        $screenshotCaptured = Test-Path -LiteralPath $localPng -PathType Leaf
+    } finally {
+        # Always remove the device-side frame even when capture or pull fails.
+        try { Invoke-Adb $serial shell rm -f $remotePng | Out-Null } catch {}
+    }
 
     $uiItems = Get-UiSummary $localXml
     $uiItems | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $deviceDir "page_structure.csv")
@@ -163,9 +337,19 @@ $inventory = foreach ($serial in $serials) {
     $visibleTexts | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $deviceDir "visible_texts.txt")
 
     $xhsLabel = -join @(0x5C0F, 0x7EA2, 0x4E66, 0x53F7 | ForEach-Object { [char]$_ })
+    $followerMetricLabel = -join @(31881, 19997 | ForEach-Object { [char]$_ })
+    $followingMetricLabel = -join @(20851, 27880 | ForEach-Object { [char]$_ })
+    $engagementMetricLabel = -join @(33719, 36190, 19982, 25910, 34255 | ForEach-Object { [char]$_ })
     $xhsId = @($visibleTexts | Where-Object { $_.StartsWith($xhsLabel) } | Select-Object -First 1)
     $ipRegion = @($visibleTexts | Where-Object { $_.StartsWith('IP') } | Select-Object -First 1)
-    $profileDetected = [bool]$xhsId.Count
+    $profileMetricsDetected = [bool]@($visibleTexts | Where-Object {
+        $_.Contains($followerMetricLabel) -or $_.Contains($followingMetricLabel) -or $_.Contains($engagementMetricLabel)
+    } | Select-Object -First 1).Count
+    $profileDetected = [bool]($xhsId.Count -and $profileMetricsDetected)
+    if ($OpenXhsProfile -and $profileNavigationStatus -eq "verified" -and !$profileDetected) {
+        $profileNavigationStatus = "failed"
+        $profileNavigationError = "Final hierarchy did not retain both public ID and profile metrics"
+    }
     $nickname = Get-ProfileValue $visibleTexts '^头像,(.+)$'
     $followingCount = Get-ProfileValue $visibleTexts '^(\d+)关注$'
     $followerCount = Get-ProfileValue $visibleTexts '^(\d+)粉丝$'
@@ -185,6 +369,7 @@ $inventory = foreach ($serial in $serials) {
 
     $result = [PSCustomObject]@{
         collectedAt       = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        alias             = $deviceAlias
         serial            = $serial
         manufacturer      = Get-Prop $serial 'ro.product.manufacturer'
         brand             = Get-Prop $serial 'ro.product.brand'
@@ -205,8 +390,10 @@ $inventory = foreach ($serial in $serials) {
         xhsVersion        = $xhsVersion
         currentFocus      = Get-FirstMatch $windowText 'mCurrentFocus=.*?\s([A-Za-z0-9._]+/[A-Za-z0-9.$_]+)'
         profileDetected   = $profileDetected
+        profileNavigationStatus = $profileNavigationStatus
+        profileNavigationError  = $profileNavigationError
         xhsNickname       = $nickname
-        xhsPublicId       = if ($xhsId.Count) { $xhsId[0] -replace '^.*?[:：]\s*', '' } else { $null }
+        xhsPublicId       = if ($profileDetected) { $xhsId[0] -replace '^.*?[:\uFF1A]\s*', '' } else { $null }
         xhsIpRegion       = if ($ipRegion.Count) { $ipRegion[0] -replace '^IP[:：]\s*', '' } else { $null }
         xhsFollowing      = $followingCount
         xhsFollowers      = $followerCount
@@ -216,8 +403,8 @@ $inventory = foreach ($serial in $serials) {
         xhsCollections    = $collectionCount
         xhsProfileDetails = ($profileDetails | Select-Object -Unique) -join '；'
         visibleTextCount  = $visibleTexts.Count
-        screenshotPath    = $localPng
-        hierarchyPath     = $localXml
+        screenshotPath    = if ($screenshotCaptured) { $localPng } else { $null }
+        hierarchyPath     = if ($hierarchyCaptured) { $localXml } else { $null }
     }
 
     $result | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $deviceDir "inventory.json")
@@ -227,5 +414,5 @@ $inventory = foreach ($serial in $serials) {
 $inventory | Export-Csv -NoTypeInformation -Encoding UTF8 -LiteralPath (Join-Path $OutputDir "devices.csv")
 $inventory | ConvertTo-Json -Depth 5 | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $OutputDir "devices.json")
 
-$inventory | Format-Table serial,model,androidVersion,resolution,xhsInstalled,xhsVersion,profileDetected,xhsPublicId -AutoSize
+$inventory | Format-Table alias,model,androidVersion,resolution,xhsInstalled,xhsVersion,profileDetected -AutoSize
 Write-Host "采集完成：$OutputDir"

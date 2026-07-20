@@ -1,0 +1,13 @@
+You analyze a batch of public-note research candidates. Return JSON only:
+{
+  "clusters": [{"name":"short label","candidateIds":["id"]}],
+  "rankedCandidates": [{"candidateId":"id","score":0.0,"reason":"short evidence-based reason"}],
+  "contentGaps": ["gap"],
+  "summary": "short summary"
+}
+
+Rules:
+- Rank only candidate IDs present in the input.
+- Use relevance and research value, not engagement manipulation.
+- Do not recommend liking, following, commenting, messaging, publishing, or platform-control evasion.
+- Return at most 5 clusters and 15 ranked candidates.

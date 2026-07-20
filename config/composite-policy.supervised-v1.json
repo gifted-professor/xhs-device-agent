@@ -1,0 +1,135 @@
+{
+  "schemaVersion": "xhs-composite-policy/v1",
+  "policyProfileId": "supervised-composite-v1",
+  "actionRegistryVersion": "composite-actions/v1",
+  "businessAuthority": {
+    "source": "approved_task_spec",
+    "templateBehavior": "defaults_only",
+    "explicitTaskValuesWin": true,
+    "validationScope": "selected_devices_and_required_capabilities",
+    "midRunBusinessConfirmation": false
+  },
+  "allowedActions": [
+    "feed.scroll",
+    "feed.open_visible",
+    "search.open_results",
+    "search.open_result",
+    "content.open_xhs_url",
+    "research.collect",
+    "detail.inspect",
+    "detail.evaluate_title_rule",
+    "image.scroll_content",
+    "video.advance",
+    "comments.observe_count",
+    "comments.open",
+    "comments.collect",
+    "comments.close",
+    "navigation.return_to_feed",
+    "navigation.return_to_source",
+    "wait.for_condition",
+    "recover.to_feed",
+    "engagement.ensure_liked",
+    "engagement.ensure_favorited"
+  ],
+  "mandatoryStops": [
+    "captcha",
+    "risk_control",
+    "account_restriction",
+    "unexpected_auth",
+    "identity_verification",
+    "system_permission",
+    "payment",
+    "private_or_restricted",
+    "identity_drift",
+    "unverified_state_change"
+  ],
+  "globalFuseClasses": [
+    "ambiguous_account_state",
+    "sensitive_page",
+    "identity_drift",
+    "approval_mismatch",
+    "parent_lease_loss",
+    "budget_integrity",
+    "evidence_integrity",
+    "forbidden_action",
+    "human_interrupt",
+    "systemic_failure_quorum"
+  ],
+  "localFailureClasses": [
+    "navigation_failure",
+    "target_unavailable",
+    "read_only_timeout",
+    "comment_unknown"
+  ],
+  "conditionIds": [
+    "foreground_xhs",
+    "page_stable",
+    "feed_ready",
+    "detail_ready",
+    "comment_panel_open",
+    "valid_visit_target_not_met"
+  ],
+  "recoveryStrategyIds": [
+    "back_once_then_verify",
+    "relaunch_once_then_verify"
+  ],
+  "fallbackIds": [
+    "feed_scroll_once_then_skip",
+    "skip_target",
+    "comment_unknown_shallow"
+  ],
+  "commentPolicy": {
+    "policyRef": "count-adaptive-v1",
+    "unknownFallback": "comment_unknown_shallow",
+    "maxNoNewScrolls": 2,
+    "budgetSource": "compiled_plan_within_capability_profile",
+    "bandsAreDefaults": true,
+    "bands": [
+      {
+        "band": "ZERO",
+        "maxScrolls": 0,
+        "maxItems": 0
+      },
+      {
+        "band": "ONE_TO_FIVE",
+        "maxScrolls": 1,
+        "maxItems": 5
+      },
+      {
+        "band": "SIX_TO_TWENTY",
+        "maxScrolls": 3,
+        "maxItems": 20
+      },
+      {
+        "band": "TWENTY_ONE_TO_NINETY_NINE",
+        "maxScrolls": 5,
+        "maxItems": 30
+      },
+      {
+        "band": "HUNDRED_PLUS",
+        "maxScrolls": 8,
+        "maxItems": 50
+      },
+      {
+        "band": "UNKNOWN",
+        "maxScrolls": 1,
+        "maxItems": 5
+      }
+    ]
+  },
+  "supervision": {
+    "foregroundOnly": true,
+    "humanInterrupt": true,
+    "intermediateConfirmation": false,
+    "confirmationMode": "single_plan_approval",
+    "postApprovalExecution": "continuous_within_approved_plan",
+    "readinessScope": "required_capabilities_only",
+    "terminalReportMode": "single_terminal_or_blocked",
+    "otherOnlineDevicesBlock": false,
+    "deviceSubstitutionAfterApproval": false,
+    "strongVerificationActions": [
+      "engagement.ensure_liked",
+      "engagement.ensure_favorited"
+    ]
+  }
+}

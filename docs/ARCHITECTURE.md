@@ -1,28 +1,76 @@
-# Architecture
+# 系统架构
 
-## Execution layers
+## 唯一执行链
 
-1. **Deterministic ADB layer**: launches packages, dumps UI hierarchy, captures screenshots, taps semantic bounds and reads device properties.
-2. **Per-device page map**: stores model, Android/app version, visible controls, bounds and the last verified page type.
-3. **Cloud vision fallback**: classifies screenshots only when the UI hierarchy is insufficient. It proposes an action but never executes it.
-4. **Agent orchestrator**: Hermes or Codex selects the next safe state transition, verifies the result and records failures.
-5. **Asset sink**: local CSV/JSON and optional Feishu Base synchronization.
+所有设备相关任务都从 `xhs.cmd` 进入：
 
-## Page state strategy
+```text
+xhs.cmd
+→ scripts/xhs-agent.mjs
+→ PowerShell 规范包装器
+→ 统一任务编译、审核、批准与协调器
+→ 单设备串行执行器
+→ 已验证的页面语义与设备适配器
+```
 
-- `HOME_FEED`: verify bottom navigation before entering the profile.
-- `PROFILE`: require both `小红书号` and profile metrics before accepting extraction.
-- `IMAGE_NOTE`: scroll the content container; do not assume a video interaction model.
-- `VIDEO_NOTE`: open the explicit comments control; scrolling the main surface may change videos.
-- `COMMENT_PANEL`: browse only; close the panel before moving to another state.
-- `UNKNOWN`: capture screenshot and hierarchy, call cloud vision once, then re-verify.
-- `CHALLENGE_OR_LOGIN`: stop and request human handling.
+`feed run`、`feed batch` 和 `research run` 只负责把旧参数转换成统一任务，不再拥有独立执行器、限制或确认流程。Feed、搜索结果、有序直链和只读 Research 都进入同一准备、编译、审阅、精确哈希批准、协调器、票据/执行槽、账本和终态报告链。
 
-All clicks should be derived from current node bounds. A normalized coordinate may be used only as a documented fallback for that specific device/version and must be followed by state verification.
+## 权限与计划边界
 
-## Failure policy
+- 用户明确批准的规范化任务是本次运行唯一的业务意图来源。
+- 模板只能补默认值，不能覆盖显式参数。
+- 编译器冻结设备、数据源、动作顺序、条件分支、次数、并发、恢复边界和停止条件，并生成确定性的 `planHash`。
+- 人工只确认一次完整计划和精确哈希；批准后不中途逐步重复确认。
+- 运行时只能选择已编译分支，不能临时增加动作、目标、次数或设备。
+- 能力档案表示当前已测试实现能力，不是仓库永久业务上限；扩大能力必须先补实现、测试和人工验收回执。
 
-- First failure: refresh hierarchy and retry the semantic selector once.
-- Second failure: capture evidence, stop that device and continue with other devices.
-- Never loop blindly or continue from an unverified state.
+## 当前自动动作边界
 
+当前已实现并验收的账户状态动作只有确保点赞和确保收藏。它们都是确保状态操作，不是盲目切换：动作前重新绑定目标并读取状态，动作后读取新鲜 UI 验证；结果不明确时不重发并打开全局熔断。
+
+评论发送、关注、私信、分享、发布、删除、资料或账号修改尚未进入已实现的高层动作注册表。用户命令可以决定已实现动作的目标、顺序和次数，但不能把不存在的执行能力变成可运行能力。新增动作需要同时补齐封闭参数结构、页面前后条件、证据、恢复语义、停止规则和测试。
+
+当前请求明确包含的登录、身份验证、系统权限、支付确认、互动或账号状态动作可继续执行，不追加第二次确认。设备或目标身份尚未唯一绑定、目标不明确或发送后结果不确定时只暂停受影响的动作并换观察/适配通道；无法安全判断是否已发送时不得盲目重发。
+
+## 统一任务生命周期
+
+```mermaid
+flowchart LR
+    U["用户任务规范"] --> P["只读准备：目标设备与所需能力"]
+    P --> C["确定性编译"]
+    C --> R["完整计划与 planHash"]
+    R --> A["一次人工精确批准"]
+    A --> O["前台协调器、锁、票据、执行槽与熔断"]
+    O --> W["每台设备一个串行 worker"]
+    W --> E["页面语义、动作前后验证与操作账本"]
+```
+
+准备阶段只检查本次选择的设备和计划实际需要的能力。无关设备离线、无关能力降级和未选设备数量变化只能作为诊断信息，不能阻止任务。目标设备锁、任务锁、能力快照、身份绑定、批准哈希和执行 nonce 必须在启动时验证。
+
+普通只读步骤使用不可变运行上下文中的轻量门禁。账户状态变化前后执行强校验，并同步持久化意图、操作槽和结果。进程在发送后、验证前中断时，恢复只能读取当前状态，不能再次发送同一动作。
+
+## 多设备调度
+
+- 任务显式列出有限设备，或在编译前按固定偏好从在线、解锁、空闲设备中确定性选择。
+- `maxParallel` 由用户任务提出，并由当前已验收能力档案校验；仓库不设置永久设备数或并发数上限。
+- 每台设备有独立任务 ID、设备锁、检查点、事件账本和证据目录。
+- 未选择设备的异常不影响本次任务；目标设备失败只影响该 worker，系统性传输或证据损坏按实际范围处理。
+- 失败设备的剩余动作不会转移给其他设备，也不会自动发现或替换手机。
+
+## 页面、观察与 CPA
+
+页面识别基于新鲜 Android UI 层级、可见文本或内容描述、稳定关系和经标定的设备覆盖规则。每次 UI 变化后、页面或目标不确定时，以及账户状态变化前后，都必须刷新观察。手势发送和时间经过都不等于成功。
+
+CPA 只是只读、不可信的受限传感器。它只接收有界的内存图片工件并返回封闭角色结构，不返回动作、坐标、命令、路径、URL 或自由提示。点赞和收藏结果不能只由 CPA 判定。
+
+## 证据与恢复
+
+- 状态步骤遵循 `observed → target_bound → intent_recorded → sent → verified → committed`。
+- 只有 committed 步骤计入完成数。
+- 只读事件允许有界缓冲；账户状态意图、操作账本、模糊后态、熔断和终态摘要必须同步持久化。
+- 一次尝试只输出一个完成或阻塞报告，不自动重复相同预检、诊断或运行。
+- `data/`、截图、UI XML、账号信息、令牌和本地配置只保留在 Git 忽略的本地运行目录，不进入仓库或聊天。
+
+## 只读 Research
+
+旧 Research JSON 由兼容转换器校验后变为统一任务的 `research_read_only` 数据源。编译器把主题、种子、来源、查询/笔记/评论/模型/时间预算确定性分配给选中机器，并为每个有效分片生成 `research.collect`。每个分片仍只采集公开内容，不包含账户状态变化；设备操作全部受统一 worker 票据、执行槽、租约、快速门禁和熔断约束。独立 Research 包装器和独立命令行执行器已删除。

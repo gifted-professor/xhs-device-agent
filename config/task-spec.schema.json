@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/task-spec.schema.json",
+  "title": "XHS unified supervised task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskId",
+    "capabilityProfileId",
+    "seed",
+    "deviceSelection",
+    "maxParallel",
+    "source",
+    "actions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "xhs-task-spec/v1" },
+    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
+    "capabilityProfileId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
+    "seed": { "type": "string", "minLength": 24, "maxLength": 128, "pattern": "^[A-Za-z0-9+/=_-]+$" },
+    "deviceSelection": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "machines"],
+          "properties": {
+            "mode": { "const": "explicit" },
+            "machines": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 64,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[0-9]{2}$" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "count"],
+          "properties": {
+            "mode": { "const": "auto_idle" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 64 }
+          }
+        }
+      ]
+    },
+    "maxParallel": { "type": "integer", "minimum": 1, "maximum": 64 },
+    "sourceCountsByMachine": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["machine", "count"],
+        "properties": {
+          "machine": { "type": "string", "pattern": "^[0-9]{2}$" },
+          "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+        }
+      }
+    },
+    "taskIdsByMachine": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["machine", "taskId"],
+        "properties": {
+          "machine": { "type": "string", "pattern": "^[0-9]{2}$" },
+          "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" }
+        }
+      }
+    },
+    "source": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "count"],
+          "properties": {
+            "type": { "const": "feed" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "candidateCap": { "type": "integer", "minimum": 1, "maximum": 20 },
+            "maxScrollsPerItem": { "type": "integer", "minimum": 0, "maximum": 10000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "query", "count"],
+          "properties": {
+            "type": { "const": "search_results" },
+            "query": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001f\\u007f-\\u009f]+$" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "maxScrollsPerResult": { "type": "integer", "minimum": 0, "maximum": 10000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "urls"],
+          "properties": {
+            "type": { "const": "url_list" },
+            "urls": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 10000,
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "maxLength": 2048,
+                "pattern": "^https://(?:www\\.)?(?:xiaohongshu\\.com/(?:explore|discovery/item)/[A-Za-z0-9_-]+|xhslink\\.com/[A-Za-z0-9_-]+)(?:[?#][^\\u0000-\\u001f\\u007f-\\u009f]*)?$"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "topic", "seedKeywords", "sources", "commentMode", "budgets", "aiPolicy"],
+          "properties": {
+            "type": { "const": "research_read_only" },
+            "topic": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)" },
+            "seedKeywords": {
+              "type": "array", "maxItems": 12, "uniqueItems": true,
+              "items": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)" }
+            },
+            "sources": {
+              "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true,
+              "items": { "enum": ["search", "suggestions", "trending", "recommended"] }
+            },
+            "commentMode": { "enum": ["none", "metadata", "deidentified_snippets"] },
+            "budgets": {
+              "type": "object", "additionalProperties": false,
+              "required": ["wallClockSeconds", "maxQueries", "maxNotes", "maxNotesPerQuery", "maxResultScrollsPerQuery", "maxNoteScrolls", "maxCommentPanels", "maxCommentsPerNote", "maxNoNewScrolls"],
+              "properties": {
+                "wallClockSeconds": { "type": "integer", "minimum": 30, "maximum": 3600 },
+                "maxQueries": { "type": "integer", "minimum": 1, "maximum": 20 },
+                "maxNotes": { "type": "integer", "minimum": 1, "maximum": 50 },
+                "maxNotesPerQuery": { "type": "integer", "minimum": 1, "maximum": 15 },
+                "maxResultScrollsPerQuery": { "type": "integer", "minimum": 0, "maximum": 10 },
+                "maxNoteScrolls": { "type": "integer", "minimum": 0, "maximum": 8 },
+                "maxCommentPanels": { "type": "integer", "minimum": 0, "maximum": 15 },
+                "maxCommentsPerNote": { "type": "integer", "minimum": 0, "maximum": 20 },
+                "maxNoNewScrolls": { "type": "integer", "minimum": 1, "maximum": 4 }
+              }
+            },
+            "aiPolicy": {
+              "type": "object", "additionalProperties": false,
+              "required": ["topicPlanner", "pageFallback", "resultAnalysis", "maxAutomaticCalls"],
+              "properties": {
+                "topicPlanner": { "type": "boolean" },
+                "pageFallback": { "type": "boolean" },
+                "resultAnalysis": { "type": "boolean" },
+                "maxAutomaticCalls": { "type": "integer", "minimum": 0, "maximum": 4 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "actions": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "action"],
+        "properties": {
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mode", "ordinal"],
+                "properties": {
+                  "mode": { "const": "ordinal" },
+                  "ordinal": { "type": "integer", "minimum": 1, "maximum": 10000 }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["mode"],
+                "properties": { "mode": { "const": "each" } }
+              }
+            ]
+          },
+          "action": {
+            "enum": ["engagement.ensure_liked", "engagement.ensure_favorited"]
+          },
+          "when": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "bands"],
+                "properties": {
+                  "type": { "const": "comment_band" },
+                  "bands": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 6,
+                    "uniqueItems": true,
+                    "items": { "enum": ["ZERO", "ONE_TO_FIVE", "SIX_TO_TWENTY", "TWENTY_ONE_TO_NINETY_NINE", "HUNDRED_PLUS", "UNKNOWN"] }
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["type", "text"],
+                "properties": {
+                  "type": { "const": "title_contains" },
+                  "text": { "type": "string", "minLength": 1, "maxLength": 200, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)[^\\u0000-\\u001f\\u007f-\\u009f]+$" }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "maxWallClockMs": { "type": "integer", "minimum": 1000, "maximum": 86400000 }
+  }
+}
