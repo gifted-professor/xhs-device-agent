@@ -10,4 +10,5 @@ data/*
 *.log
 .idea/
 .vscode/
-
+node_modules/
+config/input-methods.local.psd1

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local.xhs-device-agent/research-task.schema.json",
+  "title": "XHS read-only research task",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "taskId", "mode", "topic", "seedKeywords", "sources",
+    "deviceGroup", "commentMode", "interactionPolicy", "budgets", "aiPolicy"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "taskId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{2,79}$" },
+    "mode": { "const": "research_read_only" },
+    "topic": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)" },
+    "seedKeywords": {
+      "type": "array", "maxItems": 12, "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1, "maxLength": 80, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)" }
+    },
+    "sources": {
+      "type": "array", "minItems": 1, "maxItems": 4, "uniqueItems": true,
+      "items": { "enum": ["search", "suggestions", "trending", "recommended"] }
+    },
+    "deviceGroup": { "type": "string", "minLength": 1, "maxLength": 40, "pattern": "^(?!\\s)(?![\\s\\S]*\\s$)" },
+    "commentMode": { "enum": ["none", "metadata", "deidentified_snippets"] },
+    "interactionPolicy": { "const": "human_final" },
+    "budgets": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "wallClockSeconds", "maxQueries", "maxNotes", "maxNotesPerQuery",
+        "maxResultScrollsPerQuery", "maxNoteScrolls", "maxCommentPanels",
+        "maxCommentsPerNote", "maxNoNewScrolls"
+      ],
+      "properties": {
+        "wallClockSeconds": { "type": "integer", "minimum": 30, "maximum": 3600 },
+        "maxQueries": { "type": "integer", "minimum": 1, "maximum": 20 },
+        "maxNotes": { "type": "integer", "minimum": 1, "maximum": 50 },
+        "maxNotesPerQuery": { "type": "integer", "minimum": 1, "maximum": 15 },
+        "maxResultScrollsPerQuery": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "maxNoteScrolls": { "type": "integer", "minimum": 0, "maximum": 8 },
+        "maxCommentPanels": { "type": "integer", "minimum": 0, "maximum": 15 },
+        "maxCommentsPerNote": { "type": "integer", "minimum": 0, "maximum": 20 },
+        "maxNoNewScrolls": { "type": "integer", "minimum": 1, "maximum": 4 }
+      }
+    },
+    "aiPolicy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["topicPlanner", "pageFallback", "resultAnalysis", "maxAutomaticCalls"],
+      "properties": {
+        "topicPlanner": { "type": "boolean" },
+        "pageFallback": { "type": "boolean" },
+        "resultAnalysis": { "type": "boolean" },
+        "maxAutomaticCalls": { "type": "integer", "minimum": 0, "maximum": 4 }
+      }
+    }
+  }
+}
