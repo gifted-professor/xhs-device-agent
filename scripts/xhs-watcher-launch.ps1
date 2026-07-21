@@ -5,18 +5,21 @@
 .PARAMETER runId   Must match: run-YYYYMMDD-HHMMSS-xxxxxxxx (8 hex)
 .PARAMETER agentId Must match: agent-run-YYYYMMDD-HHMMSS-xxxxxxxx (8 hex)
 .PARAMETER statusOnly  Read-only mode
+.PARAMETER execute  Full lifecycle mode; required explicitly
 #>
 
 param(
     [Parameter(Mandatory=$true)] [string]$runId,
     [Parameter(Mandatory=$true)] [string]$agentId,
-    [switch]$statusOnly
+    [switch]$statusOnly,
+    [switch]$execute
 )
 $ErrorActionPreference = "Stop"
 
 # ── Validate IDs ──
 if ($runId -notmatch '^run-\d{8}-\d{6}-[0-9a-f]{8}$') { Write-Error "Invalid runId: $runId"; exit 1 }
 if ($agentId -notmatch '^agent-run-\d{8}-\d{6}-[0-9a-f]{8}$') { Write-Error "Invalid agentId: $agentId"; exit 1 }
+if ([bool]$statusOnly -eq [bool]$execute) { Write-Error "Choose exactly one mode: -statusOnly or -execute"; exit 1 }
 
 # ── Paths ──
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
@@ -96,6 +99,8 @@ if ($LASTEXITCODE -ne 0) { Write-Error "schtasks /run failed: $r2"; exit 1 }
     runId = $runId
     agentId = $agentId
     statusOnly = [bool]$statusOnly
+    execute = [bool]$execute
+    mode = if ($statusOnly) { "status-only" } else { "full-lifecycle" }
     launchMode = "on-demand"
     nodeExe = $nodeExe
 } | ConvertTo-Json -Compress

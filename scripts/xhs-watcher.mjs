@@ -208,7 +208,7 @@ async function runStatusOnly(opts) {
   const { data: payload } = await withRetry('GET', '/status', null, 15000);
   if (!payload?.devices) {
     logLine('error', 'status error', { response: payload });
-    process.exit(1);
+    throw new Error('status-only request failed');
   }
 
   const { data: state } = await withRetry('GET', '/agent/state', null, 10000);
@@ -240,7 +240,7 @@ async function runFullLifecycle(opts) {
   if (!tk.data?.ok) {
     logLine('error', 'takeover failed', tk.data);
     writeRunState(opts.runId, opts.agentId, { phase: 'takeover', status: 'failed', error: tk.data?.error });
-    process.exit(1);
+    throw new Error(`takeover failed: ${tk.data?.error || 'unknown error'}`);
   }
 
   writeRunState(opts.runId, opts.agentId, { phase: 'taken', status: 'active' });
@@ -251,6 +251,27 @@ async function runFullLifecycle(opts) {
   serials.forEach(s => { stallCounts[s] = 0; });
 
   try {
+    // Agent inactivity does not imply that device tasks stopped. Re-check the
+    // targeted devices after takeover and never home or restart a busy device.
+    const preflight = await withRetry('GET', '/status', null, 15000);
+    if (!preflight.data?.devices) {
+      writeRunState(opts.runId, opts.agentId, { phase: 'preflight', status: 'failed', error: 'status unavailable' });
+      throw new Error('preflight status unavailable');
+    }
+    const bySerial = new Map(preflight.data.devices.map(d => [d.serial, d]));
+    const blocked = serials.flatMap(serial => {
+      const device = bySerial.get(serial);
+      if (!device) return [{ serial, reason: 'missing' }];
+      if (device.running) return [{ serial, reason: 'already-running' }];
+      if (device.serve !== 'ok') return [{ serial, reason: `serve-${device.serve || 'unknown'}` }];
+      return [];
+    });
+    if (blocked.length > 0) {
+      logLine('error', 'preflight blocked', { devices: blocked });
+      writeRunState(opts.runId, opts.agentId, { phase: 'preflight', status: 'blocked', devices: blocked });
+      throw new Error('preflight blocked');
+    }
+
     // home all
     for (const serial of serials) {
       const r = await withRetry('POST', '/home', { serial, id: opts.agentId }, 20000);
@@ -258,7 +279,7 @@ async function runFullLifecycle(opts) {
       if (!r.data?.ok) {
         logLine('error', '/home failed', { serial, response: r.data });
         writeRunState(opts.runId, opts.agentId, { phase: 'home', status: 'failed', error: JSON.stringify(r.data), device: serial });
-        process.exit(1);
+        throw new Error(`/home failed for ${serial}`);
       }
       await sleep(1000);
     }
@@ -271,7 +292,7 @@ async function runFullLifecycle(opts) {
       if (!r.data?.ok) {
         logLine('error', '/task failed', { serial, response: r.data });
         writeRunState(opts.runId, opts.agentId, { phase: 'task', status: 'failed', error: JSON.stringify(r.data), device: serial });
-        process.exit(1);
+        throw new Error(`/task failed for ${serial}`);
       }
       await sleep(1000);
     }
@@ -288,7 +309,12 @@ async function runFullLifecycle(opts) {
       const elapsed = Math.floor((now - startTime) / 1000);
 
       if (now >= nextHb) {
-        await withRetry('POST', '/agent/heartbeat', { id: opts.agentId }, 10000);
+        const hb = await withRetry('POST', '/agent/heartbeat', { id: opts.agentId }, 10000);
+        if (!hb.data?.ok) {
+          logLine('error', 'heartbeat failed', hb.data);
+          writeRunState(opts.runId, opts.agentId, { phase: 'heartbeat', status: 'failed', error: JSON.stringify(hb.data) });
+          throw new Error('heartbeat failed');
+        }
         nextHb += HEARTBEAT_INTERVAL_S * 1000;
       }
 
@@ -349,6 +375,7 @@ async function runFullLifecycle(opts) {
           } else {
             logLine('error', 'progress CAS conflict — not writing completed/ok');
             writeRunState(opts.runId, opts.agentId, { phase: 'completed', status: 'progress-conflict', conclusion });
+            throw new Error('progress CAS conflict');
           }
           break;
         }
@@ -357,7 +384,7 @@ async function runFullLifecycle(opts) {
       if (Math.floor((Date.now() - startTime) / 1000) > MAX_WATCH_S) {
         logLine('error', 'timeout exceeded');
         writeRunState(opts.runId, opts.agentId, { phase: 'timeout', status: 'error' });
-        break;
+        throw new Error('watch timeout exceeded');
       }
 
       await sleep(1000);
@@ -365,6 +392,10 @@ async function runFullLifecycle(opts) {
   } finally {
     const rel = await withRetry('POST', '/agent/release', { id: opts.agentId }, 10000);
     logLine('info', 'release', rel.data);
+    if (!rel.data?.ok) {
+      writeRunState(opts.runId, opts.agentId, { phase: 'release', status: 'failed', error: JSON.stringify(rel.data) });
+      throw new Error('release failed');
+    }
     const state = await withRetry('GET', '/agent/state', null, 10000);
     logLine('info', 'final agent state', { active: state.data?.agent?.active });
   }
