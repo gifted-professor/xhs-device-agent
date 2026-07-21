@@ -6,10 +6,8 @@
  *   --status-only  纯只读，只 GET /status 和 /agent/state，绝不 takeover/heartbeat/release
  *   默认模式       完整生命周期：takeover → home → start task → heartbeat → 监控 → 总结 → 写进度 → release
  *
- * 用法：
- *   node scripts/xhs-watcher.mjs --runId <id> --agentId <id> --status-only
- *   node scripts/xhs-watcher.mjs --runId <id> --agentId <id>
- *   node scripts/xhs-watcher.mjs --runId <id> --agentId <id> --plan '{"serial":{"task":"纯刷","durationMin":10,"cap":1}}'
+ * 日志：内部写入 C:\Users\Public\xhs-agent-runs\<runId>.log（JSONL 逐行 append）
+ * run-state：原子写入 C:\Users\Public\xhs-agent-runs\<runId>.json（tmp + rename）
  *
  * 环境要求：Node.js >= 18，dashboard 运行在 localhost:17900
  */
@@ -20,12 +18,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const BASE = 'http://localhost:17900';
-const PROGRESS_PATH = path.join('C:\\Users\\Public', 'xhs-agent-progress.md');
-const RUN_STATE_DIR = path.join('C:\\Users\\Public', 'xhs-agent-runs');
+const PROGRESS_PATH = String.raw`C:\Users\Public\xhs-agent-progress.md`;
+const RUN_STATE_DIR = String.raw`C:\Users\Public\xhs-agent-runs`;
 const RETRYABLE_HTTP = new Set([502, 503, 504]);
 
 const DEFAULT_PLAN = {
@@ -38,6 +35,35 @@ const DEFAULT_PLAN = {
 const STATUS_INTERVAL_S = 60;
 const HEARTBEAT_INTERVAL_S = 10;
 const MAX_WATCH_S = 20 * 60;
+
+// ── logging (JSONL append) ──
+
+let _logFd = null;
+
+function initLog(runId) {
+  fs.mkdirSync(RUN_STATE_DIR, { recursive: true });
+  const logPath = path.join(RUN_STATE_DIR, `${runId}.log`);
+  _logFd = fs.openSync(logPath, 'a');
+  return logPath;
+}
+
+function logLine(level, msg, extra) {
+  const entry = { ts: new Date().toISOString(), level, msg };
+  if (extra !== undefined) entry.data = extra;
+  const line = JSON.stringify(entry) + '\n';
+  if (_logFd !== null) {
+    fs.writeSync(_logFd, line);
+  }
+  // also mirror to stdout for interactive debugging
+  process.stdout.write(`[${entry.ts}] ${level}: ${msg}${extra !== undefined ? ' ' + JSON.stringify(extra) : ''}\n`);
+}
+
+function closeLog() {
+  if (_logFd !== null) {
+    try { fs.closeSync(_logFd); } catch {}
+    _logFd = null;
+  }
+}
 
 // ── helpers ──
 
@@ -63,24 +89,16 @@ function httpJson(method, urlPath, data, timeout = 15000) {
     const url = new URL(urlPath, BASE);
     const body = data ? JSON.stringify(data) : null;
     const reqOpts = {
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname,
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      timeout,
+      hostname: url.hostname, port: url.port, path: url.pathname,
+      method, headers: { 'Content-Type': 'application/json' }, timeout,
     };
     if (body) reqOpts.headers['Content-Length'] = Buffer.byteLength(body);
-
     const req = http.request(reqOpts, (res) => {
       let raw = '';
-      res.on('data', (chunk) => { raw += chunk; });
+      res.on('data', (c) => { raw += c; });
       res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode, data: JSON.parse(raw) });
-        } catch {
-          resolve({ status: res.statusCode, data: raw });
-        }
+        try { resolve({ status: res.statusCode, data: JSON.parse(raw) }); }
+        catch { resolve({ status: res.statusCode, data: raw }); }
       });
     });
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
@@ -113,17 +131,20 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function ts() { return new Date().toISOString(); }
 function sha256(content) { return crypto.createHash('sha256').update(content).digest('hex'); }
 
-// ── run state file ──
+// ── run-state (atomic: tmp + rename) ──
 
 function writeRunState(runId, agentId, state) {
   fs.mkdirSync(RUN_STATE_DIR, { recursive: true });
   const statePath = path.join(RUN_STATE_DIR, `${runId}.json`);
+  const tmpPath = statePath + '.tmp';
   const content = JSON.stringify({ runId, agentId, ...state, updatedAt: ts() }, null, 2);
-  fs.writeFileSync(statePath, content, 'utf-8');
+  fs.writeFileSync(tmpPath, content, 'utf-8');
+  fs.renameSync(tmpPath, statePath);
+  logLine('info', 'run-state written', { path: statePath, ...state });
   return statePath;
 }
 
-// ── progress file with CAS (Compare-And-Swap) ──
+// ── progress file with CAS ──
 
 function readProgress() {
   try {
@@ -136,123 +157,88 @@ function readProgress() {
 }
 
 function updateProgress(opts, lines, conclusion) {
-  // Step 1: read current state
   const before = readProgress();
   const newRev = before.revision + 1;
 
-  // Step 2: build new content — preserve existing structure, append new section
-  const newSection = `
----
+  const newSection = `\n---\n\n## Run ${newRev} (${opts.runId})\n\n- agentId: ${opts.agentId}\n- startedAt: ${opts.startedAt}\n- finishedAt: ${ts()}\n\n### 验证证据\n${lines.map(l => `- ${l}`).join('\n')}\n\n### 结论\n${conclusion}\n`;
 
-## Run ${newRev} (${opts.runId})
-
-- agentId: ${opts.agentId}
-- startedAt: ${opts.startedAt}
-- finishedAt: ${ts()}
-
-### 任务
-${JSON.stringify(opts.plan || DEFAULT_PLAN, null, 2)}
-
-### 验证证据
-${lines.map(l => `- ${l}`).join('\n')}
-
-### 结论
-${conclusion}
-`;
-
-  // Append to existing raw content (preserve revision 2 history)
   let content;
   if (before.raw) {
-    // Update revision number in the header
     content = before.raw.replace(/revision:\s*\d+/, `revision: ${newRev}`) + newSection;
   } else {
     content = `# xhs-agent-progress\n\nrevision: ${newRev}\n${newSection}`;
   }
-
   const newHash = sha256(content);
 
-  // Step 3: CAS — re-read to check no concurrent modification
+  // CAS check
   const recheck = readProgress();
   if (recheck.hash !== before.hash) {
-    console.error(`[progress] CAS failed: hash changed during preparation`);
-    console.error(`  expected: ${before.hash}`);
-    console.error(`  actual:   ${recheck.hash}`);
-    console.error(`  aborting write to prevent data loss`);
+    logLine('error', 'CAS failed: hash changed during preparation', {
+      expected: before.hash, actual: recheck.hash,
+    });
     return null;
   }
 
-  // Step 4: atomic write via temp file
+  // atomic write
   const tmpPath = PROGRESS_PATH + '.tmp';
   fs.writeFileSync(tmpPath, content, 'utf-8');
-
-  // Step 5: verify temp file
   const tmpContent = fs.readFileSync(tmpPath, 'utf-8');
   if (sha256(tmpContent) !== newHash) {
-    console.error(`[progress] temp file hash mismatch, aborting`);
+    logLine('error', 'temp file hash mismatch');
     try { fs.unlinkSync(tmpPath); } catch {}
     return null;
   }
-
-  // Step 6: atomic rename
   fs.renameSync(tmpPath, PROGRESS_PATH);
 
-  // Step 7: post-write verification
-  const finalContent = fs.readFileSync(PROGRESS_PATH, 'utf-8');
-  const finalHash = sha256(finalContent);
+  const finalHash = sha256(fs.readFileSync(PROGRESS_PATH, 'utf-8'));
   if (finalHash !== newHash) {
-    console.error(`[progress] post-write hash mismatch!`);
-    console.error(`  expected: ${newHash}`);
-    console.error(`  actual:   ${finalHash}`);
+    logLine('error', 'post-write hash mismatch', { expected: newHash, actual: finalHash });
     return null;
   }
 
-  console.log(`[progress] CAS OK: revision ${before.revision} → ${newRev}`);
-  console.log(`[progress] before hash: ${before.hash || '(empty)'}`);
-  console.log(`[progress] after hash:  ${finalHash}`);
+  logLine('info', 'progress CAS OK', { revision: before.revision, newRevision: newRev, hash: finalHash });
   return { revision: newRev, hash: finalHash };
 }
 
-// ── status-only (truly read-only) ──
+// ── status-only ──
 
 async function runStatusOnly(opts) {
-  const serials = Object.keys(opts.plan || DEFAULT_PLAN);
-
-  console.log(`[${ts()}] ## status-only mode (read-only, no takeover/heartbeat/release)`);
+  logLine('info', 'status-only mode start');
 
   const { data: payload } = await withRetry('GET', '/status', null, 15000);
   if (!payload?.devices) {
-    console.error(`status error: ${JSON.stringify(payload)}`);
+    logLine('error', 'status error', { response: payload });
     process.exit(1);
   }
 
   const { data: state } = await withRetry('GET', '/agent/state', null, 10000);
-  console.log(`agent.active=${state?.agent?.active} agent.id=${state?.agent?.id}`);
+  logLine('info', 'agent state', { active: state?.agent?.active, id: state?.agent?.id });
 
   for (const d of payload.devices) {
     const task = d.task || {};
     const last = d.lastTask || {};
     if (d.running) {
-      console.log(`  ${d.serial}: RUN ${task.name} phase=${task.phase} loop=${task.loop} ok=${task.ok} skip=${task.skip} comments=${task.comments} remain=${task.remainingMs}`);
+      logLine('info', 'device', { serial: d.serial, status: 'RUN', name: task.name, phase: task.phase, loop: task.loop, ok: task.ok, skip: task.skip });
     } else {
-      console.log(`  ${d.serial}: IDLE serve=${d.serve} activity=${d.activity} lastLoops=${last.loopsDone} lastOk=${last.ok} lastSkip=${last.skip}`);
+      logLine('info', 'device', { serial: d.serial, status: 'IDLE', serve: d.serve, activity: d.activity, lastLoops: last.loopsDone, lastOk: last.ok, lastSkip: last.skip });
     }
   }
 
   writeRunState(opts.runId, opts.agentId, { phase: 'status-only', status: 'completed' });
+  logLine('info', 'status-only mode done');
   return 0;
 }
 
-// ── full lifecycle mode ──
+// ── full lifecycle ──
 
 async function runFullLifecycle(opts) {
   const plan = opts.plan || DEFAULT_PLAN;
   const serials = Object.keys(plan);
 
-  // takeover
   const tk = await withRetry('POST', '/agent/takeover', { id: opts.agentId, kind: 'watcher' }, 10000);
-  console.log(`[${ts()}] takeover: ${JSON.stringify(tk.data)}`);
+  logLine('info', 'takeover', tk.data);
   if (!tk.data?.ok) {
-    console.error('takeover failed, aborting');
+    logLine('error', 'takeover failed', tk.data);
     writeRunState(opts.runId, opts.agentId, { phase: 'takeover', status: 'failed', error: tk.data?.error });
     process.exit(1);
   }
@@ -266,25 +252,32 @@ async function runFullLifecycle(opts) {
 
   try {
     // home all
-    console.log(`\n[${ts()}] ## prep home all`);
     for (const serial of serials) {
       const r = await withRetry('POST', '/home', { serial, id: opts.agentId }, 20000);
-      console.log(`${serial} home: ${JSON.stringify(r.data)}`);
+      logLine('info', 'home', { serial, result: r.data });
+      if (!r.data?.ok) {
+        logLine('error', '/home failed', { serial, response: r.data });
+        writeRunState(opts.runId, opts.agentId, { phase: 'home', status: 'failed', error: JSON.stringify(r.data), device: serial });
+        process.exit(1);
+      }
       await sleep(1000);
     }
 
     // start tasks
-    console.log(`\n[${ts()}] ## start tasks`);
     for (const serial of serials) {
       const task = plan[serial];
       const r = await withRetry('POST', '/task', { serial, action: 'start', queue: [task], id: opts.agentId }, 25000);
-      console.log(`${serial} ${task.task}: ${JSON.stringify(r.data)}`);
+      logLine('info', 'task start', { serial, task: task.task, result: r.data });
+      if (!r.data?.ok) {
+        logLine('error', '/task failed', { serial, response: r.data });
+        writeRunState(opts.runId, opts.agentId, { phase: 'task', status: 'failed', error: JSON.stringify(r.data), device: serial });
+        process.exit(1);
+      }
       await sleep(1000);
     }
     writeRunState(opts.runId, opts.agentId, { phase: 'watching', status: 'active' });
 
     // watch loop
-    console.log(`\n[${ts()}] ## watch loop`);
     const startTime = Date.now();
     let nextStatus = startTime;
     let nextHb = startTime;
@@ -294,17 +287,15 @@ async function runFullLifecycle(opts) {
       const now = Date.now();
       const elapsed = Math.floor((now - startTime) / 1000);
 
-      // heartbeat
       if (now >= nextHb) {
         await withRetry('POST', '/agent/heartbeat', { id: opts.agentId }, 10000);
         nextHb += HEARTBEAT_INTERVAL_S * 1000;
       }
 
-      // status poll
       if (now >= nextStatus) {
         const { data: payload } = await withRetry('GET', '/status', null, 15000);
         if (!payload?.devices) {
-          console.log(`[${ts()}] [T+${elapsed}s] status error: ${JSON.stringify(payload)}`);
+          logLine('warn', 'status poll error', { elapsed, response: payload });
           nextStatus += STATUS_INTERVAL_S * 1000;
           await sleep(1000);
           if (elapsed > MAX_WATCH_S) break;
@@ -315,7 +306,6 @@ async function runFullLifecycle(opts) {
         payload.devices.forEach(d => { devices[d.serial] = d; });
         let allDone = true;
 
-        console.log(`\n[${ts()}] [T+${elapsed}s] status poll`);
         for (const serial of serials) {
           const d = devices[serial] || {};
           const running = !!d.running;
@@ -328,22 +318,20 @@ async function runFullLifecycle(opts) {
             if (prevProgress[serial] === progress) stallCounts[serial]++;
             else stallCounts[serial] = 0;
             prevProgress[serial] = progress;
-            console.log(`- ${serial}: RUN ${task.name} phase=${task.phase} loop=${task.loop} ok=${task.ok} skip=${task.skip} comments=${task.comments} remain=${task.remainingMs} stall=${stallCounts[serial]}`);
+            logLine('info', 'poll', { serial, status: 'RUN', name: task.name, phase: task.phase, loop: task.loop, ok: task.ok, skip: task.skip, comments: task.comments, remain: task.remainingMs, stall: stallCounts[serial] });
             allDone = false;
           } else {
-            console.log(`- ${serial}: DONE activity=${d.activity} loopsDone=${last.loopsDone} ok=${last.ok} skip=${last.skip} comments=${last.comments} lastErr=${last.lastErr}`);
+            logLine('info', 'poll', { serial, status: 'DONE', loopsDone: last.loopsDone, ok: last.ok, skip: last.skip, comments: last.comments, lastErr: last.lastErr });
           }
         }
         nextStatus += STATUS_INTERVAL_S * 1000;
 
         if (everRunning && allDone) {
-          console.log(`\n[${ts()}] ## final summary`);
           let anyStall = false, anyErr = false;
           for (const serial of serials) {
             const d = devices[serial] || {};
             const last = d.lastTask || {};
             const line = `${serial}: loopsDone=${last.loopsDone}, ok=${last.ok}, skip=${last.skip}, comments=${last.comments}, endedAt=${last.endedAt}, lastErr=${last.lastErr}`;
-            console.log(`- ${line}`);
             allLines.push(line);
             if (stallCounts[serial] >= 2) anyStall = true;
             if (last.lastErr) anyErr = true;
@@ -353,18 +341,21 @@ async function runFullLifecycle(opts) {
           if (anyErr) conclusion = '有任务结束但存在 lastErr，需人工复查';
           else if (anyStall) conclusion = '全部结束但中途疑似卡顿';
           else conclusion = '全部自然结束，未发现明显卡顿';
-          console.log(`结论: ${conclusion}`);
+          logLine('info', 'final summary', { conclusion, lines: allLines });
 
           const prog = updateProgress(opts, allLines, conclusion);
-          if (prog) console.log(`progress: revision=${prog.revision} hash=${prog.hash}`);
-
-          writeRunState(opts.runId, opts.agentId, { phase: 'completed', status: 'ok', conclusion });
+          if (prog) {
+            writeRunState(opts.runId, opts.agentId, { phase: 'completed', status: 'ok', conclusion });
+          } else {
+            logLine('error', 'progress CAS conflict — not writing completed/ok');
+            writeRunState(opts.runId, opts.agentId, { phase: 'completed', status: 'progress-conflict', conclusion });
+          }
           break;
         }
       }
 
       if (Math.floor((Date.now() - startTime) / 1000) > MAX_WATCH_S) {
-        console.log(`\n[${ts()}] ## timeout: exceeded ${MAX_WATCH_S}s`);
+        logLine('error', 'timeout exceeded');
         writeRunState(opts.runId, opts.agentId, { phase: 'timeout', status: 'error' });
         break;
       }
@@ -372,11 +363,10 @@ async function runFullLifecycle(opts) {
       await sleep(1000);
     }
   } finally {
-    // release
     const rel = await withRetry('POST', '/agent/release', { id: opts.agentId }, 10000);
-    console.log(`\n[${ts()}] release: ${JSON.stringify(rel.data)}`);
+    logLine('info', 'release', rel.data);
     const state = await withRetry('GET', '/agent/state', null, 10000);
-    console.log(`[${ts()}] final /agent/state: active=${state.data?.agent?.active}`);
+    logLine('info', 'final agent state', { active: state.data?.agent?.active });
   }
 
   return 0;
@@ -388,17 +378,20 @@ async function main() {
   const opts = parseArgs();
   opts.startedAt = ts();
 
-  console.log(`[${ts()}] ## XHS watcher start`);
-  console.log(`runId=${opts.runId} agentId=${opts.agentId}`);
-  console.log(`mode=${opts.statusOnly ? 'status-only (read-only)' : 'full-lifecycle'}`);
+  fs.mkdirSync(RUN_STATE_DIR, { recursive: true });
+  const logPath = initLog(opts.runId);
+  logLine('info', 'watcher start', { runId: opts.runId, agentId: opts.agentId, mode: opts.statusOnly ? 'status-only' : 'full-lifecycle', logPath });
 
-  if (opts.statusOnly) {
-    return runStatusOnly(opts);
+  try {
+    const exitCode = opts.statusOnly ? await runStatusOnly(opts) : await runFullLifecycle(opts);
+    logLine('info', 'watcher exit', { exitCode });
+    closeLog();
+    process.exit(exitCode);
+  } catch (e) {
+    logLine('error', 'uncaught exception', { message: e.message, stack: e.stack });
+    closeLog();
+    process.exit(1);
   }
-  return runFullLifecycle(opts);
 }
 
-main().catch(e => {
-  console.error('watcher crashed:', e);
-  process.exit(1);
-});
+main();
