@@ -22,8 +22,25 @@ if ($agentId -notmatch '^agent-run-\d{8}-\d{6}-[0-9a-f]{8}$') { Write-Error "Inv
 $repo = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $watcherPath = Join-Path $repo 'scripts\xhs-watcher.mjs'
 $taskName = "XHS-Watcher-$runId"
+$runDir = 'C:\Users\Public\xhs-agent-runs'
+$statePath = Join-Path $runDir "$runId.json"
+$logPath = Join-Path $runDir "$runId.log"
+$xmlPath = Join-Path $runDir "$runId-task.xml"
 
 if (-not (Test-Path $watcherPath)) { Write-Error "Watcher not found: $watcherPath"; exit 1 }
+
+# ── Refuse duplicate run IDs ──
+# A runId is a single-use identity. Reusing it can launch the same task twice,
+# append to an old log, or overwrite an earlier run-state file.
+$existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+$existingArtifacts = @($statePath, $logPath, $xmlPath) | Where-Object { Test-Path -LiteralPath $_ }
+if ($existingTask -or $existingArtifacts.Count -gt 0) {
+    $found = @()
+    if ($existingTask) { $found += "task:$taskName" }
+    $found += $existingArtifacts
+    Write-Error "runId already exists; generate a new runId. Found: $($found -join ', ')"
+    exit 1
+}
 
 # ── Find node.exe absolute path ──
 $nodeExe = (Get-Command node.exe -ErrorAction SilentlyContinue).Source
@@ -34,17 +51,18 @@ $q = [char]34
 $nodeArgs = "$q$watcherPath$q --runId $q$runId$q --agentId $q$agentId$q"
 if ($statusOnly) { $nodeArgs += " --status-only" }
 
-# ── Build task XML ──
-$startTime = (Get-Date).AddSeconds(5).ToString('yyyy-MM-ddTHH:mm:ss')
-
+# ── Build an on-demand task XML ──
+# Do not add a TimeTrigger here. The launcher starts the task exactly once via
+# schtasks /Run below; combining both mechanisms causes duplicate execution.
 $xml = @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>XHS watcher runId=$runId</Description></RegistrationInfo>
-  <Triggers><TimeTrigger><StartBoundary>$startTime</StartBoundary><Enabled>true</Enabled></TimeTrigger></Triggers>
+  <Triggers />
   <Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <ExecutionTimeLimit>PT30M</ExecutionTimeLimit>
@@ -61,13 +79,11 @@ $xml = @"
 </Task>
 "@
 
-$xmlPath = Join-Path 'C:\Users\Public\xhs-agent-runs' "$runId-task.xml"
-New-Item -ItemType Directory -Force -Path 'C:\Users\Public\xhs-agent-runs' | Out-Null
+New-Item -ItemType Directory -Force -Path $runDir | Out-Null
 $xml | Out-File -FilePath $xmlPath -Encoding Unicode
 
 # ── Register and run ──
-schtasks.exe /Delete /TN $taskName /F 2>$null | Out-Null
-$r = schtasks.exe /Create /TN $taskName /XML $xmlPath /F 2>&1
+$r = schtasks.exe /Create /TN $taskName /XML $xmlPath 2>&1
 if ($LASTEXITCODE -ne 0) { Write-Error "schtasks /create failed: $r"; exit 1 }
 
 $r2 = schtasks.exe /Run /TN $taskName 2>&1
@@ -80,6 +96,6 @@ if ($LASTEXITCODE -ne 0) { Write-Error "schtasks /run failed: $r2"; exit 1 }
     runId = $runId
     agentId = $agentId
     statusOnly = [bool]$statusOnly
-    triggerAt = $startTime
+    launchMode = "on-demand"
     nodeExe = $nodeExe
 } | ConvertTo-Json -Compress
