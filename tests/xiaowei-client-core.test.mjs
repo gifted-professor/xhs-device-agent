@@ -55,8 +55,8 @@ test("tap requires an explicit coordinate space and sends down/up", async () => 
   });
   assert.equal(result.status, "executed");
   assert.deepEqual(calls, [
-    { action: "pointerEvent", devices: "runtime-device-id", data: { type: "0", x: 50, y: 50 } },
-    { action: "pointerEvent", devices: "runtime-device-id", data: { type: "1", x: 50, y: 50 } },
+    { action: "pointerEvent", devices: "runtime-device-id", data: { type: "0", x: "50", y: "50" } },
+    { action: "pointerEvent", devices: "runtime-device-id", data: { type: "1", x: "50", y: "50" } },
   ]);
   assert.throws(() => normalizeCoordinates({ x: 1, y: 2 }), /coordinate space/);
 });

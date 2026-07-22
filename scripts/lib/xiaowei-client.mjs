@@ -71,8 +71,10 @@ export class XiaoweiClient {
 
   async tap({ deviceAlias, coordinate }) {
     const point = normalizeCoordinates(coordinate);
-    const down = await this.targeted(deviceAlias, "pointerEvent", { type: "0", ...point });
-    const up = await this.targeted(deviceAlias, "pointerEvent", { type: "1", ...point });
+    // Xiaowei 9.10.113 rejects numeric percentages; the legacy working adapter sends strings.
+    const vendorPoint = { x: String(point.x), y: String(point.y) };
+    const down = await this.targeted(deviceAlias, "pointerEvent", { type: "0", ...vendorPoint });
+    const up = await this.targeted(deviceAlias, "pointerEvent", { type: "1", ...vendorPoint });
     return { status: "executed", vendorResponse: { down, up }, coordinate: point };
   }
 
