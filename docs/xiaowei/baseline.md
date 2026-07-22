@@ -37,6 +37,8 @@ Tracked `scripts/greenarrow-api.mjs` currently provides these command paths:
 | `screenshot` | `Screen` |
 | `shell` | `adb_shell` |
 
+As of Task 12, this compatibility CLI is implemented through the shared `XiaoweiTransport` and `XiaoweiClient`. Its command names, `LVJIAN_DEVICE` input, vendor request bodies, successful JSON output, vendor-error output, and legacy connection/timeout messages are covered by compatibility tests. New Agent integrations should use `xhs.cmd` or `/device/v1/*`; the legacy entrypoint remains supported.
+
 Additional action names already present in prior API documentation or project evidence, but not yet treated as live-verified typed APIs:
 
 `adb`, `writeClipboard`, `uploadFile`, `pullFile`, `apkList`, `installApk`, `uninstallApk`, `stopApk`, `imeList`, `selectIme`, and `inputText`.
