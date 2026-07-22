@@ -1,7 +1,7 @@
 import { getCapability } from "./xiaowei-capabilities.mjs";
 import { XiaoweiError } from "./xiaowei-errors.mjs";
 import { validateCapabilityParams } from "./xiaowei-validate.mjs";
-import { verifyStableFile } from "./xiaowei-verifiers.mjs";
+import { snapshotCaptureTarget, verifyCaptureOutput, verifyStableFile } from "./xiaowei-verifiers.mjs";
 
 function invalid(message, details = {}) {
   throw new XiaoweiError("XIAOWEI_INVALID_PARAMETERS", message, details);
@@ -54,8 +54,9 @@ export class XiaoweiClient {
   }
 
   async screenCapture({ deviceAlias, savePath }) {
+    const before = await snapshotCaptureTarget(savePath);
     const vendorResponse = await this.targeted(deviceAlias, "Screen", { savePath }, 20000);
-    const verification = await this.verifyFile(savePath);
+    const verification = await verifyCaptureOutput(savePath, before);
     return { status: "verified", vendorResponse, verification };
   }
 

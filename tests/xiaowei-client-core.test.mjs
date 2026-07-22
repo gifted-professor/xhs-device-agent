@@ -93,3 +93,21 @@ test("screen capture verifier requires a stable non-zero file and hashes it", as
   assert.equal(result.bytes, 16);
   assert.match(result.sha256, /^[a-f0-9]{64}$/);
 });
+
+test("screen capture verifies the new image Xiaowei creates inside a save directory", async () => {
+  const root = mkdtempSync(join(tmpdir(), "xiaowei-screen-directory-"));
+  writeFileSync(join(root, "existing.png"), Buffer.from("old"));
+  const client = new XiaoweiClient({
+    transport: {
+      async invoke(request) {
+        if (request.action === "Screen") writeFileSync(join(root, "new-capture.png"), Buffer.from("new-image"));
+        return { code: 10000, message: "SUCCESS" };
+      },
+    },
+    resolveDevice: async () => ({ identifier: "runtime-device-id" }),
+  });
+  const result = await client.screenCapture({ deviceAlias: "01", savePath: root });
+  assert.equal(result.status, "verified");
+  assert.equal(result.verification.bytes, 9);
+  assert.match(result.verification.sha256, /^[a-f0-9]{64}$/);
+});
