@@ -57,6 +57,12 @@ Real serials and raw inventory payloads are deliberately excluded from Git.
 
 `adb`, `writeClipboard`, `uploadFile`, `pullFile`, `installApk`, `uninstallApk`, and `stopApk` remain schema/effect discovery seeds. A route-acceptance response alone does not promote an operation to live effect verification.
 
+## Task 7–9 operator verification (2026-07-22)
+
+An independent live run against device alias `01` verified the complete tag lifecycle: `addTag`, `getTags` (three tags), `addTagDevice`, `removeTagDevice`, and `removeTag`. It also verified successful reads from `actionTasks` (empty), `autojsTasks` (empty), and `getClipboard`.
+
+`actionCreate`, `autojsCreate`, and `execAutojs` returned HTTP 502 through the calling layer; `writeClipboard` returned HTTP 400. These results classify the routes as present but their accepted payload schemas/effects as unresolved. They are not classified as unavailable.
+
 The installed `xiaowei.exe` SHA-256 observed on 2026-07-22 is `2f9011172d8ec7d0176ab3cb602400cfc34217f1e529d0befc678150a8c73af7`. Static strings expose internal command families including app/file/clipboard/IME, mode switching, accessibility, HID, ROOT, action playback, and AutoJS execution. These names are evidence of product implementation surface, not automatically OpenAPI action names.
 
 ## UI-only gaps to resolve

@@ -5,6 +5,8 @@ import { createDeviceApiRouter } from "./device-api-router.mjs";
 import { toErrorResult, XiaoweiError } from "./lib/xiaowei-errors.mjs";
 import { XiaoweiRawService } from "./lib/xiaowei-raw-service.mjs";
 import { XiaoweiTransport } from "./lib/xiaowei-transport.mjs";
+import { XiaoweiClient } from "./lib/xiaowei-client.mjs";
+import { XiaoweiOperationService } from "./lib/xiaowei-operation-service.mjs";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 17910;
@@ -77,13 +79,19 @@ export async function main(argv = process.argv.slice(2)) {
 
   const transport = new XiaoweiTransport();
   const rawService = new XiaoweiRawService({ transport });
-  const router = createDeviceApiRouter({ rawService });
+  const client = new XiaoweiClient({ transport, resolveDevice: rawService.resolveDevice.bind(rawService) });
+  const operationService = new XiaoweiOperationService({
+    execute: (request) => request.action
+      ? rawService.invokeRaw(request)
+      : client.invoke(request.capability, { deviceAlias: request.deviceAlias, params: request.params || {} }),
+  });
+  const router = createDeviceApiRouter({ rawService, client, operationService });
   const server = createDeviceApiServer({ router });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(options.port, options.host, resolve);
   });
-  console.log(JSON.stringify({ ok: true, host: options.host, port: options.port, raw: "/device/v1/raw" }));
+  console.log(JSON.stringify({ ok: true, host: options.host, port: options.port, api: "/device/v1/manifest", raw: "/device/v1/raw" }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

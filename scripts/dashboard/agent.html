@@ -81,6 +81,16 @@
   </div>
 
   <div class="card">
+    <div class="h">效卫完整设备 API</div>
+    <p class="p">新接口使用别名 <code>01</code>。typed 与 raw 均不要求旧业务的 agent 接管；raw 接受任意 action 和 JSON。</p>
+    <div class="cmd">GET  /device/v1/manifest
+GET  /device/v1/devices
+POST /device/v1/invoke     {"deviceAlias":"01","capability":"input.key.home","params":{}}
+POST /device/v1/raw        {"deviceAlias":"01","action":"任意效卫action","data":{}}
+POST /device/v1/operations {"idempotencyKey":"唯一键","request":{"deviceAlias":"01","capability":"input.key.home","params":{}}}</div>
+  </div>
+
+  <div class="card">
     <div class="h">接管协议</div>
     <p class="muted" id="tkhow"></p>
     <div class="cmd">POST /agent/takeover  {"id":"claude-1","kind":"claude"}    # 已有活跃 agent 时返 409,需先 release 或等 30s 超时

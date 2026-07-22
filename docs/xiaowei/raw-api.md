@@ -43,6 +43,18 @@ The response explicitly reports:
 }
 ```
 
+The same API is also mounted by the existing dashboard on port `17900`. The `/device/v1/*` routes are independent of the dashboard's older `/agent/takeover` protocol.
+
+## Agent endpoints
+
+- `GET /device/v1/devices` returns aliases and non-sensitive device metadata only.
+- `POST /device/v1/invoke` calls a typed capability with `{deviceAlias, capability, params}`.
+- `POST /device/v1/raw` passes any action and JSON payload through unchanged.
+- `POST /device/v1/operations` executes a typed or raw request with an idempotency key.
+- `GET /device/v1/operations/:id` reads operation state.
+
+Neither typed calls nor raw calls require an agent takeover or lab session. A lab-session object remains available to internal callers as optional metadata, but is not an API gate.
+
 ## Invoke any Xiaowei action
 
 ```http
@@ -82,3 +94,17 @@ The service performs a fresh Xiaowei `list`, resolves `01`, adds the runtime dev
 - action maturity or test-order classification.
 
 The only current constraints are transport requirements: a non-empty action string, a uniquely resolved canary alias, valid JSON, one serialized Xiaowei WebSocket request at a time, a finite timeout, and a 1 MiB HTTP envelope limit.
+
+## Windows CLI
+
+`xhs.cmd` exposes the same surface for an Agent running on the Xiaowei host:
+
+```powershell
+xhs.cmd device list
+xhs.cmd device capabilities --json
+xhs.cmd device discover --device 01 --read-only
+xhs.cmd device invoke --device 01 --capability input.key.home --params "{}"
+xhs.cmd device raw --device 01 --action vendorActionName --data "{}"
+```
+
+The public CLI accepts device alias `01`, not a runtime device serial.

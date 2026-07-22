@@ -19,6 +19,11 @@ import { readFile } from "node:fs/promises";
 import { readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
+import { createDeviceApiRouter } from "./device-api-router.mjs";
+import { XiaoweiClient } from "./lib/xiaowei-client.mjs";
+import { XiaoweiOperationService } from "./lib/xiaowei-operation-service.mjs";
+import { XiaoweiRawService } from "./lib/xiaowei-raw-service.mjs";
+import { XiaoweiTransport } from "./lib/xiaowei-transport.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SCRIPTS = __dirname; // dashboard.mjs 放 scripts/
@@ -39,6 +44,23 @@ const LOOPS_SAFETY = 100000;
 const KILL_GRACE_MS = 30000; // SIGINT 后 30s 仍不退则 SIGKILL 兜底
 
 const PORT = Number(process.env.DASH_PORT || 17900);
+
+const xiaoweiTransport = new XiaoweiTransport();
+const xiaoweiRawService = new XiaoweiRawService({ transport: xiaoweiTransport });
+const xiaoweiClient = new XiaoweiClient({
+  transport: xiaoweiTransport,
+  resolveDevice: xiaoweiRawService.resolveDevice.bind(xiaoweiRawService),
+});
+const xiaoweiOperationService = new XiaoweiOperationService({
+  execute: (request) => request.action
+    ? xiaoweiRawService.invokeRaw(request)
+    : xiaoweiClient.invoke(request.capability, { deviceAlias: request.deviceAlias, params: request.params || {} }),
+});
+const deviceApiRouter = createDeviceApiRouter({
+  rawService: xiaoweiRawService,
+  client: xiaoweiClient,
+  operationService: xiaoweiOperationService,
+});
 
 const DEVICES = [
   { serial: "REPLACE_SERIAL_01", port: 17895 },
@@ -289,6 +311,11 @@ async function buildManifest() {
       { method: "GET", path: "/agent/manifest", desc: "本说明书(JSON)" },
       { method: "GET", path: "/agent", desc: "人可读 agent 控制面(HTML)" },
       { method: "GET", path: "/agent/state", desc: "agent 接管态 + 事件日志(轮询)" },
+      { method: "GET", path: "/device/v1/manifest", desc: "效卫完整能力清单；新 API 使用设备别名 01" },
+      { method: "GET", path: "/device/v1/devices", desc: "效卫设备列表（隐藏真实串号）" },
+      { method: "POST", path: "/device/v1/invoke", desc: "调用已封装的 typed capability；不要求 agent takeover" },
+      { method: "POST", path: "/device/v1/raw", desc: "透传任意效卫 action 与 JSON data；无动作白名单、无需 takeover/lab session" },
+      { method: "POST", path: "/device/v1/operations", desc: "带幂等键的可查询操作；lab session 可选且默认不需要" },
       { method: "POST", path: "/task", body: { serial: "str", action: "start|stop", queue: "[{task,durationMin,cap}]", id: "(可选)接管 agent id" }, desc: "起/停任务队列;旧单任务 {task,durationMin,cap} 仍兼容;带 id 则隐式续命" },
       { method: "POST", path: "/home", body: { serial: "str", id: "(可选)接管 agent id" }, desc: "回首页(force-stop+重启,深页也重置到 IndexActivityV2);带 id 则隐式续命" },
       { method: "POST", path: "/primitive", body: { serial: "str", action: "原语名", id: "(可选)接管 agent id", "...": "原语参数" }, desc: "代理到该台 serve 的 31 个原语之一(精确控制);超时 90s;带 id 则隐式续命,正在操控时无需另起心跳循环" },
@@ -577,6 +604,11 @@ function send(res, code, obj, type = "application/json") {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
+  if (path.startsWith("/device/v1/")) {
+    const body = req.method === "POST" ? await readBody(req) : undefined;
+    const result = await deviceApiRouter.handle({ method: req.method, path, body });
+    return send(res, result.status, result.body);
+  }
   if (req.method === "GET" && path === "/") {
     try {
       const html = await readFile(join(STATIC_DIR, "index.html"));
