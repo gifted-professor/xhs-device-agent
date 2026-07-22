@@ -16,26 +16,28 @@ export async function runClipboardCanary({
   service = new XiaoweiRawService({ transport: new XiaoweiTransport() }),
   deviceAlias = "01",
   probe = `codex-xiaowei-probe-${randomUUID()}`,
+  candidateFields = ["content", "text", "data"],
 } = {}) {
   const originalResponse = await service.invokeRaw({ deviceAlias, action: "getClipboard" });
   const original = extractClipboard(originalResponse);
   if (typeof original !== "string") throw new Error("clipboard canary requires a restorable string baseline");
 
-  let writeAccepted = false;
-  try {
-    const write = await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { data: probe } });
-    writeAccepted = write.vendorResponse?.code === 10000;
+  for (const field of candidateFields) {
+    const write = await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { [field]: probe } });
+    const writeAccepted = write.vendorResponse?.code === 10000;
     const verify = extractClipboard(await service.invokeRaw({ deviceAlias, action: "getClipboard" }));
-    if (verify !== probe) throw new Error("writeClipboard was accepted but clipboard readback did not match");
-  } finally {
     if (writeAccepted) {
-      await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { data: original } });
+      await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { [field]: original } });
+    }
+    const restored = extractClipboard(await service.invokeRaw({ deviceAlias, action: "getClipboard" }));
+    if (restored !== original) {
+      throw new Error(`clipboard restoration failed while probing field ${field}`);
+    }
+    if (verify === probe) {
+      return { ok: true, field, writeVerified: true, restorationVerified: true };
     }
   }
-
-  const restored = extractClipboard(await service.invokeRaw({ deviceAlias, action: "getClipboard" }));
-  if (restored !== original) throw new Error("clipboard restoration readback did not match baseline");
-  return { ok: true, field: "data", writeVerified: true, restorationVerified: true };
+  throw new Error("writeClipboard accepted all candidate fields but none changed readback");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
