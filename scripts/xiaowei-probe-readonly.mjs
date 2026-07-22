@@ -6,8 +6,11 @@ import { XiaoweiTransport } from "./lib/xiaowei-transport.mjs";
 export const DEFAULT_READ_ONLY_CANDIDATES = Object.freeze([
   "apkList",
   "imeList",
-  "actionTask.list",
-  "autojsTask.list",
+  "getTags",
+  "actionTasks",
+  "autojsTasks",
+  "getClipboard",
+  "getGlobalClipboard",
 ]);
 
 export const EMPTY_SCHEMA_CANDIDATES = Object.freeze([
