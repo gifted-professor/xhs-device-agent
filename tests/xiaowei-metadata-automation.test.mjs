@@ -43,7 +43,7 @@ test("clipboard canary writes, verifies, restores, and verifies restoration", as
   const service = {
     async invokeRaw({ action, data }) {
       actions.push(action);
-      if (action === "writeClipboard" && Object.hasOwn(data, "content")) clipboard = data.content;
+      if (action === "writeClipboard" && typeof data === "string") clipboard = data;
       return {
         vendorResponse: action === "getClipboard"
           ? { code: 10000, data: { hiddenDeviceKey: { data: clipboard } } }
@@ -52,7 +52,7 @@ test("clipboard canary writes, verifies, restores, and verifies restoration", as
     },
   };
   const result = await runClipboardCanary({ service, probe: "codex-xiaowei-probe-test" });
-  assert.deepEqual(result, { ok: true, field: "content", writeVerified: true, restorationVerified: true });
+  assert.deepEqual(result, { ok: true, payload: "scalar", writeVerified: true, restorationVerified: true });
   assert.equal(clipboard, "original-private-value");
   assert.deepEqual(actions, ["getClipboard", "writeClipboard", "getClipboard", "writeClipboard", "getClipboard"]);
 });

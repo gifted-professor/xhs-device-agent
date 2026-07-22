@@ -16,25 +16,30 @@ export async function runClipboardCanary({
   service = new XiaoweiRawService({ transport: new XiaoweiTransport() }),
   deviceAlias = "01",
   probe = `codex-xiaowei-probe-${randomUUID()}`,
-  candidateFields = ["content", "text", "data"],
+  candidatePayloads = [
+    { name: "scalar", build: (value) => value },
+    { name: "content", build: (value) => ({ content: value }) },
+    { name: "text", build: (value) => ({ text: value }) },
+    { name: "data", build: (value) => ({ data: value }) },
+  ],
 } = {}) {
   const originalResponse = await service.invokeRaw({ deviceAlias, action: "getClipboard" });
   const original = extractClipboard(originalResponse);
   if (typeof original !== "string") throw new Error("clipboard canary requires a restorable string baseline");
 
-  for (const field of candidateFields) {
-    const write = await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { [field]: probe } });
+  for (const candidate of candidatePayloads) {
+    const write = await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: candidate.build(probe) });
     const writeAccepted = write.vendorResponse?.code === 10000;
     const verify = extractClipboard(await service.invokeRaw({ deviceAlias, action: "getClipboard" }));
     if (writeAccepted) {
-      await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: { [field]: original } });
+      await service.invokeRaw({ deviceAlias, action: "writeClipboard", data: candidate.build(original) });
     }
     const restored = extractClipboard(await service.invokeRaw({ deviceAlias, action: "getClipboard" }));
     if (restored !== original) {
-      throw new Error(`clipboard restoration failed while probing field ${field}`);
+      throw new Error(`clipboard restoration failed while probing payload ${candidate.name}`);
     }
     if (verify === probe) {
-      return { ok: true, field, writeVerified: true, restorationVerified: true };
+      return { ok: true, payload: candidate.name, writeVerified: true, restorationVerified: true };
     }
   }
   throw new Error("writeClipboard accepted all candidate fields but none changed readback");
