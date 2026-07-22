@@ -30,20 +30,26 @@ export async function snapshotCaptureTarget(path) {
   }
 }
 
-export async function verifyCaptureOutput(path, before, { settleMs = 250 } = {}) {
+export async function verifyCaptureOutput(path, before, { settleMs = 250, appearTimeoutMs = 5000, pollMs = 100 } = {}) {
   const current = await stat(path);
   if (current.isFile()) return verifyStableFile(path, { settleMs });
   if (!current.isDirectory()) throw new Error("screen capture target is neither a file nor directory");
 
   const previous = before?.kind === "directory" ? before.names : new Set();
-  const candidates = [];
-  for (const name of await readdir(path)) {
-    if (previous.has(name)) continue;
-    const candidatePath = `${path.replace(/[\\/]$/, "")}/${name}`;
-    const candidate = await stat(candidatePath);
-    if (candidate.isFile() && candidate.size > 0) candidates.push({ path: candidatePath, mtimeMs: candidate.mtimeMs });
+  const deadline = Date.now() + appearTimeoutMs;
+  while (true) {
+    const candidates = [];
+    for (const name of await readdir(path)) {
+      if (previous.has(name)) continue;
+      const candidatePath = `${path.replace(/[\\/]$/, "")}/${name}`;
+      const candidate = await stat(candidatePath);
+      if (candidate.isFile() && candidate.size > 0) candidates.push({ path: candidatePath, mtimeMs: candidate.mtimeMs });
+    }
+    if (candidates.length > 0) {
+      candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+      return verifyStableFile(candidates[0].path, { settleMs });
+    }
+    if (Date.now() >= deadline) throw new Error("screen capture did not create a new file");
+    await wait(Math.min(pollMs, Math.max(1, deadline - Date.now())));
   }
-  if (candidates.length === 0) throw new Error("screen capture did not create a new file");
-  candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
-  return verifyStableFile(candidates[0].path, { settleMs });
 }

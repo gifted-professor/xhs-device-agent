@@ -100,7 +100,9 @@ test("screen capture verifies the new image Xiaowei creates inside a save direct
   const client = new XiaoweiClient({
     transport: {
       async invoke(request) {
-        if (request.action === "Screen") writeFileSync(join(root, "new-capture.png"), Buffer.from("new-image"));
+        if (request.action === "Screen") {
+          setTimeout(() => writeFileSync(join(root, "new-capture.png"), Buffer.from("new-image")), 50);
+        }
         return { code: 10000, message: "SUCCESS" };
       },
     },
