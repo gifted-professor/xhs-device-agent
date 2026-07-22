@@ -40,6 +40,7 @@ export const EMPTY_SCHEMA_CANDIDATES = Object.freeze([
 
 export function summarizeProbeData(data) {
   const ownKeys = data && typeof data === "object" ? Object.keys(data) : [];
+  const firstArrayItem = Array.isArray(data) && data[0] && typeof data[0] === "object" ? data[0] : null;
   return {
     dataType: Array.isArray(data) ? "array" : data === null ? "null" : typeof data,
     itemCount: Array.isArray(data) ? data.length : null,
@@ -48,6 +49,8 @@ export function summarizeProbeData(data) {
       .slice(0, 16)
       .map((key) => Array.isArray(data[key]) ? data[key].length : null)
       .filter(Number.isInteger),
+    valueTypes: [...new Set(ownKeys.map((key) => Array.isArray(data[key]) ? "array" : data[key] === null ? "null" : typeof data[key]))],
+    arrayItemKeys: firstArrayItem ? Object.keys(firstArrayItem).sort() : [],
   };
 }
 
