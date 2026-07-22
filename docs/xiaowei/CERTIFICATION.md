@@ -13,11 +13,12 @@ This document separates API exposure from effect certification. The unrestricted
 |---|---|---|
 | WebSocket transport | verified | interactive-session listener on `127.0.0.1:22222` |
 | Device inventory | verified | four online aliases returned; public API omitted runtime serials |
-| Capability manifest | verified | 52 catalog rows, 20 typed wrappers, unrestricted raw route |
+| Capability manifest | verified | 52 catalog rows, 21 typed wrappers, unrestricted raw route |
 | App, IME, tag, action, AutoJS and clipboard reads | verified | all returned HTTP 200; clipboard content was not recorded |
 | Home / Back | verified | Xiaowei success through typed API |
 | Start / stop app | verified | Android Settings used as the reversible target |
 | Swipe up / down | verified | typed pointer operations returned success |
+| Managed auto-scroll | verified | alias `01` ran 3 bounded up-swipes, reported running progress, stopped on request, remained visually static, and accepted an idempotent second stop |
 | Tap | verified after correction | Xiaowei 9.10.113 requires percentage values as strings on the vendor wire |
 | Screenshot | verified after correction | delayed image creation detected; non-zero bytes and SHA-256 verified; probe deleted |
 | Select IME | verified without state change | current IME selected again and reread unchanged |
@@ -46,9 +47,12 @@ Large-screen open/close, device number/name changes, phrase management, wallpape
 
 Disconnecting mode transitions remain reachable through raw actions or installed UI commands where known. They were not live-switched because the SSH session cannot operate the interactive Xiaowei GUI if the control path disconnects; this is a recovery limitation, not an API allowlist.
 
+Xiaowei's own context-menu auto-scroll is a frontend worker (`/worker/autoTouch.js`), not a confirmed WebSocket action. The typed `input.pointer.autoScroll` API therefore uses a project-managed detached worker that emits already-certified one-shot swipes, persists alias-only progress, requires a finite `maxSwipes`, and supports status plus idempotent stop. It does not claim to query or control a task started manually inside Xiaowei's UI.
+
 ## Restored state
 
 - Android Settings was stopped and Home was issued.
+- The managed alias `01` auto-scroll worker reached `stopped`; a repeated stop returned `not_running`.
 - Screen was returned to Awake and Home.
 - Screenshot and host temporary directories were deleted.
 - Candidate phone file paths were checked and removed.

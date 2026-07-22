@@ -31,6 +31,16 @@ xhs.cmd device raw --device 01 --action anyVendorAction --data "{}"
 
 HTTP equivalents are documented in `docs/xiaowei/raw-api.md`. Neither surface requires dashboard takeover or a lab session. Raw action names and `data` fields are not allowlisted.
 
+Managed auto-scroll is available through the typed invoke endpoint:
+
+```json
+{"deviceAlias":"01","capability":"input.pointer.autoScroll","params":{"operation":"start","direction":"up","intervalMs":2000,"maxSwipes":20}}
+{"deviceAlias":"01","capability":"input.pointer.autoScroll","params":{"operation":"status"}}
+{"deviceAlias":"01","capability":"input.pointer.autoScroll","params":{"operation":"stop","waitMs":5000}}
+```
+
+It is deliberately bounded: `maxSwipes` is required for `start`. The detached worker resolves alias `01` fresh for every one-shot swipe, records only public alias/task metadata, and uses a run-scoped stop control file. A second stop is safe and returns `not_running`.
+
 ## Important protocol facts
 
 - Resolve alias `01` from a fresh Xiaowei `list`; never persist or expose the runtime serial.
@@ -38,6 +48,7 @@ HTTP equivalents are documented in `docs/xiaowei/raw-api.md`. Neither surface re
 - Vendor pointer percentages must be strings on the wire. The typed API accepts numeric coordinates and performs this conversion.
 - `Screen` returns before the image necessarily appears. Typed screenshot verification polls for a new stable file and hashes it.
 - Vendor success/`executed` alone does not prove file transfer, clipboard write, install, or automation creation effects.
+- Xiaowei's UI auto-scroll runs in `/worker/autoTouch.js`; it is separate from the project-managed typed auto-scroll worker. API status only describes API-managed runs.
 - The legacy `scripts/greenarrow-api.mjs` entrypoint remains compatible, but new Agents should use `xhs.cmd` or `/device/v1/*`.
 
 ## Current unresolved work
@@ -46,5 +57,6 @@ HTTP equivalents are documented in `docs/xiaowei/raw-api.md`. Neither surface re
 2. Resolve payload schemas for `actionCreate`, `autojsCreate`, `execAutojs`, and `writeClipboard` without treating route acceptance as effect success.
 3. Map UI-only mode/metadata/phrase/action-recording functions to current WebSocket actions.
 4. Establish an interactive-GUI recovery controller before certifying connection-mode switches.
+5. Recover a stable programmatic equivalent of Xiaowei UI `结束任务` if vendor-UI-started transient workers must also be controlled without desktop interaction.
 
 See `CERTIFICATION.md` for the exact live/pass/unresolved matrix and `capability-inventory.json` for the machine-readable catalog.

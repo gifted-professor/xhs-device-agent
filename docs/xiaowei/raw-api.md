@@ -95,6 +95,35 @@ The service performs a fresh Xiaowei `list`, resolves `01`, adds the runtime dev
 
 The only current constraints are transport requirements: a non-empty action string, a uniquely resolved canary alias, valid JSON, one serialized Xiaowei WebSocket request at a time, a finite timeout, and a 1 MiB HTTP envelope limit.
 
+## Managed automatic scrolling
+
+Use the typed invoke route for bounded, observable auto-scroll. `start` requires `maxSwipes`; it never creates an unbounded task.
+
+```http
+POST /device/v1/invoke
+content-type: application/json
+
+{
+  "deviceAlias": "01",
+  "capability": "input.pointer.autoScroll",
+  "params": {
+    "operation": "start",
+    "direction": "up",
+    "intervalMs": 2000,
+    "maxSwipes": 20
+  }
+}
+```
+
+Query and stop the same alias:
+
+```json
+{"deviceAlias":"01","capability":"input.pointer.autoScroll","params":{"operation":"status"}}
+{"deviceAlias":"01","capability":"input.pointer.autoScroll","params":{"operation":"stop","waitMs":5000}}
+```
+
+The response contains `runId`, state, bounded parameters, and `completedSwipes`; it omits the worker PID and runtime device identifier. Stop is idempotent. This managed task is intentionally distinct from a transient worker started manually from Xiaowei's desktop UI.
+
 ## Windows CLI
 
 `xhs.cmd` exposes the same surface for an Agent running on the Xiaowei host:

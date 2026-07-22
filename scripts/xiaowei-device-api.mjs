@@ -6,6 +6,7 @@ import { toErrorResult, XiaoweiError } from "./lib/xiaowei-errors.mjs";
 import { XiaoweiRawService } from "./lib/xiaowei-raw-service.mjs";
 import { XiaoweiTransport } from "./lib/xiaowei-transport.mjs";
 import { XiaoweiClient } from "./lib/xiaowei-client.mjs";
+import { XiaoweiAutoScrollService } from "./lib/xiaowei-auto-scroll-service.mjs";
 import { XiaoweiOperationService } from "./lib/xiaowei-operation-service.mjs";
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -79,7 +80,12 @@ export async function main(argv = process.argv.slice(2)) {
 
   const transport = new XiaoweiTransport();
   const rawService = new XiaoweiRawService({ transport });
-  const client = new XiaoweiClient({ transport, resolveDevice: rawService.resolveDevice.bind(rawService) });
+  const autoScrollService = new XiaoweiAutoScrollService();
+  const client = new XiaoweiClient({
+    transport,
+    resolveDevice: rawService.resolveDevice.bind(rawService),
+    autoScrollService,
+  });
   const operationService = new XiaoweiOperationService({
     execute: (request) => request.action
       ? rawService.invokeRaw(request)

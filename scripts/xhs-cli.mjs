@@ -2,6 +2,7 @@ import { pathToFileURL } from "node:url";
 
 import { createPublicManifest, summarizeCapabilities } from "./lib/xiaowei-capabilities.mjs";
 import { XiaoweiClient } from "./lib/xiaowei-client.mjs";
+import { XiaoweiAutoScrollService } from "./lib/xiaowei-auto-scroll-service.mjs";
 import { XiaoweiRawService } from "./lib/xiaowei-raw-service.mjs";
 import { XiaoweiTransport } from "./lib/xiaowei-transport.mjs";
 import { probeReadOnlyCandidates } from "./xiaowei-probe-readonly.mjs";
@@ -45,7 +46,12 @@ export function sanitizeDeviceList(response) {
 export function createRuntimeServices() {
   const transport = new XiaoweiTransport();
   const rawService = new XiaoweiRawService({ transport });
-  const client = new XiaoweiClient({ transport, resolveDevice: rawService.resolveDevice.bind(rawService) });
+  const autoScrollService = new XiaoweiAutoScrollService();
+  const client = new XiaoweiClient({
+    transport,
+    resolveDevice: rawService.resolveDevice.bind(rawService),
+    autoScrollService,
+  });
   return {
     rawService,
     client,

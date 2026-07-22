@@ -638,17 +638,34 @@
       "domain": "input.pointer",
       "uiLabels": ["自动滑屏"],
       "vendorActions": ["pointerEvent"],
-      "sources": ["Xiaowei device context menu 2026-07-22", "scripts/greenarrow-api.mjs"],
-      "availability": "primitive_known_automation_semantics_unknown",
-      "maturity": "D1",
+      "sources": ["Xiaowei device context menu 2026-07-22", "installed /worker/autoTouch.js evidence 2026-07-22", "managed API worker"],
+      "availability": "managed_api_available",
+      "maturity": "D5",
       "testOrder": "S1",
-      "typedApi": false,
+      "typedApi": true,
       "rawLabApi": true,
-      "requestSchema": { "type": "object" },
+      "requestSchema": {
+        "type": "object",
+        "properties": {
+          "operation": { "type": "string", "enum": ["start", "status", "stop"] },
+          "direction": { "type": "string", "enum": ["up", "down"] },
+          "intervalMs": { "type": "integer", "minimum": 500, "maximum": 60000 },
+          "maxSwipes": { "type": "integer", "minimum": 1, "maximum": 10000 },
+          "waitMs": { "type": "integer", "minimum": 0, "maximum": 30000 }
+        },
+        "required": ["operation"]
+      },
       "responseSchema": { "type": "object" },
-      "verification": "bounded scroll count and final-state evidence",
-      "restoration": "stop auto-scroll and return to baseline when required",
-      "timeoutMs": 120000,
+      "verification": "managed state reports progress/completion and live canary screenshots change only during the bounded run",
+      "restoration": "idempotent stop control file; worker never starts an unbounded run",
+      "timeoutMs": 30000,
+      "risk": "R1",
+      "implementationPaths": ["scripts/lib/xiaowei-auto-scroll-service.mjs", "scripts/xiaowei-auto-scroll-worker.mjs"],
+      "examples": [
+        { "operation": "start", "direction": "up", "intervalMs": 2000, "maxSwipes": 3 },
+        { "operation": "status" },
+        { "operation": "stop", "waitMs": 5000 }
+      ],
       "versionRange": "observed:9.10.113"
     },
     {

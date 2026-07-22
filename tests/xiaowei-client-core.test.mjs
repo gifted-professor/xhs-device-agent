@@ -66,7 +66,32 @@ test("swipe maps only documented one-shot up/down pointer events", async () => {
   await client.swipe({ deviceAlias: "01", direction: "up" });
   await client.swipe({ deviceAlias: "01", direction: "down" });
   assert.deepEqual(calls.map((call) => call.data), [{ type: "6" }, { type: "7" }]);
-  await assert.rejects(client.autoScroll({ deviceAlias: "01", operation: "start" }), /not documented/);
+  await assert.rejects(client.autoScroll({ deviceAlias: "01", operation: "start" }), /service is unavailable/);
+});
+
+test("typed auto-scroll delegates start, status, and stop to the managed service", async () => {
+  const calls = [];
+  const client = new XiaoweiClient({
+    transport: { async invoke() { throw new Error("transport should not be called directly"); } },
+    resolveDevice: async () => ({ identifier: "runtime-device-id" }),
+    autoScrollService: {
+      control(input) {
+        calls.push(input);
+        return { status: input.operation === "status" ? "running" : input.operation };
+      },
+    },
+  });
+  await client.invoke("input.pointer.autoScroll", {
+    deviceAlias: "01",
+    params: { operation: "start", direction: "up", intervalMs: 2000, maxSwipes: 3 },
+  });
+  await client.invoke("input.pointer.autoScroll", { deviceAlias: "01", params: { operation: "status" } });
+  await client.invoke("input.pointer.autoScroll", { deviceAlias: "01", params: { operation: "stop", waitMs: 1000 } });
+  assert.deepEqual(calls, [
+    { deviceAlias: "01", operation: "start", direction: "up", intervalMs: 2000, maxSwipes: 3, waitMs: undefined },
+    { deviceAlias: "01", operation: "status", direction: undefined, intervalMs: undefined, maxSwipes: undefined, waitMs: undefined },
+    { deviceAlias: "01", operation: "stop", direction: undefined, intervalMs: undefined, maxSwipes: undefined, waitMs: 1000 },
+  ]);
 });
 
 test("IME list/select and text input preserve documented request shapes", async () => {

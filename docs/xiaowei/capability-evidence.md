@@ -14,6 +14,8 @@ This ledger separates observed facts from implementation claims. The machine-rea
 
 The current inventory contains 52 canonical capabilities. It intentionally includes unknown actions so the absence of a wrapper is visible rather than silently omitted.
 
+Twenty-one capabilities now have typed wrappers. The auto-scroll row is implemented as a managed project worker rather than an undocumented vendor action.
+
 ## Live/runtime evidence
 
 | Evidence | Result | Interpretation |
@@ -76,6 +78,14 @@ The operation endpoint returned a verified result, reused the same operation ID 
 Two `uploadFile` candidate shapes returned HTTP 502. A `pullFile` candidate returned `executed` against an absent source but produced no host file. These remain payload/effect gaps and are not promoted to live-certified capabilities.
 
 The installed `xiaowei.exe` SHA-256 observed on 2026-07-22 is `2f9011172d8ec7d0176ab3cb602400cfc34217f1e529d0befc678150a8c73af7`. Static strings expose internal command families including app/file/clipboard/IME, mode switching, accessibility, HID, ROOT, action playback, and AutoJS execution. These names are evidence of product implementation surface, not automatically OpenAPI action names.
+
+## Managed auto-scroll certification (2026-07-22)
+
+Only device alias `01` was used. Android Settings was the reversible target. A bounded managed task started with `direction=up`, `intervalMs=2000`, and `maxSwipes=20`; after five seconds its status was `running` with `completedSwipes=3`. Stop returned `stopped` with the same count, and a repeated stop returned `not_running` with `idempotent=true`.
+
+Two screenshots taken six seconds apart after stop crossed a status-bar minute boundary, so their full-file hashes differed. After excluding the status bar, both 924×1920 content images were byte-identical with SHA-256 `1e19996d1c3db5bb46e4bee2f17cc15691d02e6420600312665800bbe8a877ea`. Settings was then stopped and Home restored.
+
+Static runtime evidence identifies Xiaowei's desktop-menu implementation as `/worker/autoTouch.js` using internal mock-swipe helpers. That vendor frontend worker has no confirmed public status/stop action. The typed API does not overclaim control of UI-started tasks: it manages its own detached worker, finite limit, progress file, and run-scoped stop file while reusing the serialized, live-certified one-shot swipe path.
 
 ## UI-only gaps to resolve
 

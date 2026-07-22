@@ -30,13 +30,14 @@ export function normalizeCoordinates(coordinate) {
 }
 
 export class XiaoweiClient {
-  constructor({ transport, resolveDevice, readCurrentIme, verifyFile = verifyStableFile }) {
+  constructor({ transport, resolveDevice, readCurrentIme, verifyFile = verifyStableFile, autoScrollService }) {
     if (!transport || typeof transport.invoke !== "function") throw new TypeError("transport.invoke is required");
     if (typeof resolveDevice !== "function") throw new TypeError("resolveDevice is required");
     this.transport = transport;
     this.resolveDevice = resolveDevice;
     this.readCurrentIme = readCurrentIme;
     this.verifyFile = verifyFile;
+    this.autoScrollService = autoScrollService;
   }
 
   async targeted(deviceAlias, action, data, timeoutMs) {
@@ -85,11 +86,11 @@ export class XiaoweiClient {
     return { status: "executed", vendorResponse };
   }
 
-  async autoScroll() {
-    throw new XiaoweiError(
-      "XIAOWEI_CAPABILITY_UNAVAILABLE",
-      "automatic scrolling is not documented; pointerEvent 6/7 are one-shot swipes",
-    );
+  async autoScroll({ deviceAlias, operation, direction, intervalMs, maxSwipes, waitMs }) {
+    if (!this.autoScrollService?.control) {
+      throw new XiaoweiError("XIAOWEI_CAPABILITY_UNAVAILABLE", "managed auto-scroll service is unavailable");
+    }
+    return this.autoScrollService.control({ deviceAlias, operation, direction, intervalMs, maxSwipes, waitMs });
   }
 
   async imeList({ deviceAlias }) {
@@ -185,6 +186,7 @@ export class XiaoweiClient {
       "input.key.back": () => this.back({ deviceAlias }),
       "input.pointer.tap": () => this.tap({ deviceAlias, ...checked }),
       "input.pointer.swipe": () => this.swipe({ deviceAlias, ...checked }),
+      "input.pointer.autoScroll": () => this.autoScroll({ deviceAlias, ...checked }),
       "input.ime.list": () => this.imeList({ deviceAlias }),
       "input.ime.select": () => this.selectIme({ deviceAlias, ...checked }),
       "input.text.input": () => this.inputText({ deviceAlias, ...checked }),

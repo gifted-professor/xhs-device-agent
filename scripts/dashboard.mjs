@@ -20,6 +20,7 @@ import { readdirSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, extname } from "node:path";
 import { createDeviceApiRouter } from "./device-api-router.mjs";
+import { XiaoweiAutoScrollService } from "./lib/xiaowei-auto-scroll-service.mjs";
 import { XiaoweiClient } from "./lib/xiaowei-client.mjs";
 import { XiaoweiOperationService } from "./lib/xiaowei-operation-service.mjs";
 import { XiaoweiRawService } from "./lib/xiaowei-raw-service.mjs";
@@ -47,9 +48,11 @@ const PORT = Number(process.env.DASH_PORT || 17900);
 
 const xiaoweiTransport = new XiaoweiTransport();
 const xiaoweiRawService = new XiaoweiRawService({ transport: xiaoweiTransport });
+const xiaoweiAutoScrollService = new XiaoweiAutoScrollService();
 const xiaoweiClient = new XiaoweiClient({
   transport: xiaoweiTransport,
   resolveDevice: xiaoweiRawService.resolveDevice.bind(xiaoweiRawService),
+  autoScrollService: xiaoweiAutoScrollService,
 });
 const xiaoweiOperationService = new XiaoweiOperationService({
   execute: (request) => request.action
