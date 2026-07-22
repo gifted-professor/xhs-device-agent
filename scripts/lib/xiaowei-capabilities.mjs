@@ -125,6 +125,8 @@ export function createPublicManifest(inventory = INVENTORY) {
     verification: capability.verification,
     restoration: capability.restoration,
     examples: capability.examples || [],
+    implementationPaths: capability.implementationPaths || [],
+    recovery: capability.recovery || null,
   }));
 
   return {

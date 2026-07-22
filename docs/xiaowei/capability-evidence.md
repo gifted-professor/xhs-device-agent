@@ -32,6 +32,11 @@ The initial inventory contains 49 canonical capabilities. It intentionally inclu
 | `getGlobalClipboard` without data | code `10001`, parameter required | Route exists but its request schema remains unresolved |
 | `stopApk` / `installApk` / `uninstallApk` / `uploadFile` without data | code `10000` | Routes exist; success with no target is not evidence that a state change occurred |
 | `pullFile` / `writeClipboard` / `selectIme` / `inputText` without data | code `10001`, parameter required | Routes exist and enforce a non-empty request body |
+| `addTag` / `removeTag` / `updateTag` / `addTagDevice` / `removeTagDevice` | code `10001`, parameter required | Tag mutation routes exist; parameter schemas remain unresolved |
+| `actionCreate` / `actionRemove` / `autojsCreate` / `autojsRemove` / `execAutojs` | code `10001`, parameter required | Action and AutoJS lifecycle routes exist; schemas remain unresolved |
+| `execCommand` without data | timeout, followed by successful inventory probe | Outcome is ambiguous and was not replayed |
+| `updateDevice` / `sipSerial` | code `10001`, invalid action | These binary tokens are not current OpenAPI routes |
+| reversible `writeClipboard` payload probes | object payloads accepted without readback change; scalar rejected | `getClipboard` is verified, but write payload/effect semantics remain unresolved; original clipboard readback was preserved |
 
 Real serials and raw inventory payloads are deliberately excluded from Git.
 

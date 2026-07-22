@@ -100,13 +100,13 @@
       "id": "device.tag.move",
       "domain": "device.metadata",
       "uiLabels": ["移动标签"],
-      "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["addTagDevice", "removeTagDevice"],
+      "sources": ["Xiaowei device context menu 2026-07-22", "installed binary action strings 2026-07-22", "live missing-parameter responses 2026-07-22"],
+      "availability": "action_routes_verified_schema_unknown",
+      "maturity": "D1",
       "testOrder": "S2",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "device appears under requested tag in a fresh list",
@@ -299,8 +299,8 @@
       "domain": "input.text",
       "uiLabels": [],
       "vendorActions": ["writeClipboard"],
-      "sources": ["prior Xiaowei API documentation notes"],
-      "availability": "documented_candidate",
+      "sources": ["prior Xiaowei API documentation notes", "installed binary action strings 2026-07-22", "live reversible payload probes 2026-07-22"],
+      "availability": "route_verified_payload_effect_unresolved",
       "maturity": "D1",
       "testOrder": "S2",
       "typedApi": false,
@@ -655,13 +655,13 @@
       "id": "automation.action.record",
       "domain": "automation.action",
       "uiLabels": ["录制动作"],
-      "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22", "official product feature description"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["actionCreate"],
+      "sources": ["Xiaowei device context menu 2026-07-22", "official product feature description", "installed binary action strings 2026-07-22", "live missing-parameter response 2026-07-22"],
+      "availability": "action_route_verified_schema_unknown",
+      "maturity": "D1",
       "testOrder": "S2",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "new codex-probe action appears with recorded steps",
@@ -691,13 +691,13 @@
       "id": "automation.task.run",
       "domain": "automation.task",
       "uiLabels": ["执行任务"],
-      "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22", "official product feature description"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["execAutojs"],
+      "sources": ["Xiaowei device context menu 2026-07-22", "official product feature description", "installed binary action strings 2026-07-22", "live missing-parameter response 2026-07-22"],
+      "availability": "action_route_verified_schema_unknown",
+      "maturity": "D1",
       "testOrder": "S2",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "codex-probe task reports running then completed",
@@ -800,9 +800,9 @@
       "domain": "connection",
       "uiLabels": ["转为WIFI模式"],
       "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22", "official product connection description"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "sources": ["Xiaowei device context menu 2026-07-22", "official product connection description", "installed command usb_to_tcp 2026-07-22"],
+      "availability": "recovery_not_ready_for_live_switch",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
       "rawLabApi": false,
@@ -812,51 +812,63 @@
       "restoration": "return to original USB mode",
       "timeoutMs": 180000,
       "versionRange": "observed:9.10.113"
+      ,"risk": "disconnecting"
+      ,"requirements": ["pre-resolved device identity", "independent ADB 5038 route", "interactive GUI or physical USB recovery"]
+      ,"implementationPaths": ["installed-ui-command:usb_to_tcp", "raw-capability:diagnostic.adb", "raw-capability:diagnostic.shell"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "connection.root.enable",
       "domain": "connection",
       "uiLabels": ["转为ROOT模式"],
       "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22"],
-      "availability": "ui_observed_disabled_action_unknown",
-      "maturity": "D0",
+      "sources": ["Xiaowei device context menu 2026-07-22", "installed commands get_root/install_magisk/install_xwdb 2026-07-22"],
+      "availability": "installed_ui_command_only_recovery_not_ready",
+      "maturity": "D1",
       "testOrder": "S4",
       "typedApi": false,
       "rawLabApi": false,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
-      "verification": "mode reports active and a root-only probe succeeds",
+      "verification": "record command accepted, mode reports active, and a root-only probe succeeds as three separate stages",
       "restoration": "return to original mode using independent recovery route",
       "timeoutMs": 180000,
       "versionRange": "observed:9.10.113"
+      ,"risk": "system"
+      ,"requirements": ["supported device", "independent recovery", "root activation prerequisite"]
+      ,"implementationPaths": ["installed-ui-command:get_root", "installed-ui-command:install_magisk", "installed-ui-command:install_xwdb", "raw-capability:diagnostic.shell"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "connection.accessibility.enable",
       "domain": "connection",
       "uiLabels": ["转为无障碍模式"],
       "vendorActions": [],
-      "sources": ["Xiaowei device context menu 2026-07-22"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "sources": ["Xiaowei device context menu 2026-07-22", "installed commands switch_accessible_mode/device_is_accessible 2026-07-22"],
+      "availability": "installed_ui_command_only_recovery_not_ready",
+      "maturity": "D1",
       "testOrder": "S4",
       "typedApi": false,
       "rawLabApi": false,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
-      "verification": "mode reports active and a mode-specific control probe succeeds",
+      "verification": "record command accepted, mode reports active, and a mode-specific control probe succeeds as three separate stages",
       "restoration": "return to original mode using independent recovery route",
       "timeoutMs": 180000,
       "versionRange": "observed:9.10.113"
+      ,"risk": "system"
+      ,"requirements": ["accessibility companion installed", "independent recovery"]
+      ,"implementationPaths": ["installed-ui-command:switch_accessible_mode", "installed-ui-command:device_is_accessible", "raw-capability:diagnostic.shell"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "connection.usb.enable",
       "domain": "connection",
       "uiLabels": [],
       "vendorActions": [],
-      "sources": ["official product connection description"],
-      "availability": "official_feature_action_unknown",
-      "maturity": "D0",
+      "sources": ["official product connection description", "installed commands switch_all_device_mode/switch_adb_mode 2026-07-22"],
+      "availability": "installed_ui_command_only",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
       "rawLabApi": false,
@@ -866,15 +878,19 @@
       "restoration": "return to original connection mode",
       "timeoutMs": 180000,
       "versionRange": "official-unspecified"
+      ,"risk": "disconnecting"
+      ,"requirements": ["USB cable", "ADB authorization"]
+      ,"implementationPaths": ["installed-ui-command:switch_all_device_mode", "installed-ui-command:switch_adb_mode", "raw-capability:diagnostic.adb"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "connection.hid.enable",
       "domain": "connection",
       "uiLabels": [],
       "vendorActions": [],
-      "sources": ["official product connection description"],
-      "availability": "official_feature_action_unknown",
-      "maturity": "D0",
+      "sources": ["official product connection description", "installed commands switch_hid_model/install_hid_app 2026-07-22"],
+      "availability": "installed_ui_command_only_recovery_not_ready",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
       "rawLabApi": false,
@@ -884,15 +900,19 @@
       "restoration": "return to original connection mode",
       "timeoutMs": 180000,
       "versionRange": "official-unspecified"
+      ,"risk": "disconnecting"
+      ,"requirements": ["supported HID device", "HID driver/app prerequisites", "independent recovery"]
+      ,"implementationPaths": ["installed-ui-command:switch_hid_model", "installed-ui-command:install_hid_app", "installed-ui-command:check_hid_app_installed"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "connection.otg.enable",
       "domain": "connection",
       "uiLabels": [],
       "vendorActions": [],
-      "sources": ["official product connection description"],
-      "availability": "official_feature_action_unknown",
-      "maturity": "D0",
+      "sources": ["official product connection description", "installed commands otg_scanning/otg_all_scanning 2026-07-22"],
+      "availability": "installed_ui_command_only_recovery_not_ready",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
       "rawLabApi": false,
@@ -902,54 +922,66 @@
       "restoration": "return to original connection mode",
       "timeoutMs": 180000,
       "versionRange": "official-unspecified"
+      ,"risk": "disconnecting"
+      ,"requirements": ["OTG hardware", "independent recovery"]
+      ,"implementationPaths": ["installed-ui-command:otg_scanning", "installed-ui-command:otg_all_scanning"]
+      ,"recovery": { "status": "partial", "sshIndependent": true, "adb5038OnlineCount": 4, "interactiveGuiFromSsh": false }
     },
     {
       "id": "screen.off",
       "domain": "screen",
       "uiLabels": ["关闭屏幕"],
-      "vendorActions": [],
-      "sources": ["partially visible Xiaowei context menu 2026-07-22"],
-      "availability": "ui_observed_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["adb_shell"],
+      "sources": ["partially visible Xiaowei context menu 2026-07-22", "existing adb_shell adapter", "Android KEYCODE_SLEEP"],
+      "availability": "available_via_raw_shell",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "display power state reports off",
       "restoration": "wake using a separately verified path",
       "timeoutMs": 30000,
       "versionRange": "observed:9.10.113"
+      ,"risk": "disruptive"
+      ,"requirements": ["adb_shell route", "separately verified wake route"]
+      ,"implementationPaths": ["raw-action:adb_shell", "command:input keyevent KEYCODE_SLEEP"]
+      ,"recovery": { "status": "ready_via_wakeup", "sshIndependent": true, "adb5038OnlineCount": 4 }
     },
     {
       "id": "screen.on",
       "domain": "screen",
       "uiLabels": ["唤醒屏幕"],
-      "vendorActions": [],
-      "sources": ["inverse requirement of the visible close-screen capability"],
-      "availability": "recovery_capability_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["adb_shell"],
+      "sources": ["inverse requirement of the visible close-screen capability", "existing adb_shell adapter", "Android KEYCODE_WAKEUP"],
+      "availability": "available_via_raw_shell",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "display power state reports on and screen is capturable",
       "restoration": "none",
       "timeoutMs": 30000,
       "versionRange": "observed:9.10.113"
+      ,"risk": "recovery"
+      ,"requirements": ["adb_shell route"]
+      ,"implementationPaths": ["raw-action:adb_shell", "command:input keyevent KEYCODE_WAKEUP"]
+      ,"recovery": { "status": "self", "sshIndependent": true, "adb5038OnlineCount": 4 }
     },
     {
       "id": "screen.resolution.set",
       "domain": "screen",
       "uiLabels": [],
-      "vendorActions": [],
-      "sources": ["official product feature description"],
-      "availability": "official_feature_action_unknown",
-      "maturity": "D0",
+      "vendorActions": ["adb_shell"],
+      "sources": ["official product feature description", "existing adb_shell adapter", "Android wm size command"],
+      "availability": "available_via_raw_shell",
+      "maturity": "D1",
       "testOrder": "S3",
       "typedApi": false,
-      "rawLabApi": false,
+      "rawLabApi": true,
       "requestSchema": { "type": "object" },
       "responseSchema": { "type": "object" },
       "verification": "fresh source dimensions match target",
