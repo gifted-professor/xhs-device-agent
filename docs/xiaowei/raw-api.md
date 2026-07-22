@@ -108,3 +108,5 @@ xhs.cmd device raw --device 01 --action vendorActionName --data "{}"
 ```
 
 The public CLI accepts device alias `01`, not a runtime device serial.
+
+Current live-effect results and unresolved vendor schemas are tracked in [`CERTIFICATION.md`](CERTIFICATION.md). Windows runtime handoff instructions are in [`HANDOFF.md`](HANDOFF.md).

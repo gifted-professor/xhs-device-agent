@@ -12,7 +12,7 @@ This ledger separates observed facts from implementation claims. The machine-rea
 
 ## Current counts
 
-The initial inventory contains 49 canonical capabilities. It intentionally includes unknown actions so the absence of a wrapper is visible rather than silently omitted.
+The current inventory contains 52 canonical capabilities. It intentionally includes unknown actions so the absence of a wrapper is visible rather than silently omitted.
 
 ## Live/runtime evidence
 
@@ -67,6 +67,14 @@ An independent live run against device alias `01` verified the complete tag life
 
 `scripts/greenarrow-api.mjs` now delegates to the shared transport/client layer. Automated compatibility coverage freezes the existing `list`, Home, Back, app start, tap down/up, swipe, screenshot, and shell request bodies. It also verifies unwrapped vendor JSON, `LVJIAN_DEVICE`, usage errors, vendor-error passthrough, and the prior connection-error message. No action allowlist or new device-operation gate was introduced.
 
+## Alias 01 final certification (Task 13)
+
+Typed app reads, IME reads, tag/action/task reads, clipboard export, Home, Back, Settings start/stop, swipe, tap, screenshot, and current-IME reselection all returned successful current-version responses. Tap initially failed because the vendor wire requires string percentages; after the client conversion it returned code `10000` for down and up. Screenshot initially exposed asynchronous file creation; after bounded polling it verified a non-zero image and SHA-256 and the probe was deleted.
+
+The operation endpoint returned a verified result, reused the same operation ID for an identical idempotency key/request, and served the same result through lookup. Raw shell returned an echo marker and resolution output. Screen sleep and wake were independently read back as `Asleep` and `Awake` through `dumpsys power`, then Home was restored.
+
+Two `uploadFile` candidate shapes returned HTTP 502. A `pullFile` candidate returned `executed` against an absent source but produced no host file. These remain payload/effect gaps and are not promoted to live-certified capabilities.
+
 The installed `xiaowei.exe` SHA-256 observed on 2026-07-22 is `2f9011172d8ec7d0176ab3cb602400cfc34217f1e529d0befc678150a8c73af7`. Static strings expose internal command families including app/file/clipboard/IME, mode switching, accessibility, HID, ROOT, action playback, and AutoJS execution. These names are evidence of product implementation surface, not automatically OpenAPI action names.
 
 ## UI-only gaps to resolve
@@ -79,7 +87,7 @@ The installed `xiaowei.exe` SHA-256 observed on 2026-07-22 is `2f9011172d8ec7d01
 - task list/run/stop/result;
 - wallpaper generation;
 - WIFI, ROOT, accessibility, USB, HID, and OTG mode transitions;
-- screen off/on and resolution controls.
+- resolution-change semantics beyond the verified read path.
 
 ## Primary links
 

@@ -61,5 +61,5 @@ Additional action names already present in prior API documentation or project ev
 
 - Keep existing `/primitive`, dashboard task routes, watcher, and 31 XHS primitives unchanged.
 - Add a separate Xiaowei device layer under `/device/v1/*`.
-- Create an explicit capability-lab mode before live device calls so the new full-control scope is not confused with production XHS workflow rules.
+- Keep optional lab metadata separate from production XHS workflow rules; it is not a required gate for the full-control raw or typed APIs.
 - Use `01` as the only live canary until every single-device capability is classified and recoverable.

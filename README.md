@@ -57,6 +57,20 @@ hermes -z "按照 skills/xhs-device-operator/SKILL.md 运行一次安全设备�
 
 推荐让 Hermes 负责日常运行和异常汇报；连续失败、页面大改版或需要新增动作时，再交给 Codex 修改状态机。
 
+## 效卫完整设备 API
+
+Windows 宿主可直接运行：
+
+```powershell
+npm.cmd run device-api
+xhs.cmd device list
+xhs.cmd device capabilities --json
+xhs.cmd device invoke --device 01 --capability input.key.home --params "{}"
+xhs.cmd device raw --device 01 --action anyVendorAction --data "{}"
+```
+
+新接口使用设备别名，不向 Agent 暴露真实串号。`/device/v1/raw` 接受任意非空 action 和任意 JSON，不要求 dashboard takeover 或 lab session。实机认证结果与尚未解析的厂商 schema 见 `docs/xiaowei/CERTIFICATION.md`。
+
 ## 目录
 
 - `scripts/Collect-PhoneAssets.ps1`：逐台读取硬件、系统、小红书公开主页和 UI 层级
@@ -71,4 +85,3 @@ hermes -z "按照 skills/xhs-device-operator/SKILL.md 运行一次安全设备�
 ## 隐私
 
 仓库不应包含 API Key、OAuth Token、设备截图、UI XML、真实 ADB 序列号、账号清单或飞书记录。提交前运行 `git status` 并检查暂存内容。
-
