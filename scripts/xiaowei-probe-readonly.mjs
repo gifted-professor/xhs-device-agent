@@ -10,6 +10,17 @@ export const DEFAULT_READ_ONLY_CANDIDATES = Object.freeze([
   "autojsTask.list",
 ]);
 
+export const EMPTY_SCHEMA_CANDIDATES = Object.freeze([
+  "stopApk",
+  "installApk",
+  "uninstallApk",
+  "uploadFile",
+  "pullFile",
+  "writeClipboard",
+  "selectIme",
+  "inputText",
+]);
+
 export function summarizeProbeData(data) {
   const ownKeys = data && typeof data === "object" ? Object.keys(data) : [];
   return {
@@ -52,7 +63,8 @@ export async function probeReadOnlyCandidates({
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  probeReadOnlyCandidates()
+  const schemaMode = process.argv.includes("--empty-schema");
+  probeReadOnlyCandidates({ actions: schemaMode ? EMPTY_SCHEMA_CANDIDATES : DEFAULT_READ_ONLY_CANDIDATES })
     .then((results) => console.log(JSON.stringify(results, null, 2)))
     .catch((error) => {
       console.error(error.message);
