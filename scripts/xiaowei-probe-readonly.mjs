@@ -41,6 +41,10 @@ export const EMPTY_SCHEMA_CANDIDATES = Object.freeze([
 export function summarizeProbeData(data) {
   const ownKeys = data && typeof data === "object" ? Object.keys(data) : [];
   const firstArrayItem = Array.isArray(data) && data[0] && typeof data[0] === "object" ? data[0] : null;
+  const firstNestedArray = ownKeys.map((key) => data[key]).find(Array.isArray);
+  const firstNestedObject = ownKeys
+    .map((key) => data[key])
+    .find((value) => value && typeof value === "object" && !Array.isArray(value));
   return {
     dataType: Array.isArray(data) ? "array" : data === null ? "null" : typeof data,
     itemCount: Array.isArray(data) ? data.length : null,
@@ -51,6 +55,10 @@ export function summarizeProbeData(data) {
       .filter(Number.isInteger),
     valueTypes: [...new Set(ownKeys.map((key) => Array.isArray(data[key]) ? "array" : data[key] === null ? "null" : typeof data[key]))],
     arrayItemKeys: firstArrayItem ? Object.keys(firstArrayItem).sort() : [],
+    nestedArrayItemKeys: firstNestedArray?.[0] && typeof firstNestedArray[0] === "object"
+      ? Object.keys(firstNestedArray[0]).sort()
+      : [],
+    nestedObjectKeys: firstNestedObject ? Object.keys(firstNestedObject).sort() : [],
   };
 }
 
