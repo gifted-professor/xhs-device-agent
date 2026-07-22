@@ -1,4 +1,4 @@
-import { summarizeCapabilities } from "./lib/xiaowei-capabilities.mjs";
+import { createPublicManifest, summarizeCapabilities } from "./lib/xiaowei-capabilities.mjs";
 import { XiaoweiError, toErrorResult } from "./lib/xiaowei-errors.mjs";
 
 function statusForError(error) {
@@ -21,8 +21,8 @@ export function createDeviceApiRouter({ rawService }) {
         return {
           status: 200,
           body: {
-            version: 1,
-            capabilities: summarizeCapabilities(),
+            ...createPublicManifest(),
+            summary: summarizeCapabilities(),
             raw: {
               method: "POST",
               path: "/device/v1/raw",
