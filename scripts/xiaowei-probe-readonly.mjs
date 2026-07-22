@@ -22,6 +22,20 @@ export const EMPTY_SCHEMA_CANDIDATES = Object.freeze([
   "writeClipboard",
   "selectIme",
   "inputText",
+  "updateDevice",
+  "sipSerial",
+  "addTag",
+  "removeTag",
+  "updateTag",
+  "addTagDevice",
+  "removeTagDevice",
+  "actionCreate",
+  "actionRemove",
+  "autojsCreate",
+  "autojsRemove",
+  "execAutojs",
+  "execCommand",
+  "getGlobalClipboard",
 ]);
 
 export function summarizeProbeData(data) {
