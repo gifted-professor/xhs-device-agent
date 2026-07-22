@@ -26,6 +26,12 @@ The initial inventory contains 49 canonical capabilities. It intentionally inclu
 | `apkList` on alias `01` | code `10000`, one device key, 55 entries | Current-version read-only action and response container are verified |
 | `imeList` on alias `01` | code `10000`, one device key, 6 entries | Current-version read-only action and response container are verified |
 | `actionTask.list` / `autojsTask.list` | code `10001`, invalid action | Binary strings are internal clues, not current OpenAPI action names |
+| `getTags` on alias `01` | code `10000`, 2 entries | Tag inventory action is current-version verified |
+| `actionTasks` / `autojsTasks` on alias `01` | code `10000`, empty arrays | Action/task inventory routes are current-version verified; this device currently has no saved entries |
+| `getClipboard` on alias `01` | code `10000`, one device-keyed result | Device-to-host clipboard read route is verified without recording clipboard content |
+| `getGlobalClipboard` without data | code `10001`, parameter required | Route exists but its request schema remains unresolved |
+| `stopApk` / `installApk` / `uninstallApk` / `uploadFile` without data | code `10000` | Routes exist; success with no target is not evidence that a state change occurred |
+| `pullFile` / `writeClipboard` / `selectIme` / `inputText` without data | code `10001`, parameter required | Routes exist and enforce a non-empty request body |
 
 Real serials and raw inventory payloads are deliberately excluded from Git.
 
@@ -44,7 +50,7 @@ Real serials and raw inventory payloads are deliberately excluded from Git.
 
 ## Documentary action candidates
 
-`adb`, `writeClipboard`, `uploadFile`, `pullFile`, `apkList`, `installApk`, `uninstallApk`, `stopApk`, and `imeList` are discovery seeds. They are not promoted beyond D1 until current-version probes prove request and response shapes.
+`adb`, `writeClipboard`, `uploadFile`, `pullFile`, `installApk`, `uninstallApk`, and `stopApk` remain schema/effect discovery seeds. A route-acceptance response alone does not promote an operation to live effect verification.
 
 The installed `xiaowei.exe` SHA-256 observed on 2026-07-22 is `2f9011172d8ec7d0176ab3cb602400cfc34217f1e529d0befc678150a8c73af7`. Static strings expose internal command families including app/file/clipboard/IME, mode switching, accessibility, HID, ROOT, action playback, and AutoJS execution. These names are evidence of product implementation surface, not automatically OpenAPI action names.
 
