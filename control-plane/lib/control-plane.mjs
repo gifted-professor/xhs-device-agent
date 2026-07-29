@@ -33,10 +33,14 @@ function resultSummary(execution, verification, restoration, error = null) {
   const transportEvidence = boundedTransportEvidence(out?.transportEvidence);
   return {
     vendorCode: execution?.vendorCode ?? null,
-    // 执行细节摘要（ok/step/verified/counts/text），便于 VERIFICATION_FAILED 时回溯，不落完整 dump
+    // 执行细节摘要（ok/step/verified/counts/text），便于 VERIFICATION_FAILED 时回溯，不落完整 dump。
+    // follow.ensure 追加 authorMatched/beforeState/afterState/restored/finalActivity（filter 丢 undefined，对其它 capability 非破坏）。
+    // 不含 targetUser/extractedAuthor——昵称是 account identifier，agent-entry.md 规定公共 API 不得返回；
+    // 原始昵称只在受控 evidence（serve 响应/审批终端）可见，公共 job result 只留 authorMatched 脱敏布尔。
     output: out && typeof out === "object"
       ? Object.fromEntries(
-        ["ok", "step", "verified", "verifyMethod", "beforeCount", "afterCount", "text", "diagnostic"]
+        ["ok", "step", "verified", "verifyMethod", "beforeCount", "afterCount", "text", "diagnostic",
+         "authorMatched", "beforeState", "afterState", "restored", "finalActivity"]
           .filter((k) => out[k] !== undefined)
           .map((k) => [k, out[k]]),
       )

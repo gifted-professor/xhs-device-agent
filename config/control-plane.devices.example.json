@@ -13,7 +13,8 @@
         "capabilityIds": [
           "xiaowei.device.list",
           "xiaowei.lab.raw",
-          "xhs.observe.metrics"
+          "xhs.observe.metrics",
+          "xhs.follow.ensure"
         ]
       },
       "metadata": {
