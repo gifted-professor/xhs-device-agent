@@ -32,10 +32,13 @@ export function createXhsAdapter({ fetchImpl = globalThis.fetch } = {}) {
         { timeoutMs: capability.timeoutMs, fetchImpl, headers: leaseHeaders(leaseAuthorization) },
       );
       const result = response.result;
-      // serve 外层恒为 HTTP 200 ok:true，内层 result.ok===false 才是动作被拒绝
-      // （notOnNote / editorLostAfterInput / commentBox / countUnavailable 等守卫，
-      //  全部发生在点发送之前，未发出、非 ambiguous）。不透传会被误判成 VERIFICATION_FAILED。
+      // serve 外层恒为 HTTP 200 ok:true，内层 result.ok===false 才是动作被拒绝。分类靠 result.sent：
+      //  - sent!==true：tap/发送前的守卫（notOnNote / authorMismatch / followBtnNotFound / notOnProfileOverlay …），
+      //    动作确定未发出 → notSent=true → 控制面落 failed（确定未发出）。
+      //  - sent===true：动作已发出（followEnsure tap 后 afterStateUnknown/notFlipped），结果未确认 →
+      //    sent=true + ambiguous=true → 控制面落 ambiguous（绝不声称未发出）。不透传会被误判成 VERIFICATION_FAILED。
       if (result && typeof result === "object" && result.ok === false) {
+        const sent = result.sent === true;
         const error = new ControlPlaneError("ADAPTER_ACTION_REJECTED", `xhs action rejected: ${result.step || "unknown"}`, {
           status: 502,
           details: {
@@ -44,7 +47,12 @@ export function createXhsAdapter({ fetchImpl = globalThis.fetch } = {}) {
             log: Array.isArray(result.log) ? result.log.slice(-8) : undefined,
           },
         });
-        error.notSent = true; // 守卫都在点发送之前触发，确定未发出，不应标 ambiguous
+        if (sent) {
+          error.sent = true; // 已发出，结果未确认 → ambiguous
+          error.ambiguous = true;
+        } else {
+          error.notSent = true; // 守卫在动作前触发，确定未发出
+        }
         throw error;
       }
       return {
@@ -69,6 +77,17 @@ export function createXhsAdapter({ fetchImpl = globalThis.fetch } = {}) {
       if (action === "commentOnOpenNote") {
         return {
           ok: output?.verified === true || output?.countDelta === 1 || output?.textScan === true,
+          ambiguous: true,
+          mode: "custom",
+        };
+      }
+      if (action === "followEnsure") {
+        // 到这里说明 execute 未抛（result.ok===true，即 followed/already_followed）。
+        // afterState 明确翻到 followed 才算 ok。tap 前守卫（authorMismatch/followBtnNotFound…）在 execute
+        // 抛 notSent；tap 后未确认（afterStateUnknown/notFlipped，sent=true）在 execute 抛 sent+ambiguous。
+        // ambiguous=true：超时/标签 lag 可能 follow 已发但未读到（同 comment.send 风险类）。
+        return {
+          ok: output?.afterState === "followed",
           ambiguous: true,
           mode: "custom",
         };

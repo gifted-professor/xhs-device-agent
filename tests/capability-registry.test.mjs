@@ -7,8 +7,8 @@ import { evaluateCapabilityPolicy } from "../control-plane/lib/policy.mjs";
 
 test("repository capabilities use the unified E0-E4 manifest", () => {
   const registry = CapabilityRegistry.load(fileURLToPath(new URL("../apps", import.meta.url)));
-  assert.equal(registry.capabilities.length, 19);
-  assert.equal(new Set(registry.capabilities.map((item) => item.id)).size, 19);
+  assert.equal(registry.capabilities.length, 20);
+  assert.equal(new Set(registry.capabilities.map((item) => item.id)).size, 20);
   assert.equal(registry.capabilities.some((item) => /^D/.test(item.maturity)), false);
   assert.equal(registry.capabilities.every((item) => /^E[0-4]$/.test(item.maturity)), true);
   assert.equal(registry.listPublic().some((item) => Object.hasOwn(item, "implementation")), false);
@@ -39,6 +39,30 @@ test("Flutter pointer tap probe is bounded, no-save, and restoration-required", 
     saveDraft: false,
     skuSpecs: { "颜色": ["白色"] },
   }), { code: "PARAMS_SCHEMA_INVALID" });
+});
+
+test("xhs.follow.ensure is R2 approval-gated, verify-only, and requires targetUser", () => {
+  const registry = CapabilityRegistry.load(fileURLToPath(new URL("../apps", import.meta.url)));
+  const cap = registry.require("xhs.follow.ensure");
+
+  assert.equal(cap.risk, "R2");
+  assert.equal(cap.automationPolicy.mode, "approval_required");
+  // maturity=E2（job-runnable；E0/E1 会触发 canary-session 闸门，违背 req#1 的 job-only 模型）。
+  // availability=approval_gated：manifest 是契约 spec（R2 人审批门），不是「已实证」声明；
+  // 「尚未真机验证」由 evidence=[] + 未部署 Windows live config + PROGRESS 诚实记录体现，不靠 availability
+  //（dependency_pending_* 会触发 NO_ELIGIBLE_DEVICE 硬闸，连回归 job 都提交不了）。
+  assert.equal(cap.maturity, "E2");
+  assert.equal(cap.availability, "approval_gated");
+  assert.equal(cap.idempotency, "ambiguous_on_timeout");
+  assert.equal(cap.restoration.required, false);
+  assert.deepEqual(cap.resources, ["device"]);
+  assert.equal(cap.implementation.action, "followEnsure");
+  // R2 + ambiguous_on_timeout + approval_required → 外部效应 + 需审批
+  assert.deepEqual(evaluateCapabilityPolicy(cap), { approvalRequired: true, externalEffect: true });
+  // targetUser 必填、禁止多余参数
+  assert.throws(() => registry.validateParams(cap.id, {}), { code: "PARAMS_SCHEMA_INVALID" });
+  assert.throws(() => registry.validateParams(cap.id, { targetUser: "x", extra: 1 }), { code: "PARAMS_SCHEMA_INVALID" });
+  assert.doesNotThrow(() => registry.validateParams(cap.id, { targetUser: "某用户" }));
 });
 
 test("pure and draft-producing Xianyu full dry-runs have separate contracts", () => {

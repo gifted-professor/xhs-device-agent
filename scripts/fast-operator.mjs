@@ -539,6 +539,75 @@ export class FastOperator {
   // 从主页返回 feed：BACK 直到 IndexActivityV2（主页浮层→笔记→feed，最多 maxBack 次）。
   async backFromProfile(maxBack = 4) { return this.backToFeed(maxBack); }
 
+  // —— xhs.follow.ensure 支持 —— 主页浮层（profile overlay）判定 / 作者名提取 / 关注按钮分类。
+  // 浮层不是独立 activity（focus 仍 NoteDetail/DetailFeed，见 openProfile L477-501 注释），
+  // 靠 clickable ImageView + contentDesc + y<600 的浮层头像信号判定（复用 L497-499）。
+  profileOverlayOpen(doc) {
+    return doc.nodes.some((n) =>
+      n.className === "android.widget.ImageView" && n.clickable && n.bounds && n.contentDesc
+      && centerOf(n.bounds)[1] < 600);
+  }
+
+  // 主页浮层作者名提取。tier-1：clickable 头像 ImageView 的 content-desc "头像,<name>"（L479 注释）。
+  // tier-2（仅诊断兜底，不采信）：浮层顶部 y<600 内、非数字非 meta、长 2-24 的 TextView。
+  // 返回 { name, fallback }：tier-1 命中 → name=<作者名>；tier-1 miss → name=null + fallback=<tier2或null>。
+  // 调用方对 name 做 targetUser 精确比对；name 为空即 fail-closed，fallback 只写入 extractedAuthor 供取证。
+  // 注意：`头像,<name>` 格式来自代码注释，未真实 dump 实证——确认前 tier-1 miss 必须停臂，禁止用 tier-2 放行。
+  profileAuthor(doc) {
+    const av = doc.nodes.find((n) =>
+      n.className === "android.widget.ImageView" && n.clickable && n.bounds && n.contentDesc
+      && centerOf(n.bounds)[1] < 600
+      && /^头像[,，]/.test(n.contentDesc));
+    if (av) {
+      const name = av.contentDesc.split(/[,，]/).slice(1).join(",").trim();
+      if (name) return { name, fallback: null };
+    }
+    const meta = /^(粉丝|获赞|关注|主页|笔记|互关|相互关注|已关注|关注他|关注她|私信)$/;
+    const cand = doc.nodes
+      .filter((n) =>
+        n.className === "android.widget.TextView" && n.bounds && n.text
+        && centerOf(n.bounds)[1] < 600
+        && (n.text || "").length >= 2 && (n.text || "").length <= 24
+        && !/^\d/.test(n.text) && !meta.test(n.text))
+      .sort((a, b) => centerOf(a.bounds)[1] - centerOf(b.bounds)[1]);
+    return { name: null, fallback: cand[0]?.text?.trim() || null };
+  }
+
+  // 主页浮层关注按钮分类。exact-set 等值（不用 includes，避免"关注的话题"类假阳）：
+  // FOLLOWED={已关注,相互关注}、ACTION={关注,回关}。对每个候选 node 的 text 和 contentDesc
+  // 分别判定（req#4），followed 先判避免"关注"子串误中"已关注"。候选限定 Button|TextView + clickable + y<900
+  // （y 上界避开笔记网格下方的"关注/粉丝"tab 文案）。多候选取最靠上、最靠右。
+  // 返回 { center, bounds, label, via, state } 或 null；state ∈ "followed" | "not_followed" | ""。
+  // 语义：已关注/相互关注=followed；关注=未关注；回关(对方关注你、你未关注)=未关注，tap 即回关。
+  findFollowBtn(doc) {
+    const FOLLOWED = new Set(["已关注", "相互关注"]);
+    const ACTION = new Set(["关注", "回关"]);
+    const pick = (n) => {
+      const labels = [n.text, n.contentDesc].filter((s) => typeof s === "string" && s);
+      for (const lab of labels) { const t = lab.trim(); if (FOLLOWED.has(t)) return { label: t, state: "followed" }; }
+      for (const lab of labels) { const t = lab.trim(); if (ACTION.has(t)) return { label: t, state: "not_followed" }; }
+      return null;
+    };
+    const cands = doc.nodes
+      .filter((n) =>
+        (n.className === "android.widget.Button" || n.className === "android.widget.TextView")
+        && n.clickable && n.bounds && centerOf(n.bounds)[1] < 900)
+      .map((n) => ({ n, hit: pick(n) }))
+      .filter((x) => x.hit);
+    if (!cands.length) return null;
+    cands.sort((a, b) =>
+      centerOf(a.n.bounds)[1] - centerOf(b.n.bounds)[1]
+      || centerOf(b.n.bounds)[0] - centerOf(a.n.bounds)[0]);
+    const top = cands[0];
+    return {
+      center: centerOf(top.n.bounds),
+      bounds: top.n.bounds,
+      label: top.hit.label,
+      via: top.n.text === top.hit.label ? "text" : "contentDesc",
+      state: top.hit.state,
+    };
+  }
+
   // 不进正文点赞：tap feed 卡片的 like 按钮。返回 tapped 坐标。
   // 注意：这会在真实账号上对陌生人帖子产生一次点赞——调用方负责 like-then-unlike
   // 验收或运营意图授权。
@@ -1189,6 +1258,111 @@ export class FastOperator {
     };
   }
 
+  // 关注保证（对已打开的主页浮层）：读作者名核对 targetUser → 分类关注按钮态 →
+  // 已关注则幂等跳过 → 否则 tap 关注 → 重新 dump 读 afterState → 标签明确翻到 followed 才算成功。
+  // VERIFY-ONLY on a pre-positioned device：不导航、不开卡、不进 feed（由上层人驱到浮层）。
+  // 不涉及文本输入 → 无 IME 还原；收尾 backFromProfile 回 feed（best-effort，如实报告 restored/finalActivity）。
+  // step 守卫：missingTargetUser / notOnProfileOverlay / authorMismatch(fail-closed,不 tap) /
+  //   followBtnNotFound / beforeStateUnknown / afterStateUnknown / notFlipped / followed / already_followed。
+  // sent：true=已 tap（关注动作已发出，结果未确认 → ambiguous，绝不标 notSent）；false=未 tap（tap 前守卫，确定未发出）。
+  // authorMatched：页面作者是否与 targetUser 匹配（脱敏布尔，供公共结果；原始昵称只留 extractedAuthor 受控字段）。
+  async followEnsure({ targetUser, doc: docArg, log: logArg, t0: t0Arg } = {}) {
+    const t0 = t0Arg ?? Date.now();
+    const log = logArg ?? [];
+    const push = (k, v) => log.push([k, v]);
+    // 安全、无碰撞的规范化：Unicode NFKC + 去首尾空白 + 去前导 @。
+    // 不删内部 _/-/·/空格（否则 a-b==ab、张·三==张三 会把错误目标放进关注守卫，R2 阻断）。
+    // 不 lowercase（latin AB/ab 可能是不同昵称）。昵称非强身份锚点，长期应传稳定用户 ID。
+    const norm = (u) => String(u || "").normalize("NFKC").trim().replace(/^@+/, "");
+    if (!targetUser || typeof targetUser !== "string")
+      return { ok: false, step: "missingTargetUser", sent: false, authorMatched: false,
+               log, ms: Date.now() - t0, activity: (await this.currentFocus()).activity };
+
+    // 1. 浮层 dump（serve case 已 dump 过则复用，省一次 dump）
+    let doc = docArg;
+    if (!doc) doc = await this.dump({ label: "followEnsure-in" });
+    if (!this.profileOverlayOpen(doc))
+      return { ok: false, step: "notOnProfileOverlay", sent: false, authorMatched: false, targetUser,
+               log, ms: Date.now() - t0, activity: (await this.currentFocus()).activity };
+    push("overlayDump", { nodes: doc.nodes.length, dumpMs: doc._dumpMs });
+
+    // 2. 作者名核对（fail-closed：提取空或不匹配绝不 tap）。tier-1 miss 即停臂，tier-2 只作 extractedAuthor 诊断。
+    const { name: author, fallback } = this.profileAuthor(doc);
+    push("profileAuthor", { name: author, fallback });
+    const authorMatched = Boolean(author) && norm(author) === norm(targetUser);
+    if (!authorMatched)
+      return { ok: false, step: "authorMismatch", sent: false, authorMatched: false, targetUser,
+               extractedAuthor: author || fallback,
+               log, ms: Date.now() - t0, activity: (await this.currentFocus()).activity };
+
+    // 3. beforeState 分类
+    const before = this.findFollowBtn(doc);
+    push("beforeBtn", before);
+    if (!before)
+      return { ok: false, step: "followBtnNotFound", sent: false, authorMatched: true, targetUser,
+               extractedAuthor: author, beforeState: "",
+               log, ms: Date.now() - t0, activity: (await this.currentFocus()).activity };
+    const beforeState = before.state; // "followed" | "not_followed" | ""
+
+    // 收尾回 feed 的如实报告（restoration.required=false，UI 清理是 best-effort，非 quarantine 触发）。
+    const closeOverlay = async () => {
+      const back = await this.backFromProfile(4);
+      push("backFromProfile", back);
+      const finalActivity = back?.activity || (await this.currentFocus()).activity;
+      return { restored: /IndexActivityV2/.test(finalActivity || ""), finalActivity };
+    };
+
+    // 4. 幂等跳过（req#5）：已关注不重复点击
+    if (beforeState === "followed") {
+      const { restored, finalActivity } = await closeOverlay();
+      return { ok: true, step: "already_followed", verified: true, verifyMethod: "already_followed",
+               sent: false, authorMatched: true, targetUser, extractedAuthor: author,
+               beforeState, afterState: "followed", restored, finalActivity,
+               log, ms: Date.now() - t0, activity: finalActivity, metrics: this.metricsSummary() };
+    }
+    if (beforeState === "")
+      return { ok: false, step: "beforeStateUnknown", sent: false, authorMatched: true, targetUser,
+               extractedAuthor: author, beforeState: "",
+               log, ms: Date.now() - t0, activity: (await this.currentFocus()).activity };
+
+    // 5. tap 关注（pace 拟人）—— 此后 sent=true：关注动作已发出，结果未确认一律走 ambiguous，绝不 notSent。
+    await this.pace();
+    await this.tap(before.center[0], before.center[1]);
+    push("tappedFollow", before.center);
+
+    // 6. 验证：重新 dump 读 afterState；标签 lag 时 settle 后再 dump 一次（mirror verifyCommentSent 重试）
+    await new Promise((r) => setTimeout(r, 1400));
+    let afterDoc = await this.dump({ label: "followEnsure-after" });
+    let afterBtn = this.findFollowBtn(afterDoc);
+    push("afterBtn-1", afterBtn);
+    if (!afterBtn || afterBtn.state === "") {
+      afterDoc = await this.dump({ label: "followEnsure-after-retry", settleMs: 700 });
+      afterBtn = this.findFollowBtn(afterDoc);
+      push("afterBtn-2", afterBtn);
+    }
+    const afterState = afterBtn ? afterBtn.state : "";
+    const verified = afterState === "followed"; // req#7：after 为空/未翻不算成功
+
+    // 7. 收尾回 feed（无 IME，不调 restoreIme）
+    const { restored, finalActivity } = await closeOverlay();
+
+    return {
+      ok: verified,
+      step: verified ? "followed" : (afterState === "" ? "afterStateUnknown" : "notFlipped"),
+      verified,
+      verifyMethod: verified ? "stateLabel" : "none",
+      sent: true, // 已 tap：关注已发出，未确认结果 → ambiguous，不是 notSent
+      authorMatched: true,
+      targetUser,
+      extractedAuthor: author,
+      beforeState,
+      afterState,
+      restored,
+      finalActivity,
+      log, ms: Date.now() - t0, activity: finalActivity, metrics: this.metricsSummary(),
+    };
+  }
+
   // 评论 dry-run benchmark：openCard→scrollToComments→beforeCount→topComment→rewriteComment→
   // 开编辑器→inputText(deferRestore)→【量时到此，不 tap 发送】→还原/关编辑器→回首页。
   // 零 outward 评论，可反复跑 N 次量速度。返回每步 ms + beforeCount + topComment。
@@ -1534,6 +1708,16 @@ function serve(port) {
           if (!/NoteDetail|DetailFeed/.test(f.activity || "")) { out = { ok: false, step: "notOnNote", activity: f.activity }; break; }
           if ((f.activity || "").includes("DetailFeed")) await op.pauseIfVideoNote();
           out = await op.commentOnOpenNote({ text: q.text, maxScrolls: q.maxScrolls ?? 6 });
+          break;
+        }
+        case "followEnsure": {
+          // 对当前已打开的主页浮层跑关注保证（设备由人驱到目标用户主页浮层时用）。
+          // 浮层不是独立 activity（focus 仍 NoteDetail），靠 profileOverlayOpen(doc) 判定。
+          // VERIFY-ONLY：不导航；operator 内部核对 targetUser、幂等 skip、tap+verify、回 feed。
+          if (!q.targetUser || typeof q.targetUser !== "string") { out = { ok: false, step: "missingTargetUser", sent: false, authorMatched: false }; break; }
+          const d = await op.dump({ label: "followEnsure-gate" });
+          if (!op.profileOverlayOpen(d)) { out = { ok: false, step: "notOnProfileOverlay", sent: false, authorMatched: false, targetUser: q.targetUser, activity: (await op.currentFocus()).activity }; break; }
+          out = await op.followEnsure({ targetUser: q.targetUser, doc: d });
           break;
         }
         case "videoNoteDryRun": {
