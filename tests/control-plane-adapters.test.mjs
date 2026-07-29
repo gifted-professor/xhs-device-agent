@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createWechatAdapter } from "../apps/wechat/adapter.mjs";
 import { createXhsAdapter } from "../apps/xhs/adapter.mjs";
 import { createXianyuAdapter } from "../apps/xianyu/adapter.mjs";
 import { createXiaoweiAdapter } from "../apps/xiaowei/adapter.mjs";
+import { AdapterRegistry, ControlPlane } from "../control-plane/lib/control-plane.mjs";
 import { CapabilityRegistry } from "../control-plane/lib/capability-registry.mjs";
+import { EvidenceStore } from "../control-plane/lib/evidence-store.mjs";
 import { evaluateCapabilityPolicy } from "../control-plane/lib/policy.mjs";
+import { StateStore } from "../control-plane/lib/state-store.mjs";
 
 const registry = CapabilityRegistry.load(fileURLToPath(new URL("../apps", import.meta.url)));
 const privateDevice = {
@@ -70,6 +75,130 @@ test("XHS adapter surfaces inner serve rejection instead of masking it as verifi
       return true;
     },
   );
+});
+
+test("XHS adapter verifies xhs.follow.ensure on afterState and classifies sent vs not-sent rejections", async () => {
+  // ok 路径：afterState==="followed" → verify ok
+  const adapter = createXhsAdapter({
+    fetchImpl: async () => new Response(JSON.stringify({
+      ok: true,
+      result: { ok: true, step: "followed", sent: true, authorMatched: true, afterState: "followed", beforeState: "not_followed", targetUser: "张三", extractedAuthor: "张三" },
+      metrics: {},
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  const cap = registry.require("xhs.follow.ensure");
+  const execution = await adapter.execute({ capability: cap, device: privateDevice, params: { targetUser: "张三" }, leaseAuthorization });
+  assert.equal(execution.output.afterState, "followed");
+  assert.deepEqual(await adapter.verify({ capability: cap, execution }), { ok: true, ambiguous: true, mode: "custom" });
+
+  // afterState 未翻 → verify not ok（隔离验证）
+  assert.deepEqual(await adapter.verify({
+    capability: cap,
+    execution: { output: { ok: true, afterState: "", step: "afterStateUnknown" } },
+  }), { ok: false, ambiguous: true, mode: "custom" });
+
+  // tap 前守卫（authorMismatch, sent=false）→ execute 抛 ADAPTER_ACTION_REJECTED + notSent（确定未发出）
+  const guardAdapter = createXhsAdapter({
+    fetchImpl: async () => new Response(JSON.stringify({
+      ok: true,
+      result: { ok: false, step: "authorMismatch", sent: false, authorMatched: false, activity: "NoteDetailActivity", extractedAuthor: "李四", log: [["profileAuthor", {}]] },
+      metrics: {},
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    guardAdapter.execute({ capability: cap, device: privateDevice, params: { targetUser: "张三" }, leaseAuthorization }),
+    (error) => {
+      assert.equal(error.code, "ADAPTER_ACTION_REJECTED");
+      assert.equal(error.details.step, "authorMismatch");
+      assert.equal(error.notSent, true);
+      assert.equal(error.sent, undefined);
+      return true;
+    },
+  );
+
+  // tap 后未确认（afterStateUnknown, sent=true）→ execute 抛 sent+ambiguous，绝不 notSent（否则控制面会误判成确定未发出）
+  const sentAdapter = createXhsAdapter({
+    fetchImpl: async () => new Response(JSON.stringify({
+      ok: true,
+      result: { ok: false, step: "afterStateUnknown", sent: true, authorMatched: true, afterState: "", beforeState: "not_followed", activity: "IndexActivityV2", log: [["afterBtn-1", null]] },
+      metrics: {},
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  await assert.rejects(
+    sentAdapter.execute({ capability: cap, device: privateDevice, params: { targetUser: "张三" }, leaseAuthorization }),
+    (error) => {
+      assert.equal(error.code, "ADAPTER_ACTION_REJECTED");
+      assert.equal(error.details.step, "afterStateUnknown");
+      assert.equal(error.sent, true);
+      assert.equal(error.ambiguous, true);
+      assert.equal(error.notSent, undefined); // 关键：tap 后未确认不能标 notSent
+      return true;
+    },
+  );
+});
+
+test("control plane maps followEnsure tap-after-unknown to ambiguous and pre-tap guard to failed", async () => {
+  // 真正穿过 adapter.execute → control-plane：afterStateUnknown(sent) → terminal ambiguous；authorMismatch(notSent) → failed。
+  const tempRoot = fileURLToPath(new URL("../control-plane/runtime", import.meta.url));
+  const root = mkdtempSync(join(tempRoot, "follow-ensure-run-"));
+  const state = new StateStore({ dbPath: join(root, "control.db") });
+  const followCap = registry.require("xhs.follow.ensure");
+  const reg = new CapabilityRegistry([followCap]);
+  const device = state.upsertDevice({
+    alias: "01", physicalLabel: "rack-01", nodeId: "DESKTOP-3I1EVHE", runtimeId: "private-01",
+    routingProfile: { enabled: true, tags: ["slot:01"], capabilityIds: [followCap.id] },
+    metadata: { xhsServePort: 17895 },
+  });
+  const evidence = new EvidenceStore({ runsRoot: join(root, "runs"), state, minFreeBytes: 0, minExternalEffectFreeBytes: 0 });
+  let serveResult;
+  const xhsAdapter = createXhsAdapter({
+    fetchImpl: async () => new Response(JSON.stringify({ ok: true, result: serveResult, metrics: {} }), {
+      status: 200, headers: { "content-type": "application/json" },
+    }),
+  });
+  const control = new ControlPlane({
+    state, capabilities: reg, adapters: new AdapterRegistry([xhsAdapter]), evidence,
+    schedulerIntervalMs: 5, leaseTtlMs: 2000, leaseHeartbeatMs: 50,
+  });
+  control.start();
+  try {
+    // R2 approval_required：submit → waiting_approval，需人 approve 才执行。
+    const runJob = (result) => {
+      serveResult = result;
+      const job = control.submitJob({
+        idempotencyKey: `fe-${result.step}-${Math.random().toString(36).slice(2)}`,
+        actorId: "agent-a", deviceId: device.deviceId, capabilityId: followCap.id, params: { targetUser: "张三" },
+      }).job;
+      // R2：自动落 waiting_approval；用 authority approve 放行。
+      if (job.status === "waiting_approval") control.decideApproval(job.jobId, { decision: "approve", actorId: "human-approver" });
+      return control.waitForJob(job.jobId);
+    };
+
+    // tap 后未确认（sent=true）→ execute 抛 ADAPTER_ACTION_REJECTED(sent+ambiguous) → terminal ambiguous（绝不 failed/notSent）
+    const afterUnknown = await runJob({ ok: false, step: "afterStateUnknown", sent: true, authorMatched: true, afterState: "", beforeState: "not_followed", activity: "IndexActivityV2", log: [] });
+    assert.equal(afterUnknown.status, "ambiguous");
+    // execute 抛了 → result.output 为 null，step 落在 result.error.details
+    assert.equal(afterUnknown.result.output, null);
+    assert.equal(afterUnknown.result.error.code, "ADAPTER_ACTION_REJECTED");
+    assert.equal(afterUnknown.result.error.details.step, "afterStateUnknown");
+
+    // tap 前守卫（authorMismatch, sent=false）→ execute 抛 notSent → terminal failed（确定未发出）
+    const mismatch = await runJob({ ok: false, step: "authorMismatch", sent: false, authorMatched: false, activity: "NoteDetailActivity", extractedAuthor: "李四", log: [] });
+    assert.equal(mismatch.status, "failed");
+    assert.equal(mismatch.result.error.details.step, "authorMismatch");
+
+    // 成功路径（followed, ok:true）→ succeeded；公共 result.output 有 authorMatched/states，但不含昵称（account identifier 不外泄）
+    const followed = await runJob({ ok: true, step: "followed", sent: true, authorMatched: true, verified: true, verifyMethod: "stateLabel", afterState: "followed", beforeState: "not_followed", restored: true, finalActivity: "IndexActivityV2", targetUser: "张三", extractedAuthor: "张三", log: [] });
+    assert.equal(followed.status, "succeeded");
+    assert.equal(followed.result.output.authorMatched, true);
+    assert.equal(followed.result.output.afterState, "followed");
+    assert.equal(followed.result.output.targetUser, undefined); // 昵称不进公共 result
+    assert.equal(followed.result.output.extractedAuthor, undefined);
+  } finally {
+    await control.stop();
+    state.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("Xianyu adapter preserves stop-before-publish and discard verification", async () => {
