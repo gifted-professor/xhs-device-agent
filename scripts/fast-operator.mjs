@@ -573,38 +573,82 @@ export class FastOperator {
     return { name: null, fallback: cand[0]?.text?.trim() || null };
   }
 
-  // 主页浮层关注按钮分类。exact-set 等值（不用 includes，避免"关注的话题"类假阳）：
-  // FOLLOWED={已关注,相互关注}、ACTION={关注,回关}。对每个候选 node 的 text 和 contentDesc
-  // 分别判定（req#4），followed 先判避免"关注"子串误中"已关注"。候选限定 Button|TextView + clickable + y<900
-  // （y 上界避开笔记网格下方的"关注/粉丝"tab 文案）。多候选取最靠上、最靠右。
-  // 返回 { center, bounds, label, via, state } 或 null；state ∈ "followed" | "not_followed" | ""。
-  // 语义：已关注/相互关注=followed；关注=未关注；回关(对方关注你、你未关注)=未关注，tap 即回关。
+  // 主页浮层关注按钮分类 —— port registry Task A 经 Hermes round-4 独立验收 PASS 的
+  // findProfileFollowBtn 语义（ops/_xhs-parse.mjs），适配 fast-operator 的 doc.nodes 架构：
+  // bounds=[L,T,R,B] 数组、centerOf(bounds)=[cx,cy]（bitwise 截断）、className 全限定、contentDesc、enabled（缺省 true）。
+  //
+  // 全部 fail-closed，绝不猜坐标：
+  //  1) 必须 tier-1 浮层头像指纹（clickable ImageView + y<600 + contentDesc「头像,<name>」），否则 null（非浮层）；
+  //  2) 可信 root = 包含头像且宽 > 2× 头像宽的最大节点（头像宽是截断无关的独立参考；不满足 → null）；
+  //  3) 屏宽 = root 宽，CTA 宽阈值 minCtaW = max(屏宽×0.3, 头像宽)（头像宽地板抗截断，屏宽被截断拉低时仍拒窄统计 tab）；
+  //  4) 头像下方（cy > av.cy）的 follow 态 label，取其最小面积 enabled clickable 祖先容器；全屏/近全屏（≥0.9×屏宽，消散层）排除、窄容器（< minCtaW，统计 tab）排除；
+  //  5) 按物理容器 bounds 聚合所有 follow 态，同态去重；同一 bounds ≥2 个不同态 → 歧义 → null（顺序无关）；单节点 text/desc 都属四态且不同 → 2 态 → null；
+  //  6) 恰好 1 个候选才返回，否则 null。
+  // 真实 overlay-01 dump：CTA 容器 [33,954,474,1042]（label 非可点 TextView 套在 clickable FrameLayout 内）→ 中心 [253,998]（centerOf 截断，registry Math.round 为 254）。
+  // 返回 { center, bounds, label, via, state } 或 null；state ∈ "followed" | "not_followed"。
+  // 语义：已关注/相互关注=followed；关注/回关=not_followed（回关=对方关注你、你未关注，tap 即回关）。
   findFollowBtn(doc) {
-    const FOLLOWED = new Set(["已关注", "相互关注"]);
-    const ACTION = new Set(["关注", "回关"]);
-    const pick = (n) => {
-      const labels = [n.text, n.contentDesc].filter((s) => typeof s === "string" && s);
-      for (const lab of labels) { const t = lab.trim(); if (FOLLOWED.has(t)) return { label: t, state: "followed" }; }
-      for (const lab of labels) { const t = lab.trim(); if (ACTION.has(t)) return { label: t, state: "not_followed" }; }
-      return null;
-    };
-    const cands = doc.nodes
-      .filter((n) =>
-        (n.className === "android.widget.Button" || n.className === "android.widget.TextView")
-        && n.clickable && n.bounds && centerOf(n.bounds)[1] < 900)
-      .map((n) => ({ n, hit: pick(n) }))
-      .filter((x) => x.hit);
-    if (!cands.length) return null;
-    cands.sort((a, b) =>
-      centerOf(a.n.bounds)[1] - centerOf(b.n.bounds)[1]
-      || centerOf(b.n.bounds)[0] - centerOf(a.n.bounds)[0]);
-    const top = cands[0];
+    const nodes = doc.nodes;
+    const FOLLOW_LABELS = new Set(["关注", "已关注", "回关", "相互关注"]);
+    const av = nodes.find((n) =>
+      n.className === "android.widget.ImageView" && n.clickable && n.bounds
+      && centerOf(n.bounds)[1] < 600 && /^头像[,，]/.test(String(n.contentDesc || "")));
+    if (!av) return null; // 无 tier-1 头像指纹 → 非主页浮层
+    const contains = (a, b) => a[0] <= b[0] && a[1] <= b[1] && a[2] >= b[2] && a[3] >= b[3];
+    const area = (n) => (n.bounds[2] - n.bounds[0]) * (n.bounds[3] - n.bounds[1]);
+    const avW = av.bounds[2] - av.bounds[0];
+    // 可信 root：含头像且宽 > 2× 头像宽的最大节点；仅裹住头像的截断 wrapper（宽 ~头像宽）不满足。
+    const root = nodes
+      .filter((n) => n !== av && n.bounds && contains(n.bounds, av.bounds) && (n.bounds[2] - n.bounds[0]) > 2 * avW)
+      .sort((a, b) => area(b) - area(a))[0];
+    if (!root) return null;
+    const screenW = root.bounds[2] - root.bounds[0];
+    if (screenW < 100) return null;
+    const minCtaW = Math.max(screenW * 0.3, avW); // 头像宽作截断无关地板
+    const avCy = centerOf(av.bounds)[1];
+    // 按物理 CTA 容器 bounds 聚合所有 follow 态；viaText 标记态是否由某 label 的 text 字段贡献（定 via）。
+    const byBounds = new Map(); // key -> { c, states: Set, viaText: boolean }
+    for (const l of nodes) {
+      const t = String(l.text || "").trim();
+      const d = String(l.contentDesc || "").trim();
+      const states = new Set();
+      if (FOLLOW_LABELS.has(t)) states.add(t);
+      if (FOLLOW_LABELS.has(d)) states.add(d);
+      if (states.size === 0) continue; // 非四态 label
+      if (!l.bounds || centerOf(l.bounds)[1] <= avCy) continue; // 头像上方（含同高）→ 背景/普通 detail，拒
+      const anc = nodes
+        .filter((n) => n !== l && n.bounds && n.clickable && n.enabled !== false && contains(n.bounds, l.bounds))
+        .sort((a, b) => area(a) - area(b));
+      if (!anc.length) continue; // 无可点容器 → 非可操作
+      const minA = area(anc[0]);
+      const minimal = anc.filter((a) => area(a) === minA);
+      for (const c of minimal) {
+        const w = c.bounds[2] - c.bounds[0];
+        if (w >= screenW * 0.9) continue; // 全屏/近全屏 wrapper（消散层）→ 非 CTA
+        if (w < minCtaW) continue; // 窄容器 → 统计 tab，拒
+        const key = `${c.bounds[0]},${c.bounds[1]},${c.bounds[2]},${c.bounds[3]}`;
+        if (!byBounds.has(key)) byBounds.set(key, { c, states: new Set(), viaText: false });
+        const entry = byBounds.get(key);
+        for (const s of states) {
+          entry.states.add(s);
+          if (t === s) entry.viaText = true; // 该态由 text 字段贡献
+        }
+      }
+    }
+    const cands = [];
+    for (const { c, states, viaText } of byBounds.values()) {
+      if (states.size > 1) return null; // 同一物理 CTA 出现 ≥2 个不同 follow 态 → 歧义，fail-closed
+      if (states.size === 1) cands.push({ c, matched: [...states][0], viaText });
+    }
+    if (cands.length !== 1) return null; // 零或多个 → fail-closed，绝不猜坐标
+    const { c, matched, viaText } = cands[0];
+    const followed = matched === "已关注" || matched === "相互关注";
     return {
-      center: centerOf(top.n.bounds),
-      bounds: top.n.bounds,
-      label: top.hit.label,
-      via: top.n.text === top.hit.label ? "text" : "contentDesc",
-      state: top.hit.state,
+      center: centerOf(c.bounds),
+      bounds: c.bounds,
+      label: matched,
+      via: viaText ? "text" : "contentDesc",
+      state: followed ? "followed" : "not_followed",
     };
   }
 
@@ -1785,4 +1829,5 @@ else if (process.argv[1] && process.argv[1].endsWith("fast-operator.mjs")) {
 
 // 供 task-runner.mjs 等 in-process 调用方复用（FastOperator 已在上方 export class）。
 // 纯加性导出，不改变任何运行时行为：被 import 时上方 CLI dispatch 因 argv[1] 不指向本文件而自然不触发。
-export { Pacer, applyCommentFlags };
+// parseUiAutomatorXml 一并导出，供 tests/ 离线 replay 真实 UIAutomator dump（不触发设备 IO）。
+export { Pacer, applyCommentFlags, parseUiAutomatorXml };
