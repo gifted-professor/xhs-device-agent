@@ -326,6 +326,35 @@ test("Hist #0 block keeps Intent after a mid-block mResumedActivity marker", asy
   assert.match(result.targetFingerprint, /^[a-f0-9]{64}$/);
 });
 
+test("activities dump prefers topResumed Hist over an earlier historical NoteDetail", async () => {
+  const operator = Object.create(FastOperator.prototype);
+  operator.currentFocus = async () => ({
+    package: "com.xingin.xhs",
+    activity: "com.xingin.matrix.notedetail.NoteDetailActivity",
+  });
+  operator.session = {
+    execOut: async (args) => {
+      if (args.join(" ") !== "dumpsys activity activities") return Buffer.from("");
+      return Buffer.from(
+        "  * Task{old}\n"
+          + "    * Hist  #0: ActivityRecord{aaa u0 com.xingin.xhs/com.xingin.matrix.notedetail.NoteDetailActivity t1}\n"
+          + "      Intent { dat=xhsdiscover://item/aaaaaaaaaaaaaaaaaaaaaaaa }\n"
+          + "  * Task{cur}\n"
+          + "    topResumedActivity=ActivityRecord{bbb u0 com.xingin.xhs/com.xingin.matrix.notedetail.NoteDetailActivity t9}\n"
+          + "    * Hist  #1: ActivityRecord{bbb u0 com.xingin.xhs/com.xingin.matrix.notedetail.NoteDetailActivity t9}\n"
+          + "      Intent { dat=xhsdiscover://item/bbbbbbbbbbbbbbbbbbbbbbbb }\n",
+      );
+    },
+  };
+  const result = await operator.observeOpenNoteDetail();
+  assert.equal(result.ok, true);
+  const { createHash } = await import("node:crypto");
+  assert.equal(
+    result.targetFingerprint,
+    createHash("sha256").update("xhs:note:bbbbbbbbbbbbbbbbbbbbbbbb").digest("hex"),
+  );
+});
+
 test("activities dump Hist #1 with spaced header yields a receipt", async () => {
   const operator = Object.create(FastOperator.prototype);
   operator.currentFocus = async () => ({

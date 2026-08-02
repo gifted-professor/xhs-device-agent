@@ -101,6 +101,7 @@ test("note-detail producer fails closed when the top activity has no stable note
   const locatorShape = {
     activity: "NoteDetailActivity",
     currentBlockFound: true,
+    datScheme: "none",
     fields: {
       dat: { present: false, has24Hex: false },
       clip: { present: true, has24Hex: false },
@@ -127,6 +128,7 @@ test("note-detail producer logs a secret-free shape when the current activity bl
   const locatorShape = {
     activity: "NoteDetailActivity",
     currentBlockFound: false,
+    datScheme: "none",
     fields: {
       dat: { present: false, has24Hex: false },
       clip: { present: false, has24Hex: false },
@@ -179,6 +181,7 @@ test("note-detail producer ignores a stable locator retained only by an older hi
     locatorShape: {
       activity: "NoteDetailActivity",
       currentBlockFound: true,
+      datScheme: "none",
       fields: {
         dat: { present: false, has24Hex: false },
         clip: { present: false, has24Hex: false },

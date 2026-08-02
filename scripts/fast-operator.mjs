@@ -423,13 +423,36 @@ export class FastOperator {
     };
     const parseCandidate = (raw) => {
       const lines = String(raw).split(/\r?\n/);
-      let start = lines.findIndex((line) => histHeader.test(line) && isCurrentActivity(line));
-      if (start < 0) start = lines.findIndex((line) => /^\s*ACTIVITY\s/.test(line) && isCurrentActivity(line));
+      const recordIdOf = (line) => {
+        const m = String(line).match(/\bActivityRecord\{([0-9a-f]+)\b/i);
+        return m ? m[1].toLowerCase() : null;
+      };
+      // Prefer the resumed/top-resumed record so a historical NoteDetail Hist
+      // earlier in a multi-task activities dump cannot steal the locator.
+      let start = -1;
       let resumedAnchored = false;
-      if (start < 0) {
-        start = lines.findIndex((line) => /\b(?:mResumedActivity|topResumedActivity)\b/.test(line) && isCurrentActivity(line));
-        resumedAnchored = start >= 0;
+      const resumedIdx = lines.findIndex(
+        (line) => /\b(?:mResumedActivity|topResumedActivity)\b/.test(line) && isCurrentActivity(line),
+      );
+      if (resumedIdx >= 0) {
+        const resumedId = recordIdOf(lines[resumedIdx]);
+        if (resumedId) {
+          const histForResumed = lines.findIndex(
+            (line) => histHeader.test(line) && isCurrentActivity(line) && recordIdOf(line) === resumedId,
+          );
+          if (histForResumed >= 0) {
+            start = histForResumed;
+          } else {
+            start = resumedIdx;
+            resumedAnchored = true;
+          }
+        } else {
+          start = resumedIdx;
+          resumedAnchored = true;
+        }
       }
+      if (start < 0) start = lines.findIndex((line) => /^\s*ACTIVITY\s/.test(line) && isCurrentActivity(line));
+      if (start < 0) start = lines.findIndex((line) => histHeader.test(line) && isCurrentActivity(line));
       const isActivityBoundary = (line) =>
         histHeader.test(line)
         || /^\s*ACTIVITY\s/.test(line)
