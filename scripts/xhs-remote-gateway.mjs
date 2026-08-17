@@ -57,6 +57,7 @@ const TARGETED_COMMANDS = Object.freeze({
   "device.screen": ["device", "screen"],
   "wechat.wallet-balance": ["wechat", "wallet-balance"],
   "xhs.observe": ["xhs", "observe"],
+  "xhs.comments.read": ["xhs", "comments-read"],
   "device.open-xhs": ["device", "open-xhs"],
   "device.open-profile": ["device", "open-profile"],
   "device.home": ["device", "home"],
@@ -427,10 +428,10 @@ export function extractPublicArtifactReferences(value) {
 const STRUCTURED_COMMANDS = new Set([
   "device.list", "device.size", "app.list", "device.guide", "device.recent", "device.back", "device.tap-coords", "device.input", "device.node.resolve", "device.node.activate", "device.scroll",
   "wechat.wallet-balance", "xhs.observe", "xhs.find-video", "xhs.open-visible", "xhs.comment.open", "xhs.comment.input", "xhs.comment.reply-input", "xhs.comment.send", "xhs.dm.send",
-  "xhs.comment-emoji",
+  "xhs.comment-emoji", "xhs.comments.read",
 ]);
 const PAGE_PRESERVING_COMMANDS = new Set([
-  "device.list", "device.size", "device.ui", "device.screen", "device.guide", "app.list", "xhs.observe",
+  "device.list", "device.size", "device.ui", "device.screen", "device.guide", "app.list", "xhs.observe", "xhs.comments.read",
 ]);
 
 function assertExactPublicKeys(value, keys, label) {
@@ -709,6 +710,32 @@ export function parseStructuredReadOutput(command, stdout) {
         || !dmSendOutcomes[value.status] || !dmSendOutcomes[value.status].includes(value.verification)
         || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
       throw new Error("xhs.dm.send contains an invalid public value");
+    }
+    return value;
+  }
+  if (command === "xhs.comments.read") {
+    assertExactPublicKeys(value, [
+      "machine", "status", "commentCount", "comments", "page", "verification", "transport", "localAdbRequired",
+    ], "xhs.comments.read result");
+    assertExactPublicKeys(value.page, ["state", "score", "margin"], "xhs.comments.read page");
+    if (!/^\d{2}$/u.test(value.machine) || value.status !== "verified"
+        || !Number.isSafeInteger(value.commentCount) || value.commentCount < 0
+        || !Array.isArray(value.comments) || value.comments.length > 500
+        || value.page.state !== "COMMENT_PANEL"
+        || typeof value.page.score !== "number" || !Number.isFinite(value.page.score) || value.page.score < 0 || value.page.score > 1
+        || typeof value.page.margin !== "number" || !Number.isFinite(value.page.margin)
+        || value.verification !== "comment_panel_hierarchy_parsed_into_structured_rows"
+        || value.transport !== "xiaowei-api" || value.localAdbRequired !== false) {
+      throw new Error("xhs.comments.read contains an invalid public value");
+    }
+    for (const comment of value.comments) {
+      assertExactPublicKeys(comment, ["author", "content", "likes", "isPinned", "hasTranslate"], "xhs.comments.read comment");
+      if (typeof comment.author !== "string" || !comment.author.trim() || comment.author.length > 256
+          || typeof comment.content !== "string" || !comment.content.trim() || comment.content.length > 4096
+          || (comment.likes !== null && (!Number.isSafeInteger(comment.likes) || comment.likes < 0 || comment.likes > 1_000_000_000))
+          || typeof comment.isPinned !== "boolean" || typeof comment.hasTranslate !== "boolean") {
+        throw new Error("xhs.comments.read comment contains an invalid public value");
+      }
     }
     return value;
   }

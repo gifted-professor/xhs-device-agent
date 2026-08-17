@@ -8,6 +8,7 @@ import {
   buildPublicDeviceList,
   extractSingleDeviceValue,
   extractUiHierarchy,
+  extractXhsComments,
   findSemanticTapPoint,
   inspectPng,
   hierarchyContainsPackage,
@@ -17,6 +18,7 @@ import {
   runXiaoweiDeviceRead,
   uniqueAccessibilityBounds,
 } from "../scripts/xiaowei-device-read.mjs";
+import { parseUiAutomatorXml } from "../scripts/xhs-page-engine.mjs";
 
 const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -2377,4 +2379,89 @@ test("suffix reply targets tolerate a trailing translate chip", () => {
   assert.deepEqual(findSemanticTapPoint(hierarchy, "回复", { width: 1080, height: 2400 }, {
     packageName: "com.xingin.xhs", match: "suffix", ordinal: 1,
   }), { x: "45.277778", y: "33.1875" });
+});
+
+const COMMENT_PANEL_XML = '<hierarchy><node package="com.xingin.xhs" class="android.widget.FrameLayout" bounds="[0,0][1080,2400]">'
+  + '<node package="com.xingin.xhs" class="android.widget.TextView" text="共 3 条评论" bounds="[41,267][228,324]" />'
+  + '<node package="com.xingin.xhs" class="android.widget.TextView" text="留下你的想法吧" bounds="[222,395][488,451]" />'
+  // comment 1: pinned + translate, no like digit
+  + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" clickable="true" long-clickable="true" enabled="true" bounds="[0,561][1080,895]">'
+    + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" bounds="[168,577][1080,879]">'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="yuki" bounds="[168,577][236,633]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" bounds="[250,581][336,629]">'
+        + '<node package="com.xingin.xhs" class="android.widget.TextView" text="作者" bounds="[266,586][320,624]" />'
+      + '</node>'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="或是 日韓美風格 教えて" bounds="[168,633][1039,758]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="7分钟前 中国台湾 回复 翻译" bounds="[168,769][810,824]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="置顶评论" bounds="[184,836][292,874]" />'
+    + '</node>'
+  + '</node>'
+  // comment 2: normal + like 99
+  + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" clickable="true" long-clickable="true" enabled="true" bounds="[0,901][1080,1524]">'
+    + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" bounds="[168,917][1080,1512]">'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="碳酸饮料拜拜" bounds="[168,924][396,980]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" bounds="[426,933][480,971]">'
+        + '<node package="com.xingin.xhs" class="android.widget.TextView" text="作者" bounds="[426,933][480,971]" />'
+      + '</node>'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="缘一位朋友" bounds="[168,980][1039,1046]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="展开 12 条回复" bounds="[168,1100][600,1140]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="2天前 上海 回复" bounds="[168,1319][788,1374]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="99" bounds="[897,1319][935,1375]" />'
+    + '</node>'
+  + '</node>'
+  // comment 3: normal + like 7, no author tag
+  + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" clickable="true" long-clickable="true" enabled="true" bounds="[140,1530][1080,1752]">'
+    + '<node package="com.xingin.xhs" class="android.widget.LinearLayout" bounds="[248,1546][1080,1740]">'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="睡觉的时候不困" bounds="[248,1547][514,1603]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="酸酸选我刚高考完在学化妆" bounds="[248,1603][1039,1669]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="2天前 安徽 回复" bounds="[248,1690][807,1745]" />'
+      + '<node package="com.xingin.xhs" class="android.widget.TextView" text="7" bounds="[916,1690][935,1746]" />'
+    + '</node>'
+  + '</node>'
+  + '</node></hierarchy>';
+
+test("extractXhsComments parses author/content/likes/isPinned/hasTranslate from a comment panel", () => {
+  const document = parseUiAutomatorXml(COMMENT_PANEL_XML);
+  assert.deepEqual(extractXhsComments(document), [
+    { author: "yuki", content: "或是 日韓美風格 教えて", likes: null, isPinned: true, hasTranslate: true },
+    { author: "碳酸饮料拜拜", content: "缘一位朋友", likes: 99, isPinned: false, hasTranslate: false },
+    { author: "睡觉的时候不困", content: "酸酸选我刚高考完在学化妆", likes: 7, isPinned: false, hasTranslate: false },
+  ]);
+});
+
+test("xhs.comments.read returns structured comments when the panel is open", async () => {
+  const projectRoot = await mkdtemp(path.join(os.tmpdir(), "xiaowei-xhs-comments-read-"));
+  const outputRoot = path.join(projectRoot, "data", "matrix", "runs", "run-xhs-comments-read");
+  try {
+    const result = await runXiaoweiDeviceRead({
+      action: "xhs-comments-read", endpoint: "ws://127.0.0.1:22222/", outputRoot, targets: [target()],
+    }, {
+      projectRoot,
+      xhsRulesPath: path.resolve("config", "xhs-page-rules.json"),
+      delay: async () => {},
+      sendRequest: async (request) => {
+        const value = request.data.command === "wm size" ? "Physical size: 1080x2400" : COMMENT_PANEL_XML;
+        return { code: 10_000, message: "SUCCESS", data: { opaque: value } };
+      },
+    });
+    assert.equal(result.machine, "02");
+    assert.equal(result.status, "verified");
+    assert.equal(result.commentCount, 3);
+    assert.equal(result.page.state, "COMMENT_PANEL");
+    assert.equal(result.verification, "comment_panel_hierarchy_parsed_into_structured_rows");
+    assert.equal(result.transport, "xiaowei-api");
+    assert.equal(result.localAdbRequired, false);
+    assert.equal(result.comments.length, 3);
+    assert.deepEqual(result.comments[0], {
+      author: "yuki", content: "或是 日韓美風格 教えて", likes: null, isPinned: true, hasTranslate: true,
+    });
+    assert.deepEqual(result.comments[1], {
+      author: "碳酸饮料拜拜", content: "缘一位朋友", likes: 99, isPinned: false, hasTranslate: false,
+    });
+    assert.deepEqual(result.comments[2], {
+      author: "睡觉的时候不困", content: "酸酸选我刚高考完在学化妆", likes: 7, isPinned: false, hasTranslate: false,
+    });
+  } finally {
+    await rm(projectRoot, { recursive: true, force: true });
+  }
 });

@@ -1849,6 +1849,118 @@ function exactXhsCommentCount(hierarchy) {
   return unique[0];
 }
 
+// --- xhs.comments.read: structured comment-panel parser ---
+// XHS obfuscates most resource-ids, so comments are parsed from text + layout,
+// not from resource-id. Each comment lives in a clickable+long-clickable
+// LinearLayout row whose leaves, read top-to-bottom by y, are:
+//   author (short nickname) → optional "作者" tag → content (long text)
+//   → metadata ("<time> <region> 回复 [翻译]") → like-count digit on the
+//   same y as metadata, to its right → optional "置顶评论" tag below.
+const COMMENT_METADATA_PATTERN = /^(?:刚刚|昨天|前天|今天|\d+(?:分钟|小时|天|周|个月|月|年)前|\d{1,2}-\d{1,2})\s+\S+\s+回复(?:\s+翻译)?$/u;
+const COMMENT_LABEL_TEXTS = new Set(["作者", "置顶评论", "关注", "说点什么...", "留下你的想法吧", "- 到底了 -"]);
+const COMMENT_EXPAND_REPLY_PATTERN = /^展开\s*\d+\s*条回复$/u;
+
+function collectXhsCommentLeaves(document, node, acc = []) {
+  const text = semanticValue(node.text);
+  if (text && /TextView$/u.test(node.className)) {
+    acc.push({ text, bounds: parseBounds(node.attributes?.bounds) });
+  }
+  for (const childIndex of node.children) collectXhsCommentLeaves(document, document.nodes[childIndex], acc);
+  return acc;
+}
+
+function findXhsCommentRowContainer(document, metadataNode) {
+  let current = metadataNode;
+  for (let depth = 0; current && depth <= 12; depth += 1) {
+    const bounds = parseBounds(current.attributes?.bounds);
+    if (bounds && current.enabled !== false && current.clickable && current.longClickable
+        && /LinearLayout$/u.test(current.className) && current.packageName === XHS_PACKAGE) {
+      return { node: current, bounds };
+    }
+    current = current.parentIndex === null ? null : document.nodes[current.parentIndex];
+  }
+  return null;
+}
+
+function boundsVerticallyOverlap(a, b) {
+  if (!a || !b) return false;
+  return a.top < b.bottom && b.top < a.bottom;
+}
+
+export function extractXhsComments(document) {
+  const rows = [];
+  const seenRowKeys = new Set();
+  for (const node of document.nodes) {
+    if (node.packageName !== XHS_PACKAGE) continue;
+    const text = semanticValue(node.text);
+    if (!COMMENT_METADATA_PATTERN.test(text)) continue;
+    const row = findXhsCommentRowContainer(document, node);
+    if (!row) continue;
+    const rowKey = `${row.bounds.left},${row.bounds.top},${row.bounds.right},${row.bounds.bottom}`;
+    if (seenRowKeys.has(rowKey)) continue;
+    seenRowKeys.add(rowKey);
+    const leaves = collectXhsCommentLeaves(document, row.node);
+    const metadata = leaves.find((leaf) => COMMENT_METADATA_PATTERN.test(leaf.text));
+    if (!metadata || !metadata.bounds) continue;
+    const metaTop = metadata.bounds.top;
+    const isNumeric = (value) => /^\d+$/u.test(value);
+    const isLabel = (value) => COMMENT_LABEL_TEXTS.has(value) || isNumeric(value);
+    const isContentNoise = (value) => isLabel(value) || COMMENT_EXPAND_REPLY_PATTERN.test(value);
+    const above = leaves.filter((leaf) => leaf.bounds && leaf.bounds.bottom <= metaTop + 4
+      && leaf.text && !isContentNoise(leaf.text) && leaf !== metadata);
+    const author = above.length
+      ? above.reduce((min, leaf) => (leaf.bounds.top < min.bounds.top ? leaf : min)).text
+      : "";
+    const contentCandidates = leaves.filter((leaf) => leaf.bounds && leaf.text && leaf !== metadata
+      && leaf.text !== author && !isContentNoise(leaf.text) && leaf.bounds.bottom <= metaTop + 4);
+    const content = contentCandidates.length
+      ? contentCandidates.reduce((longest, leaf) => ([...leaf.text].length > [...longest.text].length ? leaf : longest)).text
+      : "";
+    const likeLeaf = leaves.find((leaf) => leaf.bounds && isNumeric(leaf.text)
+      && boundsVerticallyOverlap(leaf.bounds, metadata.bounds) && leaf.bounds.left > metadata.bounds.right);
+    rows.push({
+      author,
+      content,
+      likes: likeLeaf ? Number(likeLeaf.text) : null,
+      isPinned: leaves.some((leaf) => leaf.text === "置顶评论"),
+      hasTranslate: /翻译$/u.test(metadata.text),
+      _top: row.bounds.top,
+    });
+  }
+  rows.sort((a, b) => a._top - b._top);
+  return rows.map(({ _top, ...comment }) => comment);
+}
+
+async function readXhsComments(target, options) {
+  const rules = await loadRules(options.xhsRulesPath);
+  const hierarchy = await readUiHierarchy(target, options);
+  if (!hierarchyContainsPackage(hierarchy, XHS_PACKAGE)) {
+    throw new DeviceNodeError("FOREGROUND_DRIFT", "xhs.comments.read requires Xiaohongshu in the foreground");
+  }
+  const observation = observeXhsHierarchy(hierarchy, rules, { targetAlias: target.alias });
+  if (observation.page.state !== "COMMENT_PANEL") {
+    throw new DeviceNodeError("NODE_AMBIGUOUS", `xhs.comments.read requires a comment panel, found ${observation.page.state}`);
+  }
+  const document = parseUiAutomatorXml(hierarchy);
+  const comments = extractXhsComments(document);
+  let commentCount;
+  try {
+    commentCount = exactXhsCommentCount(hierarchy);
+  } catch {
+    commentCount = comments.length;
+  }
+  return {
+    machine: target.machine,
+    status: "verified",
+    commentCount,
+    comments,
+    page: observation.page,
+    verification: "comment_panel_hierarchy_parsed_into_structured_rows",
+    transport: "xiaowei-api",
+    localAdbRequired: false,
+  };
+}
+
 async function invokePointerBounds(target, bounds, dimensions, options) {
   await invokeOfficial("pointerEvent", target, {
     type: "10",
@@ -2763,7 +2875,7 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
   if (!plainObject(request) || ![
     "list", "size", "app-list", "ui", "screen", "open-app", "home", "recent", "back", "tap-text", "tap-coords", "tap-ocr", "input", "node-resolve", "node-activate",
     "scroll", "wechat-wallet-balance", "xhs-observe", "xhs-find-video", "xhs-open-visible", "xhs-comment-open", "xhs-comment-input", "xhs-comment-reply-input",
-    "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send",
+    "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send", "xhs-comments-read",
   ].includes(request.action)
       || !Array.isArray(request.targets) || request.targets.length < 1 || request.targets.length > 32
       || typeof request.outputRoot !== "string" || !request.outputRoot) {
@@ -3001,7 +3113,7 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
   const results = [];
   if ([
     "app-list", "recent", "back", "tap-coords", "input", "node-resolve", "node-activate", "scroll", "wechat-wallet-balance", "xhs-observe", "xhs-find-video", "xhs-open-visible",
-    "xhs-comment-open", "xhs-comment-input", "xhs-comment-reply-input", "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send",
+    "xhs-comment-open", "xhs-comment-input", "xhs-comment-reply-input", "xhs-comment-send", "xhs-comment-emoji", "xhs-dm-send", "xhs-comments-read",
   ].includes(request.action)) {
     const publicCommand = request.action === "app-list" ? "app.list"
       : request.action === "recent" ? "device.recent"
@@ -3016,6 +3128,7 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
           : request.action === "xhs-comment-reply-input" ? "xhs.comment.reply-input"
           : request.action === "xhs-comment-send" ? "xhs.comment.send"
           : request.action === "xhs-dm-send" ? "xhs.dm.send"
+          : request.action === "xhs-comments-read" ? "xhs.comments.read"
           : request.action === "tap-coords" ? "device.tap-coords"
           : request.action === "input" ? "device.input"
             : request.action === "scroll" ? "device.scroll"
@@ -3044,6 +3157,8 @@ export async function runXiaoweiDeviceRead(request, runtime = {}) {
         ? await sendXhsCommentDraft(target, request, options)
       : request.action === "xhs-dm-send"
         ? await sendXhsDmDraft(target, request, options)
+      : request.action === "xhs-comments-read"
+        ? await readXhsComments(target, options)
       : request.action === "scroll"
         ? await scrollDevice(target, request, deviceDirectory, options)
       : request.action === "wechat-wallet-balance"
