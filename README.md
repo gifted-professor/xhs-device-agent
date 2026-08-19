@@ -1,3 +1,5 @@
+> **Archived 2026-08-19.** Development and production runtime have moved to [xw-platform](https://github.com/gifted-professor/xw-platform).
+
 # XHS Device Agent
 
 多设备控制面与执行码（端口 `17920`、FastOperator、capability / job / lease）。
